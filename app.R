@@ -107,14 +107,13 @@ ui <- page_sidebar(
     value_box(
       title = "Samples Shown",
       value = textOutput("n_samples"),
-      showcase = fa("droplet"),
       theme = "primary",
       height = "90px"
     ),
     value_box(
       title = "Islands",
       value = textOutput("n_islands"),
-      showcase = fa("location-dot"),
+      showcase = fa("map-location-dot"),
       theme = "info",
       height = "90px"
     ),
