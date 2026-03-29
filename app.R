@@ -29,8 +29,12 @@ source("01_load_clean_data.R")
 df_app <- df_clean |>
   mutate(
     hour        = hour(collected_hst),
-    # Classify samples: 6 AM–6 PM = Daytime, otherwise Nighttime
-    time_of_day = if_else(hour >= 6 & hour < 18, "Daytime", "Nighttime")
+    minute      = minute(collected_hst),
+    # Classify samples: 6:00 AM–6:45 PM = Daytime, otherwise Nighttime
+    time_of_day = if_else(
+      (hour * 60 + minute) >= (6 * 60) & (hour * 60 + minute) < (18 * 60 + 45),
+      "Daytime", "Nighttime"
+    )
   )
 
 island_choices   <- sort(unique(df_app$island))
