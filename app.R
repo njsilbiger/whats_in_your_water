@@ -62,10 +62,11 @@ ui <- page_sidebar(
     # Project description
     p(
       strong("What's In Your Water?"), "is a community science project",
-      "collecting ocean water samples across the Hawaiian Islands to",
-      "monitor coastal water quality. Samples are gathered by volunteer",
-      "citizen scientists and submitted for laboratory analysis of",
-      "chemical and biological indicators."
+      "collecting ocean water samples across the O'ahu and Maui Nui to",
+      "assessed coastal water quality after the March 2026 Kona Low storm.",
+      "Samples are gathered by volunteer community members and scientists.",
+      "We are in the process of analyzing these samples for salinity, nutrients,",
+      "and dissolved organic matter - important indicators of coral reef health."
     ),
     p(
       "Use the filters below to explore samples by island and time of",
@@ -144,9 +145,11 @@ server <- function(input, output, session) {
   output$n_islands <- renderText(n_distinct(df_filtered()$island))
 
   output$collection_date <- renderText({
-    dates <- as.Date(df_filtered()$collected_hst)
+    dates <- as.Date(df_filtered()$collected_hst, tz = "Pacific/Honolulu")
     if (length(dates) == 0) return("—")
-    format(min(dates), "%b %d, %Y")
+    min_date <- format(min(dates), "%b %d, %Y")
+    max_date <- format(max(dates), "%b %d, %Y")
+    if (min_date == max_date) min_date else paste(min_date, "\u2013", max_date)
   })
 
   # Base map — rendered once; markers updated reactively via leafletProxy
