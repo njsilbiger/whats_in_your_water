@@ -27,7 +27,6 @@ library(fontawesome)
 source("01_load_clean_data.R")
 
 df_app <- df_clean |>
-  select(-name) |>
   mutate(
     hour        = hour(collected_hst),
     # Classify samples: 6 AM–6 PM = Daytime, otherwise Nighttime
@@ -62,7 +61,7 @@ ui <- page_sidebar(
     # Project description
     p(
       strong("What's In Your Water?"), "is a community science project",
-      "collecting ocean water samples across the O'ahu and Maui Nui to",
+      "collecting ocean water samples across O'ahu and Maui Nui to",
       "assessed coastal water quality after the March 2026 Kona Low storm.",
       "Samples are gathered by volunteer community members and scientists.",
       "We are in the process of analyzing these samples for salinity, nutrients,",
@@ -93,33 +92,48 @@ ui <- page_sidebar(
   ),
 
   # ---- Main content ------------------------------------------
+  tags$style(HTML("
+    .value-box-value { font-size: 1rem !important; }
+    .value-box-title { font-size: 0.75rem !important; }
+  ")),
   layout_column_wrap(
-    width = 1 / 3,
+    width = 1 / 4,
     fill  = FALSE,
+    heights_equal = "row",
     value_box(
       title = "Samples Shown",
       value = textOutput("n_samples"),
       showcase = fa("droplet"),
-      theme = "primary"
+      theme = "primary",
+      height = "90px"
     ),
     value_box(
       title = "Islands",
       value = textOutput("n_islands"),
       showcase = fa("location-dot"),
-      theme = "info"
+      theme = "info",
+      height = "90px"
     ),
     value_box(
       title = "Collection Date",
       value = textOutput("collection_date"),
       showcase = fa("calendar-days"),
-      theme = "secondary"
+      theme = "secondary",
+      height = "90px"
+    ),
+    value_box(
+      title = "Samplers",
+      value = textOutput("n_samplers"),
+      showcase = fa("users"),
+      theme = "success",
+      height = "90px"
     )
   ),
 
   card(
     full_screen = TRUE,
     card_header("Sample Collection Locations"),
-    leafletOutput("map", height = "520px")
+    leafletOutput("map", height = "650px")
   )
 )
 
@@ -143,6 +157,8 @@ server <- function(input, output, session) {
   output$n_samples <- renderText(nrow(df_filtered()))
 
   output$n_islands <- renderText(n_distinct(df_filtered()$island))
+
+  output$n_samplers <- renderText(n_distinct(df_filtered()$name))
 
   output$collection_date <- renderText({
     dates <- as.Date(df_filtered()$collected_hst, tz = "Pacific/Honolulu")
