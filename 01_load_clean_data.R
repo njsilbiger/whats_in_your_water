@@ -84,8 +84,16 @@ parse_coord <- function(x, is_lon = FALSE) {
 df_clean <- df |>
   mutate(
     # Unlist the list-columns returned by googlesheets4 for mixed-type columns
-    lat_raw  = sapply(`Latitude (From GPS Coordinates - Example: 21 18'27")`, as.character),
-    lon_raw  = sapply(`Longitude (From GPS Coordinates  - Example: 157  49'36"  )`, as.character),
+    lat_raw = sapply(`Latitude (From GPS Coordinates - Example: 21 18'27")`, as.character),
+    lon_raw = sapply(`Longitude (From GPS Coordinates  - Example: 157  49'36"  )`, as.character),
+
+    # M268 entered "1571'26"" — missing separator between degrees and minutes;
+    # corrected to "157 1'26"" (157°1'26")
+    lon_raw = if_else(
+      trimws(`Sample Bottle ID from the label (example OA1 for O'ahu, M1 for Maui)`) == "M268",
+      "157 1'26\"",
+      lon_raw
+    ),
 
     # Parse to numeric decimal degrees
     latitude  = sapply(lat_raw, parse_coord, is_lon = FALSE),

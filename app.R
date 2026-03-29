@@ -1,0 +1,206 @@
+# ============================================================
+# What's In Your Water? — Interactive Sample Map Dashboard
+#
+# Public-facing Shiny app showing ocean water sample collection
+# locations across Hawaiʻi.
+#
+# Author: Nyssa Silbiger
+# Date:   2026-03-28
+# ============================================================
+
+library(shiny)
+library(bslib)
+library(tidyverse)
+library(googlesheets4)
+library(lubridate)
+library(leaflet)
+library(fontawesome)
+
+
+# ------------------------------------------------------------------
+# Load and prepare data
+# Data is loaded fresh from Google Sheets each time the app starts.
+# For deployment, ensure gs4_auth() credentials are available on the
+# server (e.g., via gargle's encrypted token or environment variables).
+# ------------------------------------------------------------------
+
+source("01_load_clean_data.R")
+
+df_app <- df_clean |>
+  select(-name) |>
+  mutate(
+    hour        = hour(collected_hst),
+    # Classify samples: 6 AM–6 PM = Daytime, otherwise Nighttime
+    time_of_day = if_else(hour >= 6 & hour < 18, "Daytime", "Nighttime")
+  )
+
+island_choices   <- sort(unique(df_app$island))
+tod_choices      <- c("Daytime", "Nighttime")
+
+# Marker colors by time of day
+tod_colors <- c("Daytime" = "#f4a261", "Nighttime" = "#023e8a")
+tod_pal    <- colorFactor(palette = tod_colors, domain = names(tod_colors))
+
+
+# ------------------------------------------------------------------
+# UI
+# ------------------------------------------------------------------
+
+ui <- page_sidebar(
+  title = "What's In Your Water? — Hawaiʻi Ocean Sampling",
+  theme = bs_theme(
+    version   = 5,
+    bootswatch = "flatly",
+    primary   = "#0077b6"
+  ),
+  fillable = TRUE,
+
+  # ---- Sidebar -----------------------------------------------
+  sidebar = sidebar(
+    width = 310,
+
+    # Project description
+    p(
+      strong("What's In Your Water?"), "is a community science project",
+      "collecting ocean water samples across the Hawaiian Islands to",
+      "monitor coastal water quality. Samples are gathered by volunteer",
+      "citizen scientists and submitted for laboratory analysis of",
+      "chemical and biological indicators."
+    ),
+    p(
+      "Use the filters below to explore samples by island and time of",
+      "collection. Click any marker on the map for collection details."
+    ),
+
+    hr(),
+
+    checkboxGroupInput(
+      inputId  = "island",
+      label    = "Island",
+      choices  = island_choices,
+      selected = island_choices
+    ),
+
+    hr(),
+
+    checkboxGroupInput(
+      inputId  = "time_of_day",
+      label    = "Time of Day",
+      choices  = tod_choices,
+      selected = tod_choices
+    )
+  ),
+
+  # ---- Main content ------------------------------------------
+  layout_column_wrap(
+    width = 1 / 3,
+    fill  = FALSE,
+    value_box(
+      title = "Samples Shown",
+      value = textOutput("n_samples"),
+      showcase = fa("droplet"),
+      theme = "primary"
+    ),
+    value_box(
+      title = "Islands",
+      value = textOutput("n_islands"),
+      showcase = fa("location-dot"),
+      theme = "info"
+    ),
+    value_box(
+      title = "Collection Date",
+      value = textOutput("collection_date"),
+      showcase = fa("calendar-days"),
+      theme = "secondary"
+    )
+  ),
+
+  card(
+    full_screen = TRUE,
+    card_header("Sample Collection Locations"),
+    leafletOutput("map", height = "520px")
+  )
+)
+
+
+# ------------------------------------------------------------------
+# Server
+# ------------------------------------------------------------------
+
+server <- function(input, output, session) {
+
+  # Reactive filtered data
+  df_filtered <- reactive({
+    df_app |>
+      filter(
+        island      %in% input$island,
+        time_of_day %in% input$time_of_day
+      )
+  })
+
+  # Value box outputs
+  output$n_samples <- renderText(nrow(df_filtered()))
+
+  output$n_islands <- renderText(n_distinct(df_filtered()$island))
+
+  output$collection_date <- renderText({
+    dates <- as.Date(df_filtered()$collected_hst)
+    if (length(dates) == 0) return("—")
+    format(min(dates), "%b %d, %Y")
+  })
+
+  # Base map — rendered once; markers updated reactively via leafletProxy
+  output$map <- renderLeaflet({
+    leaflet() |>
+      addProviderTiles(providers$Esri.WorldImagery) |>
+      fitBounds(
+        lng1 = min(df_app$longitude) - 0.05,
+        lat1 = min(df_app$latitude)  - 0.05,
+        lng2 = max(df_app$longitude) + 0.05,
+        lat2 = max(df_app$latitude)  + 0.05
+      )
+  })
+
+  # Update markers when filters change
+  observe({
+    df <- df_filtered()
+
+    proxy <- leafletProxy("map") |>
+      clearMarkers() |>
+      clearControls()
+
+    if (nrow(df) == 0) return()
+
+    proxy |>
+      addCircleMarkers(
+        data        = df,
+        lng         = ~longitude,
+        lat         = ~latitude,
+        radius      = 7,
+        color       = "white",
+        fillColor   = ~tod_pal(time_of_day),
+        fillOpacity = 0.85,
+        weight      = 1.5,
+        popup       = ~paste0(
+          "<b>Sample: ", sample_id, "</b><br>",
+          "Island: ", island, "<br>",
+          "Collected: ", format(collected_hst, "%b %d, %Y %I:%M %p HST"),
+          if_else(
+            !is.na(notes) & nchar(trimws(notes)) > 0,
+            paste0("<br><i>", notes, "</i>"),
+            ""
+          )
+        )
+      ) |>
+      addLegend(
+        position  = "bottomright",
+        pal       = tod_pal,
+        values    = df$time_of_day,
+        title     = "Time of Day",
+        opacity   = 0.9
+      )
+  })
+}
+
+
+shinyApp(ui, server)
