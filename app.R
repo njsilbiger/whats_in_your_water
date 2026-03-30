@@ -49,9 +49,7 @@ total_samples    <- nrow(df_app)
 # Update this number as lab results come in
 samples_analyzed <- 0
 
-# Marker colors by time of day
-tod_colors <- c("Daytime" = "#f4a261", "Nighttime" = "#023e8a")
-tod_pal    <- colorFactor(palette = tod_colors, domain = names(tod_colors))
+marker_color <- "#f4a261"
 
 
 # ------------------------------------------------------------------
@@ -528,13 +526,13 @@ ui <- page_navbar(
 
         make_param_card(
           "droplet", "Salinity",
-          "Salinity tells us how salty the water is. Ocean water has a natural
-           saltiness — think of it like a recipe that ocean animals have adapted
-           to over millions of years. A big storm can throw that recipe off by
-           dumping huge amounts of fresh rainwater into the ocean.",
+          "Salinity tells us how salty the water is. Marine life — corals,
+           fish, invertebrates — evolved in seawater with a very consistent
+           salt concentration. A big storm disrupts that by flooding the
+           nearshore ocean with fresh rainwater.",
           "Corals are built for salty ocean water. When a storm washes a lot of
-           fresh water off the land, it dilutes the ocean near shore — like watering
-           down a sports drink. That sudden change shocks the corals and can cause
+           fresh water off the land, it dilutes the ocean near shore. That sudden 
+           change shocks the corals and can cause
            bleaching or even death, even if the water temperature is totally normal.",
           "A big drop in salinity close to shore after a storm is one of the fastest
            signs that runoff from the land has reached the reef. It's often the
@@ -588,8 +586,8 @@ ui <- page_navbar(
 
         make_param_card(
           "sun", "fDOM (Fluorescent Dissolved Organic Matter — pronounced \"eff-dom\")",
-          "fDOM stands for fluorescent dissolved organic matter — a mouthful, but
-           the idea is simple. It measures the murky, brownish stuff that
+          "fDOM stands for fluorescent dissolved organic matter.
+          There are many types of fDOM. Some fDOM components measure the murky, brownish stuff that
            dissolves in water when leaves, soil, and plants decay on land. You've
            probably seen this before: after heavy rain, streams and rivers turn
            a dark brown or tea color. That color is organic matter.",
@@ -772,6 +770,19 @@ server <- function(input, output, session) {
 
     if (nrow(df) == 0) return()
 
+    make_popup <- function(d) {
+      paste0(
+        "<b>Sample: ", d$sample_id, "</b><br>",
+        "Island: ", d$island, "<br>",
+        "Collected: ", format(d$collected_hst, "%b %d, %Y %I:%M %p HST"),
+        if_else(
+          !is.na(d$notes) & nchar(trimws(d$notes)) > 0,
+          paste0("<br><i>", d$notes, "</i>"),
+          ""
+        )
+      )
+    }
+
     proxy |>
       addCircleMarkers(
         data        = df,
@@ -779,26 +790,10 @@ server <- function(input, output, session) {
         lat         = ~latitude,
         radius      = 7,
         color       = "white",
-        fillColor   = ~tod_pal(time_of_day),
+        fillColor   = marker_color,
         fillOpacity = 0.85,
         weight      = 1.5,
-        popup       = ~paste0(
-          "<b>Sample: ", sample_id, "</b><br>",
-          "Island: ", island, "<br>",
-          "Collected: ", format(collected_hst, "%b %d, %Y %I:%M %p HST"),
-          if_else(
-            !is.na(notes) & nchar(trimws(notes)) > 0,
-            paste0("<br><i>", notes, "</i>"),
-            ""
-          )
-        )
-      ) |>
-      addLegend(
-        position  = "bottomright",
-        pal       = tod_pal,
-        values    = df$time_of_day,
-        title     = "Time of Day",
-        opacity   = 0.9
+        popup       = make_popup(df)
       )
   })
 }
