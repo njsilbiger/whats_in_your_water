@@ -25,8 +25,6 @@ library(fontawesome)
 # ------------------------------------------------------------------
 
 source("01_load_clean_data.R")
-data_loaded_at <- format(Sys.time(), "%b %d, %Y %I:%M %p HST")
-
 df_app <- df_clean |>
   mutate(
     hour        = hour(collected_hst),
@@ -46,9 +44,6 @@ tod_choices      <- c("Daytime", "Nighttime")
 date_vals    <- sort(unique(df_app$date))
 date_choices <- setNames(as.character(date_vals), format(date_vals, "%b %d, %Y"))
 total_samples    <- nrow(df_app)
-
-# Update this number as lab results come in
-samples_analyzed <- 0
 
 marker_color <- "#f4a261"
 
@@ -357,7 +352,8 @@ ui <- page_navbar(
         tags$small(
           class = "text-muted",
           HTML(fa("rotate", height = "0.8em")),
-          " Data last loaded: ", data_loaded_at
+          " Data last loaded: ",
+          textOutput("data_loaded_at_text", inline = TRUE)
         ),
 
         # ---- Funding acknowledgment --------------------------------
@@ -487,58 +483,7 @@ ui <- page_navbar(
       ),
 
       # ---- Progress indicator ------------------------------------
-      {
-        pct        <- round(samples_analyzed / total_samples * 100)
-        bar_color  <- if (pct == 0) "bg-secondary" else "bg-primary"
-        bar_width  <- paste0(max(pct, 2), "%")   # keep bar visible at 0%
-
-        div(
-          class = "progress-section",
-          div(
-            class = "progress-label",
-            tags$span(
-              class = "big-count",
-              samples_analyzed,
-              tags$span(
-                class = "total-count",
-                paste0(" of ~", total_samples, " samples analyzed")
-              )
-            ),
-            tags$span(class = "total-count", paste0(pct, "% complete"))
-          ),
-          tags$div(
-            class = "progress",
-            role  = "progressbar",
-            `aria-valuenow`  = pct,
-            `aria-valuemin`  = 0,
-            `aria-valuemax`  = 100,
-            tags$div(
-              class = paste("progress-bar", bar_color),
-              style = paste0("width: ", bar_width, ";")
-            )
-          ),
-          tags$small(
-            class = "text-muted mt-2 d-block",
-            HTML(fa("rotate", height = "0.85em")),
-            " Results are added to the map as each batch comes back from the lab."
-          ),
-          tags$div(
-            class = "mt-3 text-center",
-            tags$a(
-              href    = "javascript:void(0);",
-              onclick = paste0(
-                "document.querySelectorAll('.nav-link').forEach(",
-                "function(el){",
-                "  if(el.textContent.trim()==='Data') el.click();",
-                "});"
-              ),
-              class = "btn btn-primary btn-sm",
-              HTML(fa("map-location-dot", fill = "white", height = "0.9em")),
-              " Show me the data!"
-            )
-          )
-        )
-      },
+      uiOutput("progress_section"),
 
       # ---- Info banner -------------------------------------------
       div(
@@ -841,6 +786,123 @@ ui <- page_navbar(
 
 server <- function(input, output, session) {
 
+  # Track when data was last successfully loaded
+  data_loaded_rv <- reactiveVal(format(Sys.time(), "%b %d, %Y %I:%M %p HST"))
+
+  output$data_loaded_at_text <- renderText({ data_loaded_rv() })
+
+  # Live data: re-reads Google Sheets every 5 minutes.
+  # Falls back to startup data if the network call fails.
+  live_data <- reactive({
+    invalidateLater(5 * 60 * 1000)
+
+    tryCatch({
+      suppressMessages(source("01_load_clean_data.R", local = TRUE))
+      data_loaded_rv(format(Sys.time(), "%b %d, %Y %I:%M %p HST"))
+      list(
+        df = df_clean |>
+          mutate(
+            hour        = hour(collected_hst),
+            minute      = minute(collected_hst),
+            time_of_day = if_else(
+              (hour * 60 + minute) >= (6 * 60) & (hour * 60 + minute) < (18 * 60 + 45),
+              "Daytime", "Nighttime"
+            ),
+            date = as.Date(collected_hst, tz = "Pacific/Honolulu")
+          ),
+        samples_analyzed = samples_analyzed
+      )
+    }, error = function(e) {
+      list(df = df_app, samples_analyzed = 0L)
+    })
+  })
+
+  # Update filter choices when new islands or dates appear in the data.
+  # Preserves the user's current selections; auto-selects genuinely new choices.
+  prev_island_choices <- reactiveVal(island_choices)
+  prev_date_choices   <- reactiveVal(unname(date_choices))
+
+  observe({
+    ld <- live_data()
+    df <- ld$df
+
+    new_island_choices <- sort(unique(df$island))
+    new_date_vals      <- sort(unique(df$date))
+    new_date_choices   <- setNames(as.character(new_date_vals),
+                                   format(new_date_vals, "%b %d, %Y"))
+
+    new_islands <- setdiff(new_island_choices, prev_island_choices())
+    if (length(new_islands) > 0 ||
+        !identical(new_island_choices, prev_island_choices())) {
+      updateCheckboxGroupInput(session, "island",
+        choices  = new_island_choices,
+        selected = union(isolate(input$island), new_islands)
+      )
+      prev_island_choices(new_island_choices)
+    }
+
+    new_dates <- setdiff(as.character(new_date_vals), prev_date_choices())
+    if (length(new_dates) > 0 ||
+        !identical(as.character(new_date_vals), prev_date_choices())) {
+      updateCheckboxGroupInput(session, "sampling_date",
+        choices  = new_date_choices,
+        selected = union(isolate(input$sampling_date), new_dates)
+      )
+      prev_date_choices(as.character(new_date_vals))
+    }
+  })
+
+  # Progress bar (reactive so it updates when samples_analyzed changes)
+  output$progress_section <- renderUI({
+    ld  <- live_data()
+    sa  <- ld$samples_analyzed
+    tot <- nrow(ld$df)
+    pct       <- round(sa / tot * 100)
+    bar_color <- if (pct == 0) "bg-secondary" else "bg-primary"
+    bar_width <- paste0(max(pct, 2), "%")
+
+    div(
+      class = "progress-section",
+      div(
+        class = "progress-label",
+        tags$span(
+          class = "big-count",
+          sa,
+          tags$span(class = "total-count",
+                    paste0(" of ~", tot, " samples analyzed"))
+        ),
+        tags$span(class = "total-count", paste0(pct, "% complete"))
+      ),
+      tags$div(
+        class = "progress",
+        role  = "progressbar",
+        `aria-valuenow` = pct, `aria-valuemin` = 0, `aria-valuemax` = 100,
+        tags$div(class = paste("progress-bar", bar_color),
+                 style = paste0("width: ", bar_width, ";"))
+      ),
+      tags$small(
+        class = "text-muted mt-2 d-block",
+        HTML(fa("rotate", height = "0.85em")),
+        " Results are added to the map as each batch comes back from the lab."
+      ),
+      tags$div(
+        class = "mt-3 text-center",
+        tags$a(
+          href    = "javascript:void(0);",
+          onclick = paste0(
+            "document.querySelectorAll('.nav-link').forEach(",
+            "function(el){",
+            "  if(el.textContent.trim()==='Data') el.click();",
+            "});"
+          ),
+          class = "btn btn-primary btn-sm",
+          HTML(fa("map-location-dot", fill = "white", height = "0.9em")),
+          " Show me the data!"
+        )
+      )
+    )
+  })
+
   # Download filtered data (public columns only)
   output$download_data <- downloadHandler(
     filename = function() {
@@ -853,17 +915,18 @@ server <- function(input, output, session) {
     }
   )
 
-  # Select all / deselect all dates
+  # Select all / deselect all dates (uses current live choices)
   observeEvent(input$date_select_all, {
-    updateCheckboxGroupInput(session, "sampling_date", selected = date_choices)
+    updateCheckboxGroupInput(session, "sampling_date",
+                             selected = prev_date_choices())
   })
   observeEvent(input$date_deselect_all, {
     updateCheckboxGroupInput(session, "sampling_date", selected = character(0))
   })
 
-  # Reactive filtered data
+  # Reactive filtered data (uses live_data so updates automatically)
   df_filtered <- reactive({
-    df_app |>
+    live_data()$df |>
       filter(
         island        %in% input$island,
         time_of_day   %in% input$time_of_day,

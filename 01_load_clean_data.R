@@ -157,7 +157,25 @@ df_clean <- df_clean |>
 
 
 # --------------------------------------------------------------
-# 6. Interactive map for visual coordinate verification
+# 6. Read samples_analyzed from Config sheet tab
+# --------------------------------------------------------------
+#
+# In your Google Sheet, add a tab named "Config" with two columns:
+#   key              | value
+#   samples_analyzed | 0
+#
+# Update the value in the sheet whenever a new batch of results
+# comes in — the app will pick it up automatically on the next
+# data refresh (every 5 minutes).
+
+samples_analyzed <- tryCatch({
+  config <- read_sheet(sheet_url, sheet = "Config", col_names = TRUE)
+  as.integer(config$value[config$key == "samples_analyzed"])
+}, error = function(e) 0L)
+
+
+# --------------------------------------------------------------
+# 7. Interactive map for visual coordinate verification
 # --------------------------------------------------------------
 
 library(leaflet)
