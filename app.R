@@ -34,11 +34,16 @@ df_app <- df_clean |>
     time_of_day = if_else(
       (hour * 60 + minute) >= (6 * 60) & (hour * 60 + minute) < (18 * 60 + 45),
       "Daytime", "Nighttime"
-    )
+    ),
+    date = as.Date(collected_hst, tz = "Pacific/Honolulu")
   )
 
 island_choices   <- sort(unique(df_app$island))
 tod_choices      <- c("Daytime", "Nighttime")
+
+# Named vector: display label -> ISO date string used for filtering
+date_vals    <- sort(unique(df_app$date))
+date_choices <- setNames(as.character(date_vals), format(date_vals, "%b %d, %Y"))
 total_samples    <- nrow(df_app)
 
 # Update this number as lab results come in
@@ -193,6 +198,33 @@ app_css <- "
   .progress { height: 14px; border-radius: 7px; }
   .progress-bar { border-radius: 7px; transition: width 0.6s ease; }
 
+  /* ---- Funding logos ---- */
+  .funding-section {
+    margin-top: auto;
+    padding-top: 14px;
+  }
+  .funding-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6c757d;
+    margin-bottom: 10px;
+  }
+  .logo-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .logo-grid img {
+    max-height: 44px;
+    max-width: 100%;
+    width: auto;
+    object-fit: contain;
+    filter: none;
+  }
+
   /* ---- Parameter section heading ---- */
   .param-section-title {
     font-size: 1.25rem;
@@ -242,6 +274,19 @@ ui <- page_navbar(
           "and dissolved organic matter — important indicators of coral reef health."
         ),
         p(
+          tags$a(
+            href    = "javascript:void(0);",
+            onclick = paste0(
+              "document.querySelectorAll('.nav-link').forEach(",
+              "function(el){",
+              "  if(el.textContent.trim()==='What are we measuring?') el.click();",
+              "});"
+            ),
+            HTML(fa("circle-arrow-right", height = "0.9em")),
+            " Learn what we are measuring and why"
+          )
+        ),
+        p(
           "Use the filters below to explore samples by island and time of",
           "collection. Click any marker on the map for collection details."
         ),
@@ -262,6 +307,44 @@ ui <- page_navbar(
           label    = "Time of Day",
           choices  = tod_choices,
           selected = tod_choices
+        ),
+
+        hr(),
+
+        checkboxGroupInput(
+          inputId  = "sampling_date",
+          label    = "Sampling Date",
+          choices  = date_choices,
+          selected = date_choices
+        ),
+
+        # ---- Funding acknowledgment --------------------------------
+        hr(),
+        div(
+          class = "funding-section",
+          div(class = "funding-label", "Funding generously provided by"),
+          div(
+            class = "logo-grid",
+            tags$a(
+              href = "https://seagrant.soest.hawaii.edu", target = "_blank",
+              tags$img(src = "logo_seagrant.png",
+                       alt = "University of Hawaiʻi Sea Grant College Program",
+                       title = "University of Hawaiʻi Sea Grant College Program")
+            ),
+            tags$a(
+              href = "https://www.soest.hawaii.edu", target = "_blank",
+              tags$img(src = "logo_soest.png",
+                       alt = "School of Ocean and Earth Science and Technology (SOEST)",
+                       title = "School of Ocean and Earth Science and Technology (SOEST)")
+            ),
+            tags$a(
+              href = "https://manoa.hawaii.edu", target = "_blank",
+              tags$img(src = "logo_uhmanoa.png",
+                       alt = "University of Hawaiʻi at Mānoa",
+                       title = "University of Hawaiʻi at Mānoa",
+                       style = "max-height: 30px;")
+            )
+          )
         )
       ),
 
@@ -396,6 +479,21 @@ ui <- page_navbar(
             class = "text-muted mt-2 d-block",
             HTML(fa("rotate", height = "0.85em")),
             " Results are added to the map as each batch comes back from the lab."
+          ),
+          tags$div(
+            class = "mt-3 text-center",
+            tags$a(
+              href    = "javascript:void(0);",
+              onclick = paste0(
+                "document.querySelectorAll('.nav-link').forEach(",
+                "function(el){",
+                "  if(el.textContent.trim()==='Data') el.click();",
+                "});"
+              ),
+              class = "btn btn-primary btn-sm",
+              HTML(fa("map-location-dot", fill = "white", height = "0.9em")),
+              " Show me the data!"
+            )
           )
         )
       },
@@ -631,8 +729,9 @@ server <- function(input, output, session) {
   df_filtered <- reactive({
     df_app |>
       filter(
-        island      %in% input$island,
-        time_of_day %in% input$time_of_day
+        island        %in% input$island,
+        time_of_day   %in% input$time_of_day,
+        as.character(date) %in% input$sampling_date
       )
   })
 
