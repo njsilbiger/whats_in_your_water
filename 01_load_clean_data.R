@@ -14,8 +14,11 @@ library(googlesheets4)
 # 1. Authenticate with Google and load data
 # --------------------------------------------------------------
 
-# Authenticate using your Google account (opens browser on first run;
-# subsequent runs will use a cached token if available)
+# Authenticate using cached OAuth token.
+# For local use, the token is stored in the default gargle cache.
+# For shinyapps.io deployment, a token is cached in .secrets/ and
+# deployed with the app (add .secrets/ to .gitignore, not .rscignore).
+options(gargle_oauth_cache = ".secrets")
 gs4_auth(email = "nyssa.silbiger@gmail.com")
 
 sheet_url <- "https://docs.google.com/spreadsheets/d/1iWRGC9ciIXbwNTaAtEbVjTVLGIQ2pgk2RGrgAApPVRs/edit?gid=239003339"
