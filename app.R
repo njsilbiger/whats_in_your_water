@@ -25,6 +25,7 @@ library(fontawesome)
 # ------------------------------------------------------------------
 
 source("01_load_clean_data.R")
+data_loaded_at <- format(Sys.time(), "%b %d, %Y %I:%M %p HST")
 
 df_app <- df_clean |>
   mutate(
@@ -247,6 +248,26 @@ ui <- page_navbar(
     primary    = "#0077b6"
   ),
 
+  tags$head(
+    tags$meta(
+      name    = "description",
+      content = paste(
+        "What's In Your Water? is a community science project collecting",
+        "ocean water samples across O\u02BBahu and Maui Nui to assess coastal",
+        "water quality after the March 2026 Kona Low storm. Explore",
+        "sample locations and follow along as lab results come in."
+      )
+    ),
+    tags$meta(property = "og:title",
+              content  = "What\u2019s In Your Water? \u2014 Hawai\u02BBi Ocean Sampling"),
+    tags$meta(property = "og:description",
+              content  = paste(
+                "Community science tracking coastal water quality across",
+                "O\u02BBahu and Maui Nui after the March 2026 Kona Low storm."
+              )),
+    tags$meta(property = "og:type", content = "website")
+  ),
+
   tags$style(HTML(app_css)),
 
   # ================================================================
@@ -309,11 +330,34 @@ ui <- page_navbar(
 
         hr(),
 
+        tags$div(
+          class = "d-flex justify-content-between align-items-center mb-1",
+          tags$label("Sampling Date", class = "fw-semibold mb-0"),
+          tags$span(
+            actionLink("date_select_all",   "All",  class = "small"),
+            " / ",
+            actionLink("date_deselect_all", "None", class = "small")
+          )
+        ),
         checkboxGroupInput(
           inputId  = "sampling_date",
-          label    = "Sampling Date",
+          label    = NULL,
           choices  = date_choices,
           selected = date_choices
+        ),
+
+        # ---- Download ------------------------------------------
+        downloadButton(
+          "download_data",
+          label = "Download Samples (CSV)",
+          class = "btn-sm btn-outline-primary w-100"
+        ),
+
+        # ---- Data freshness ----------------------------------------
+        tags$small(
+          class = "text-muted",
+          HTML(fa("rotate", height = "0.8em")),
+          " Data last loaded: ", data_loaded_at
         ),
 
         # ---- Funding acknowledgment --------------------------------
@@ -707,8 +751,82 @@ ui <- page_navbar(
             but there are still ways to help! Share this dashboard with your
             friends, family, and teachers. Follow along as results come in.
             And if you're interested in future sampling events or reef
-            monitoring in your area, reach out — community scientists are
-            always needed."
+            monitoring in your area, reach out to the research team below —
+            community scientists are always needed."
+          )
+        )
+      ),
+
+      # ---- Cite these data ---------------------------------------
+      div(class = "param-section-title mt-4",
+        HTML(fa("quote-left", fill = "#0077b6", height = "1em")),
+        " Cite These Data"
+      ),
+
+      div(
+        class = "alert alert-light border",
+        style = "font-size: 0.9rem; font-family: monospace;",
+        "Silbiger, N., Kealoha, A., & Kahanamoku, S. (2026).",
+        tags$i(
+          "What\u2019s In Your Water? \u2014 Hawai\u02BBi Coastal Water Quality",
+          "Samples, March 2026 Kona Low."
+        ),
+        "Zenodo.",
+        tags$span(
+          class = "text-muted",
+          "DOI: TBD"
+        )
+      ),
+
+      # ---- Contact -----------------------------------------------
+      div(class = "param-section-title mt-4",
+        HTML(fa("envelope", fill = "#0077b6", height = "1em")),
+        " Contact"
+      ),
+
+      layout_column_wrap(
+        width = 1 / 3,
+        fill  = FALSE,
+        card(
+          card_body(
+            tags$p(tags$strong("Dr. Nyssa Silbiger"), class = "mb-1"),
+            tags$p(
+              class = "mb-1",
+              tags$a(href = "mailto:silbiger@hawaii.edu", "silbiger@hawaii.edu")
+            ),
+            tags$p(
+              class = "mb-0",
+              tags$a(href = "https://silbigerlab.com", target = "_blank",
+                     "silbigerlab.com")
+            )
+          )
+        ),
+        card(
+          card_body(
+            tags$p(tags$strong("Dr. Andrea Kealoha"), class = "mb-1"),
+            tags$p(
+              class = "mb-1",
+              tags$a(href = "mailto:andreake@hawaii.edu", "andreake@hawaii.edu")
+            ),
+            tags$p(
+              class = "mb-0",
+              tags$a(href = "https://andreake6.wixsite.com/andreakealoha",
+                     target = "_blank", "andreakealoha")
+            )
+          )
+        ),
+        card(
+          card_body(
+            tags$p(tags$strong("Dr. Sara Kahanamoku"), class = "mb-1"),
+            tags$p(
+              class = "mb-1",
+              tags$a(href = "mailto:sara.kahanamoku@hawaii.edu", "sara.kahanamoku@hawaii.edu")
+            ),
+            tags$p(
+              class = "mb-0",
+              tags$a(href = "https://www.skahanamoku.com/", target = "_blank",
+                     "skahanamoku.com")
+            )
           )
         )
       )
@@ -722,6 +840,26 @@ ui <- page_navbar(
 # ------------------------------------------------------------------
 
 server <- function(input, output, session) {
+
+  # Download filtered data (public columns only)
+  output$download_data <- downloadHandler(
+    filename = function() {
+      paste0("whats_in_your_water_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      df_filtered() |>
+        select(island, sample_id, latitude, longitude) |>
+        write.csv(file, row.names = FALSE)
+    }
+  )
+
+  # Select all / deselect all dates
+  observeEvent(input$date_select_all, {
+    updateCheckboxGroupInput(session, "sampling_date", selected = date_choices)
+  })
+  observeEvent(input$date_deselect_all, {
+    updateCheckboxGroupInput(session, "sampling_date", selected = character(0))
+  })
 
   # Reactive filtered data
   df_filtered <- reactive({
@@ -768,7 +906,17 @@ server <- function(input, output, session) {
       clearMarkers() |>
       clearControls()
 
-    if (nrow(df) == 0) return()
+    if (nrow(df) == 0) {
+      proxy |>
+        addControl(
+          html = '<div style="background:white;padding:10px 14px;border-radius:6px;
+                              border:1px solid #dee2e6;font-size:13px;color:#6c757d;">
+                    No samples match the current filters.
+                  </div>',
+          position = "topright"
+        )
+      return()
+    }
 
     make_popup <- function(d) {
       paste0(
