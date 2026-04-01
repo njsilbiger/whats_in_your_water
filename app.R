@@ -101,6 +101,47 @@ make_param_card <- function(icon_name, param_name, definition,
 
 
 # ------------------------------------------------------------------
+# Helper: build a press / media card
+# ------------------------------------------------------------------
+
+make_press_card <- function(outlet, date_str, headline, excerpt, url,
+                            img_url = NULL, img_alt = "") {
+  img_top <- if (!is.null(img_url)) {
+    tags$a(
+      href = url, target = "_blank",
+      tags$img(src = img_url, alt = img_alt, class = "press-card-img")
+    )
+  } else {
+    tags$div(
+      class = "press-img-placeholder",
+      HTML(fa("newspaper", fill = "white", height = "2.5em"))
+    )
+  }
+
+  card(
+    height = "100%",
+    img_top,
+    card_body(
+      div(
+        class = "d-flex justify-content-between align-items-center mb-2",
+        tags$span(class = "badge bg-secondary", outlet),
+        tags$small(class = "text-muted", date_str)
+      ),
+      tags$p(class = "fw-semibold mb-2 lh-sm", headline),
+      tags$p(class = "small text-muted mb-3", excerpt),
+      tags$a(
+        href   = url,
+        target = "_blank",
+        class  = "btn btn-sm btn-outline-primary",
+        HTML(fa("arrow-up-right-from-square", height = "0.85em")),
+        " Read article"
+      )
+    )
+  )
+}
+
+
+# ------------------------------------------------------------------
 # CSS
 # ------------------------------------------------------------------
 
@@ -219,6 +260,25 @@ app_css <- "
     filter: none;
   }
 
+  /* ---- Press cards ---- */
+  .press-card-img {
+    width: 100%;
+    height: 180px;
+    object-fit: cover;
+    border-radius: calc(var(--bs-card-inner-border-radius))
+                   calc(var(--bs-card-inner-border-radius)) 0 0;
+    display: block;
+  }
+  .press-img-placeholder {
+    height: 180px;
+    background: linear-gradient(135deg, #0077b6 0%, #023e8a 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: calc(var(--bs-card-inner-border-radius))
+                   calc(var(--bs-card-inner-border-radius)) 0 0;
+  }
+
   /* ---- Parameter section heading ---- */
   .param-section-title {
     font-size: 1.25rem;
@@ -298,6 +358,19 @@ ui <- page_navbar(
             ),
             HTML(fa("circle-arrow-right", height = "0.9em")),
             " Learn what we are measuring and why"
+          )
+        ),
+        p(
+          tags$a(
+            href    = "javascript:void(0);",
+            onclick = paste0(
+              "document.querySelectorAll('.nav-link').forEach(",
+              "function(el){",
+              "  if(el.textContent.trim()==='Press') el.click();",
+              "});"
+            ),
+            HTML(fa("newspaper", height = "0.9em")),
+            " See press coverage of this project"
           )
         ),
         p(
@@ -689,6 +762,34 @@ ui <- page_navbar(
         ),
 
         accordion_panel(
+          title = "How can I find out if there are active public health warnings about the water?",
+          icon  = HTML(fa("triangle-exclamation", fill = "#0077b6", height = "1em")),
+          p(
+            "The Hawai\u02BBi State Department of Health maintains an interactive",
+            "map of current and recent beach and water quality advisories,",
+            "warnings, and closures across the state. You can search by island",
+            "or location to see whether any sites near you are currently flagged",
+            "for unsafe water conditions."
+          ),
+          p(
+            tags$a(
+              href   = "https://eha-cloud.doh.hawaii.gov/EHP/#!/viewer",
+              target = "_blank",
+              class  = "btn btn-primary btn-sm",
+              HTML(fa("arrow-up-right-from-square", fill = "white", height = "0.85em")),
+              " Hawai\u02BBi DOH Environmental Health Portal"
+            )
+          ),
+          p(
+            class = "small text-muted mb-0",
+            "Note: the DOH portal tracks official advisories issued by state",
+            "agencies. The samples in this project are part of a separate",
+            "research effort and will be reported here as results come in from",
+            "the lab — they are not the source of DOH advisories."
+          )
+        ),
+
+        accordion_panel(
           title = "Can I still get involved?",
           icon  = HTML(fa("hand", fill = "#0077b6", height = "1em")),
           p(
@@ -772,6 +873,93 @@ ui <- page_navbar(
               tags$a(href = "https://www.skahanamoku.com/", target = "_blank",
                      "skahanamoku.com")
             )
+          )
+        )
+      )
+    )
+  ),
+
+
+  # ================================================================
+  # Page 3: Press
+  # ================================================================
+
+  nav_panel(
+    title = "Press",
+    fillable = FALSE,
+
+    div(
+      class = "container-lg py-4",
+
+      h3(
+        class = "mb-1",
+        HTML(fa("newspaper", fill = "#0077b6", height = "1em")),
+        " In the News"
+      ),
+      p(
+        class = "text-muted mb-4",
+        "Media coverage of the What\u2019s In Your Water? project and the",
+        "March 2026 Kona Low storm."
+      ),
+
+      layout_column_wrap(
+        width = 1 / 3,
+        heights_equal = "row",
+
+        make_press_card(
+          outlet   = "Hawai\u02BBi Public Radio",
+          date_str = "April 1, 2026",
+          headline = "Citizen scientists collect hundreds of ocean samples to test storm runoff effects",
+          excerpt  = paste(
+            "More than 100 community volunteers — nurses, students, surfers,",
+            "and families — collected over 700 samples from coastlines across",
+            "O\u02BBahu and Maui Nui. Reported by Savannah Harriman-Pote."
+          ),
+          url     = paste0(
+            "https://www.hawaiipublicradio.org/local-news/2026-04-01/",
+            "citizen-scientists-collect-hundreds-of-ocean-samples-to-test-storm-runoff-effects"
+          ),
+          img_url = paste0(
+            "https://npr.brightspotcdn.com/dims4/default/5cf751e/2147483647/",
+            "strip/true/crop/1920x1440+0+0/resize/880x660!/quality/90/",
+            "?url=http%3A%2F%2Fnpr-brightspot.s3.amazonaws.com%2F75%2F72%2F",
+            "7a641eea47f1b16fbd5fe1f19292%2Fsurfingsample.jpg"
+          ),
+          img_alt = "A volunteer holds a water sample collected while out surfing near L\u0113\u02BAahi."
+        ),
+
+        make_press_card(
+          outlet   = "Maui Now",
+          date_str = "March 27, 2026",
+          headline = "Community event this Sunday to test coastal water quality following kona storm",
+          excerpt  = paste(
+            "The University of Hawai\u02BBi called on Maui volunteers to collect",
+            "ocean water samples at beaches, surf spots, and fishing spots ahead",
+            "of the March 29 community sampling event."
+          ),
+          url     = paste0(
+            "https://mauinow.com/2026/03/27/",
+            "community-event-this-sunday-to-test-coastal-water-quality-following-kona-storm/"
+          ),
+          img_url = paste0(
+            "https://media.mauinow.com/file/mauinow/2026/03/",
+            "Screenshot-2026-03-23-at-1.28.29-PM-824x1024.png"
+          ),
+          img_alt = "Kona storm impacts, March 2026. PC: County of Maui."
+        ),
+
+        make_press_card(
+          outlet   = "Hawaii News Now",
+          date_str = "March 28, 2026",
+          headline = "Nearly a week after the kona storms, more effects on health are emerging",
+          excerpt  = paste(
+            "Health officials warned of bacterial contamination risks from",
+            "floodwaters entering the ocean, as UH researchers mobilized",
+            "community scientists to sample beaches statewide. Reported by Ben Gutierrez."
+          ),
+          url     = paste0(
+            "https://www.hawaiinewsnow.com/2026/03/28/",
+            "nearly-week-after-kona-storms-more-effects-health-are-emerging/"
           )
         )
       )
