@@ -364,16 +364,16 @@ ui <- page_navbar(
           div(
             class = "logo-grid",
             tags$a(
+              href = "https://www.soest.hawaii.edu", target = "_blank",
+              tags$img(src = "https://www.soest.hawaii.edu/soest_web/logos/soest_logo_textline_307C_white_1000px.jpg",
+                       alt = "School of Ocean and Earth Science and Technology (SOEST)",
+                       title = "School of Ocean and Earth Science and Technology (SOEST)")
+            ),
+            tags$a(
               href = "https://seagrant.soest.hawaii.edu", target = "_blank",
               tags$img(src = "logo_seagrant.png",
                        alt = "University of Hawaiʻi Sea Grant College Program",
                        title = "University of Hawaiʻi Sea Grant College Program")
-            ),
-            tags$a(
-              href = "https://www.soest.hawaii.edu", target = "_blank",
-              tags$img(src = "logo_soest.png",
-                       alt = "School of Ocean and Earth Science and Technology (SOEST)",
-                       title = "School of Ocean and Earth Science and Technology (SOEST)")
             ),
             tags$a(
               href = "https://manoa.hawaii.edu", target = "_blank",
