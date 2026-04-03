@@ -456,6 +456,22 @@ ui <- page_navbar(
               choices  = island_choices,
               selected = island_choices
             ),
+            selectizeInput(
+              inputId  = "moku_filter",
+              label    = "Moku",
+              choices  = c("All moku" = ""),
+              selected = "",
+              multiple = FALSE,
+              options  = list(placeholder = "All moku")
+            ),
+            selectizeInput(
+              inputId  = "ahupuaa_filter",
+              label    = "Ahupua\u02BBa",
+              choices  = c("All ahupua\u02BBa" = ""),
+              selected = "",
+              multiple = FALSE,
+              options  = list(placeholder = "All ahupua\u02BBa")
+            ),
             tags$div(
               class = "d-flex justify-content-between align-items-center mb-1 mt-2",
               tags$label("Sampling Date", class = "fw-semibold mb-0"),
@@ -874,6 +890,7 @@ ui <- page_navbar(
         " Cite These Data"
       ),
 
+      tags$p(class = "small text-muted mb-2", "Water quality data:"),
       div(
         class = "alert alert-light border",
         style = "font-size: 0.9rem; font-family: monospace;",
@@ -883,9 +900,29 @@ ui <- page_navbar(
           "Samples, March 2026 Kona Low."
         ),
         "Zenodo.",
-        tags$span(
-          class = "text-muted",
-          "DOI: TBD"
+        tags$span(class = "text-muted", "DOI: TBD")
+      ),
+
+      tags$p(class = "small text-muted mb-2", "Ahupua\u02BBa boundary data:"),
+      div(
+        class = "alert alert-light border",
+        style = "font-size: 0.9rem; font-family: monospace;",
+        "Office of Hawaiian Affairs (OHA) and Hawai\u02BBi Statewide GIS Program,",
+        "Office of Planning and Sustainable Development, State of Hawai\u02BBi.",
+        tags$i("Ahupua\u02BBa (Historic Land Divisions)."),
+        "Original layer: October 2009; last updated February 2024.",
+        "Distributed via Hawai\u02BBi Statewide GIS Program.",
+        tags$a(
+          href   = "https://geodata.hawaii.gov/arcgis/rest/services/HistoricCultural/MapServer/1",
+          target = "_blank",
+          style  = "word-break: break-all;",
+          "geodata.hawaii.gov"
+        ),
+        "; full metadata:",
+        tags$a(
+          href   = "https://files.hawaii.gov/dbedt/op/gis/data/ahupuaa.pdf",
+          target = "_blank",
+          "ahupuaa.pdf"
         )
       ),
 
@@ -1235,6 +1272,42 @@ server <- function(input, output, session) {
     }
   })
 
+  # ---- Cascading moku / ahupuaʻa filters --------------------------------
+
+  # When island selection changes, repopulate moku choices and reset ahupuaʻa
+  observeEvent(input$island, {
+    moku_opts <- live_data()$df |>
+      filter(island %in% input$island, !is.na(moku)) |>
+      pull(moku) |>
+      unique() |>
+      sort()
+    updateSelectizeInput(session, "moku_filter",
+      choices  = c("All moku" = "", moku_opts),
+      selected = ""
+    )
+    updateSelectizeInput(session, "ahupuaa_filter",
+      choices  = c("All ahupua\u02BBa" = ""),
+      selected = ""
+    )
+  }, ignoreInit = TRUE)
+
+  # When moku changes, repopulate ahupuaʻa choices and reset selection
+  observeEvent(input$moku_filter, {
+    ahupuaa_opts <- live_data()$df |>
+      filter(
+        island %in% input$island,
+        if (nzchar(input$moku_filter)) moku == input$moku_filter else TRUE,
+        !is.na(ahupuaa)
+      ) |>
+      pull(ahupuaa) |>
+      unique() |>
+      sort()
+    updateSelectizeInput(session, "ahupuaa_filter",
+      choices  = c("All ahupua\u02BBa" = "", ahupuaa_opts),
+      selected = ""
+    )
+  }, ignoreInit = TRUE)
+
   # Progress bar (reactive so it updates when samples_analyzed changes)
   make_progress_bar <- function(label, n, tot) {
     pct       <- if (tot > 0) round(n / tot * 100) else 0
@@ -1352,12 +1425,21 @@ server <- function(input, output, session) {
       )
     }
 
-    live_data()$df |>
+    df <- live_data()$df |>
       filter(
-        island        %in% input$island,
-        # time_of_day   %in% input$time_of_day,
+        island %in% input$island,
         as.character(date) %in% input$sampling_date
       )
+
+    if (nzchar(input$moku_filter)) {
+      df <- df |> filter(moku == input$moku_filter)
+    }
+
+    if (nzchar(input$ahupuaa_filter)) {
+      df <- df |> filter(ahupuaa == input$ahupuaa_filter)
+    }
+
+    df
   })
 
   # Value box outputs
