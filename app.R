@@ -296,18 +296,41 @@ app_css <- "
     margin: 28px 0 16px 0;
   }
 
-  /* ---- Mobile responsive ---- */
+  /* ================================================================
+     MOBILE  (≤ 767 px)
+     Desktop layout is unchanged above. These rules replace the old
+     zoom: 0.5 hack with proper responsive layout so text is readable
+     and all tap targets meet minimum size.
+     ================================================================ */
+
   @media (max-width: 767px) {
 
-    /* ---- Data page: zoom out so desktop layout fits on phone ---- */
-    #data-tab {
-      zoom: 0.5;
-      overflow-x: hidden;
+    /* ---- Navbar brand: wrap gracefully rather than overflow ---- */
+    .navbar-brand {
+      font-size: 0.78rem;
+      white-space: normal;
+      line-height: 1.25;
+      max-width: 52vw;
     }
 
-    /* ---- Data page layout ----
-       fillable = TRUE sets overflow:hidden on the sidebar layout, which
-       collapses the map to zero height on mobile. Override to scrollable. */
+    /* ---- Nav tabs: horizontally scrollable row, no wrapping ---- */
+    .navbar-nav {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      padding-bottom: 2px;
+    }
+    .navbar-nav::-webkit-scrollbar { display: none; }
+    .navbar-nav .nav-link {
+      font-size: 0.8rem;
+      padding: 0.4rem 0.55rem;
+      white-space: nowrap;
+    }
+
+    /* ---- Sidebar layout: override fillable so content scrolls ----
+       fillable = TRUE locks overflow:hidden, which collapses the map
+       to zero height on small screens. */
     .bslib-sidebar-layout {
       height: auto !important;
       overflow: visible !important;
@@ -315,22 +338,59 @@ app_css <- "
     .bslib-sidebar-layout > .main {
       height: auto !important;
       overflow-y: auto !important;
+      padding: 6px !important;
     }
 
-    /* Map card and leaflet output: viewport-relative height */
-    #map-card {
-      height: auto !important;
+    /* ---- Sidebar toggle button: easy to tap ---- */
+    .bslib-sidebar-layout > .collapse-toggle {
+      min-width: 44px;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
+
+    /* ---- Sidebar panel: full-width drawer when open ---- */
+    .bslib-sidebar-layout .bslib-sidebar {
+      max-width: 100% !important;
+    }
+
+    /* ---- Map card and leaflet output ----
+       Overhead: navbar ~56px, 2 rows of value boxes ~168px,
+       card header ~44px, padding ~16px = ~284px total. */
+    #map-card { height: auto !important; }
     #map {
-      height: calc(100svh - 310px) !important;
-      min-height: 280px;
+      height: calc(100svh - 56px - 168px - 44px - 20px) !important;
+      min-height: 260px;
     }
 
-    /* Value boxes: tighter on mobile to leave room for the map */
-    .bslib-value-box { height: 70px !important; }
-    .value-box-title { font-size: 0.65rem !important; }
+    /* ---- Value boxes: compact 2-per-row grid ---- */
+    .bslib-value-box { height: 72px !important; min-width: 130px; }
+    .value-box-title { font-size: 0.62rem !important; }
+    .value-box-value { font-size: 0.9rem !important; }
 
-    /* Timeline: stack vertically on mobile */
+    /* ---- Main content column: fill the width ---- */
+    .bslib-main-col { padding-left: 6px !important; padding-right: 6px !important; }
+
+    /* ---- Buttons: comfortable tap targets ---- */
+    .btn     { min-height: 40px; }
+    .btn-sm  { min-height: 34px; font-size: 0.82rem; padding: 0.35rem 0.65rem; }
+
+    /* ---- Accordion: easier to tap open/close ---- */
+    .accordion-button { padding: 0.75rem 1rem; font-size: 0.9rem; }
+
+    /* ---- Leaflet popups: readable text, easy-to-hit close button ---- */
+    .leaflet-popup-content {
+      font-size: 0.9rem !important;
+      line-height: 1.55 !important;
+      min-width: 220px;
+    }
+    .leaflet-popup-close-button {
+      font-size: 1.4rem !important;
+      padding: 6px 10px !important;
+    }
+
+    /* ---- Timeline: stack vertically ---- */
     .timeline-track {
       flex-direction: column;
       align-items: center;
@@ -355,18 +415,31 @@ app_css <- "
     .step-title { text-align: left; min-height: unset; }
     .step-desc  { text-align: left; max-width: none; }
 
-    /* Navbar: shorter tab labels via abbreviated text trick */
-    .navbar-nav .nav-link { font-size: 0.82rem; padding: 0.4rem 0.5rem; }
+    /* ---- Progress section: tighter padding ---- */
+    .progress-section { padding: 12px 14px; }
+    .progress-label .big-count { font-size: 1.3rem; }
 
-    /* Funding logos: constrain and stack on small screens */
-    .funding-logos { width: 100%; }
-    .funding-logos img { max-height: 32px !important; }
+    /* ---- Funding logos: wrap and center on narrow screens ---- */
+    .funding-logos {
+      flex-wrap: wrap !important;
+      justify-content: center !important;
+      gap: 10px !important;
+    }
+    .funding-logos img,
+    .funding-logos a > img { max-height: 30px !important; }
 
-    /* Data page: remove horizontal padding so map fills width */
-    .bslib-main-col { padding-left: 6px !important; padding-right: 6px !important; }
+    /* ---- Content pages: tighter container padding ---- */
+    .container-lg {
+      padding-left: 12px !important;
+      padding-right: 12px !important;
+    }
 
-    /* Prevent value boxes from being too narrow */
-    .bslib-value-box { min-width: 140px; }
+    /* ---- Section headings: slightly smaller on mobile ---- */
+    .param-section-title { font-size: 1.05rem; margin: 20px 0 12px 0; }
+
+    /* ---- Input labels and small text: stay legible ---- */
+    .form-check-label { font-size: 0.88rem; }
+    .small, small     { font-size: 0.82rem !important; }
   }
 "
 
