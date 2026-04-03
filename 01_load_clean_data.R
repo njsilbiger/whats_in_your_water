@@ -194,6 +194,16 @@ if (!file.exists(ahupuaa_bounds_path)) {
   ahupuaa_sf <- st_read(ahupuaa_bounds_path, quiet = TRUE)
 }
 
+# Pre-compute a 5 km buffer around all ahupuaʻa polygons merged into one shape.
+# Used instead of st_distance (which has s2 winding-order issues) to decide
+# whether an unmatched sample is coastal (within 5 km of any ahupuaʻa) or
+# truly open ocean.  Uses UTM Zone 4N (EPSG 32604) for reliable metric units.
+ahupuaa_coastal_zone <- ahupuaa_sf |>
+  st_transform(crs = 32604) |>
+  st_buffer(dist = 5000) |>
+  st_union() |>
+  st_transform(crs = 4326)
+
 # Load or initialize the per-sample assignment cache
 if (file.exists(ahupuaa_cache_path)) {
   ahupuaa_cache <- read_csv(ahupuaa_cache_path, show_col_types = FALSE)
@@ -220,12 +230,17 @@ if (nrow(to_assign) > 0) {
                   crs = 4326, remove = FALSE)
 
   # Pass 1: exact spatial containment (sample within ahupuaʻa polygon)
+  # Note: one pair of overlapping polygons exists in the boundary file.
+  # arrange + distinct keeps the non-NA ahupuaa when a point falls in the
+  # overlap zone, preventing rows_update from erroring on duplicate keys.
   within_join <- st_join(
     pts,
     ahupuaa_sf |> select(ahupuaa, moku, mokupuni),
     join = st_within
   ) |>
-    st_drop_geometry()
+    st_drop_geometry() |>
+    arrange(sample_id, is.na(ahupuaa)) |>
+    distinct(sample_id, .keep_all = TRUE)
 
   # Pass 2: nearest-feature fallback for offshore/open-water samples
   unmatched <- within_join |> filter(is.na(ahupuaa)) |> pull(sample_id)
@@ -238,19 +253,23 @@ if (nrow(to_assign) > 0) {
       select(ahupuaa, moku, mokupuni) |>
       slice(nearest_idx)
 
-    # Distance to nearest ahupuaʻa boundary (metres)
-    dist_m <- st_distance(pts_unmatched, ahupuaa_sf[nearest_idx, ], by_element = TRUE)
+    # Determine which unmatched samples are within the 5 km coastal zone.
+    # Buffer containment is more reliable than st_distance with s2 geometry,
+    # which can return inflated values due to polygon winding-order issues.
+    in_coastal_zone <- lengths(
+      st_within(pts_unmatched, ahupuaa_coastal_zone)
+    ) > 0
 
     nearest_join <- bind_cols(
       pts_unmatched |> st_drop_geometry() |> select(sample_id),
-      nearest_vals
+      nearest_vals,
+      tibble(in_coastal_zone = in_coastal_zone)
     ) |>
-      # Samples > 100 m from any ahupuaʻa boundary are in open ocean —
-      # keep moku/mokupuni for geographic context but clear the ahupuaʻa name
       mutate(
-        ahupuaa = if_else(as.numeric(dist_m) > 5000, "Open Ocean", ahupuaa),
-        moku    = if_else(as.numeric(dist_m) > 5000, "Open Ocean", moku)
-      )
+        ahupuaa = if_else(!in_coastal_zone, "Open Ocean", ahupuaa),
+        moku    = if_else(!in_coastal_zone, "Open Ocean", moku)
+      ) |>
+      select(-in_coastal_zone)
 
     within_join <- within_join |>
       rows_update(nearest_join, by = "sample_id")
@@ -301,19 +320,21 @@ nutrients_analyzed <- get_config("nutrients_analyzed")
 
 # --------------------------------------------------------------
 # 9. Interactive map for visual coordinate verification
+#    (only runs in interactive sessions, not when sourced by the app)
 # --------------------------------------------------------------
 
-library(leaflet)
-
-leaflet(df_clean) |>
-  addProviderTiles(providers$Esri.WorldImagery) |>
-  addCircleMarkers(
-    lng = ~longitude,
-    lat = ~latitude,
-    label = ~sample_id,
-    radius = 6,
-    color = "white",
-    fillColor = "cyan",
-    fillOpacity = 0.8,
-    weight = 1.5
-  )
+if (interactive()) {
+  library(leaflet)
+  leaflet(df_clean) |>
+    addProviderTiles(providers$Esri.WorldImagery) |>
+    addCircleMarkers(
+      lng = ~longitude,
+      lat = ~latitude,
+      label = ~sample_id,
+      radius = 6,
+      color = "white",
+      fillColor = "cyan",
+      fillOpacity = 0.8,
+      weight = 1.5
+    )
+}

@@ -295,6 +295,79 @@ app_css <- "
     padding-bottom: 8px;
     margin: 28px 0 16px 0;
   }
+
+  /* ---- Mobile responsive ---- */
+  @media (max-width: 767px) {
+
+    /* ---- Data page: zoom out so desktop layout fits on phone ---- */
+    #data-tab {
+      zoom: 0.5;
+      overflow-x: hidden;
+    }
+
+    /* ---- Data page layout ----
+       fillable = TRUE sets overflow:hidden on the sidebar layout, which
+       collapses the map to zero height on mobile. Override to scrollable. */
+    .bslib-sidebar-layout {
+      height: auto !important;
+      overflow: visible !important;
+    }
+    .bslib-sidebar-layout > .main {
+      height: auto !important;
+      overflow-y: auto !important;
+    }
+
+    /* Map card and leaflet output: viewport-relative height */
+    #map-card {
+      height: auto !important;
+    }
+    #map {
+      height: calc(100svh - 310px) !important;
+      min-height: 280px;
+    }
+
+    /* Value boxes: tighter on mobile to leave room for the map */
+    .bslib-value-box { height: 70px !important; }
+    .value-box-title { font-size: 0.65rem !important; }
+
+    /* Timeline: stack vertically on mobile */
+    .timeline-track {
+      flex-direction: column;
+      align-items: center;
+      gap: 24px;
+    }
+    .timeline-track::before {
+      top: 0;
+      bottom: 0;
+      left: 28px;
+      right: auto;
+      width: 3px;
+      height: auto;
+      background: linear-gradient(to bottom, #0077b6 30%, #f4a261 60%, #adb5bd);
+    }
+    .timeline-step {
+      flex-direction: row;
+      align-items: flex-start;
+      gap: 16px;
+      width: 100%;
+    }
+    .step-icon-circle { margin-bottom: 0; flex-shrink: 0; }
+    .step-title { text-align: left; min-height: unset; }
+    .step-desc  { text-align: left; max-width: none; }
+
+    /* Navbar: shorter tab labels via abbreviated text trick */
+    .navbar-nav .nav-link { font-size: 0.82rem; padding: 0.4rem 0.5rem; }
+
+    /* Funding logos: constrain and stack on small screens */
+    .funding-logos { width: 100%; }
+    .funding-logos img { max-height: 32px !important; }
+
+    /* Data page: remove horizontal padding so map fills width */
+    .bslib-main-col { padding-left: 6px !important; padding-right: 6px !important; }
+
+    /* Prevent value boxes from being too narrow */
+    .bslib-value-box { min-width: 140px; }
+  }
 "
 
 
@@ -306,14 +379,15 @@ funding_banner <- tags$div(
   style = "background: #212529; padding: 14px 24px; margin-top: 32px;",
   div(class = "funding-label", "Funding generously provided by"),
   div(
-    style = "background: #ffffff; border-radius: 8px; padding: 12px 18px; display: inline-flex; flex-wrap: wrap; gap: 20px; align-items: center;",
+    class = "funding-logos",
+    style = "background: #ffffff; border-radius: 8px; padding: 12px 18px; display: flex; flex-wrap: wrap; gap: 16px; align-items: center;",
     tags$a(
       href = "https://www.soest.hawaii.edu", target = "_blank",
       tags$img(
         src   = "https://www.soest.hawaii.edu/soest_web/logos/soest_logo_textline_307C_white_1000px.jpg",
         alt   = "School of Ocean and Earth Science and Technology (SOEST)",
         title = "School of Ocean and Earth Science and Technology (SOEST)",
-        style = "max-height: 44px; width: auto;")
+        style = "max-height: 40px; width: auto; max-width: 100%;")
     ),
     tags$a(
       href = "https://seagrant.soest.hawaii.edu", target = "_blank",
@@ -321,7 +395,7 @@ funding_banner <- tags$div(
         src   = "logo_seagrant.png",
         alt   = "University of Hawai\u02BBi Sea Grant College Program",
         title = "University of Hawai\u02BBi Sea Grant College Program",
-        style = "max-height: 44px; width: auto;")
+        style = "max-height: 40px; width: auto; max-width: 100%;")
     ),
     tags$a(
       href = "https://manoa.hawaii.edu", target = "_blank",
@@ -329,7 +403,7 @@ funding_banner <- tags$div(
         src   = "logo_uhmanoa.png",
         alt   = "University of Hawai\u02BBi at M\u0101noa",
         title = "University of Hawai\u02BBi at M\u0101noa",
-        style = "max-height: 30px; width: auto;")
+        style = "max-height: 28px; width: auto; max-width: 100%;")
     )
   )
 )
@@ -370,13 +444,15 @@ ui <- page_navbar(
 
   nav_panel(
     title = "Data",
+    value = "data-tab",
 
     layout_sidebar(
       fillable = TRUE,
 
       # ---- Sidebar -----------------------------------------------
       sidebar = sidebar(
-        width = 310,
+        width  = 310,
+        open   = list(desktop = "open", mobile = "closed"),
 
         p(
           strong("What\u2019s In Your Water?"), "is a community science project",
@@ -486,6 +562,11 @@ ui <- page_navbar(
               label    = NULL,
               choices  = date_choices,
               selected = date_choices
+            ),
+            actionButton(
+              inputId = "reset_filters",
+              label   = tagList(HTML(fa("rotate-left", height = "0.85em")), " Reset All Filters"),
+              class   = "btn-sm btn-outline-secondary w-100 mt-2"
             )
           ),
 
@@ -528,7 +609,7 @@ ui <- page_navbar(
 
       # ---- Main content ------------------------------------------
       layout_column_wrap(
-        width = 1 / 4,
+        width = "140px",
         fill  = FALSE,
         heights_equal = "row",
         uiOutput("samples_box"),
@@ -556,9 +637,14 @@ ui <- page_navbar(
       ),
 
       card(
+        id          = "map-card",
         full_screen = TRUE,
         card_header("Sample Collection Locations"),
-        leafletOutput("map", height = "650px")
+        div(
+          style = "position: relative;",
+          leafletOutput("map", height = "650px"),
+          uiOutput("empty_map_overlay")
+        )
       ),
 
       funding_banner
@@ -642,7 +728,7 @@ ui <- page_navbar(
       ),
 
       layout_column_wrap(
-        width = 1 / 2,
+        width = "320px",
         heights_equal = "row",
 
         make_param_card(
@@ -933,7 +1019,7 @@ ui <- page_navbar(
       ),
 
       layout_column_wrap(
-        width = 1 / 3,
+        width = "280px",
         fill  = FALSE,
         card(
           card_body(
@@ -1006,7 +1092,7 @@ ui <- page_navbar(
       ),
 
       layout_column_wrap(
-        width = 1/3,
+        width = "280px",
 
         # --- Nyssa Silbiger ---
         card(
@@ -1122,7 +1208,7 @@ ui <- page_navbar(
       ),
 
       layout_column_wrap(
-        width = 1 / 3,
+        width = "280px",
         heights_equal = "row",
 
         make_press_card(
@@ -1270,6 +1356,14 @@ server <- function(input, output, session) {
       )
       prev_date_choices(as.character(new_date_vals))
     }
+  })
+
+  # ---- Reset all filters -------------------------------------------------
+  observeEvent(input$reset_filters, {
+    updateCheckboxGroupInput(session, "island",         selected = island_choices)
+    updateSelectizeInput(    session, "moku_filter",    selected = "")
+    updateSelectizeInput(    session, "ahupuaa_filter", selected = "")
+    updateCheckboxGroupInput(session, "sampling_date",  selected = date_choices)
   })
 
   # ---- Cascading moku / ahupuaʻa filters --------------------------------
@@ -1482,6 +1576,32 @@ server <- function(input, output, session) {
     leaflet() |>
       addProviderTiles(providers$Esri.WorldImagery) |>
       setView(lng = -157.5, lat = 20.5, zoom = 7)
+  })
+
+  # Empty map overlay — shown when no samples match the current filters
+  output$empty_map_overlay <- renderUI({
+    req(nrow(df_filtered()) == 0)
+    div(
+      style = paste(
+        "position: absolute; top: 0; left: 0; right: 0; bottom: 0;",
+        "display: flex; flex-direction: column;",
+        "align-items: center; justify-content: center;",
+        "background: rgba(255,255,255,0.82); z-index: 500; pointer-events: none;"
+      ),
+      tags$div(
+        style = "text-align: center; padding: 24px;",
+        HTML(fa("map-location-dot", height = "2.5em", fill = "#adb5bd")),
+        tags$h5("No samples match these filters", class = "mt-3 mb-1 text-muted"),
+        tags$p(
+          class = "text-muted small mb-0",
+          "Try adjusting the mokupuni, moku, or date filters,",
+          tags$br(),
+          "or click ",
+          tags$strong("Reset All Filters"),
+          " to start over."
+        )
+      )
+    )
   })
 
   # Update markers when filters change
