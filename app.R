@@ -28,7 +28,8 @@ source("01_load_clean_data.R")
 
 # Read chemistry results and full join with sample metadata
 chem_data <- read_csv("data/ChemData.csv", show_col_types = FALSE) |>
-  rename(sample_id = sample_ID)
+  rename(sample_id = sample_ID) |>
+  mutate(sample_id = toupper(sample_id))
 
 df_app <- df_clean |>
   mutate(
@@ -301,9 +302,41 @@ app_css <- "
 # UI
 # ------------------------------------------------------------------
 
+funding_banner <- tags$div(
+  style = "background: #212529; padding: 14px 24px; margin-top: 32px;",
+  div(class = "funding-label", "Funding generously provided by"),
+  div(
+    style = "background: #ffffff; border-radius: 8px; padding: 12px 18px; display: inline-flex; flex-wrap: wrap; gap: 20px; align-items: center;",
+    tags$a(
+      href = "https://www.soest.hawaii.edu", target = "_blank",
+      tags$img(
+        src   = "https://www.soest.hawaii.edu/soest_web/logos/soest_logo_textline_307C_white_1000px.jpg",
+        alt   = "School of Ocean and Earth Science and Technology (SOEST)",
+        title = "School of Ocean and Earth Science and Technology (SOEST)",
+        style = "max-height: 44px; width: auto;")
+    ),
+    tags$a(
+      href = "https://seagrant.soest.hawaii.edu", target = "_blank",
+      tags$img(
+        src   = "logo_seagrant.png",
+        alt   = "University of Hawai\u02BBi Sea Grant College Program",
+        title = "University of Hawai\u02BBi Sea Grant College Program",
+        style = "max-height: 44px; width: auto;")
+    ),
+    tags$a(
+      href = "https://manoa.hawaii.edu", target = "_blank",
+      tags$img(
+        src   = "logo_uhmanoa.png",
+        alt   = "University of Hawai\u02BBi at M\u0101noa",
+        title = "University of Hawai\u02BBi at M\u0101noa",
+        style = "max-height: 30px; width: auto;")
+    )
+  )
+)
+
 ui <- page_navbar(
-  title = "What's In Your Water? — Hawaiʻi Ocean Sampling",
-  theme = bs_theme(
+  title  = "What's In Your Water? — Hawaiʻi Ocean Sampling",
+  theme  = bs_theme(
     version    = 5,
     bootswatch = "flatly",
     primary    = "#0077b6"
@@ -346,167 +379,132 @@ ui <- page_navbar(
         width = 310,
 
         p(
-          strong("What's In Your Water?"), "is a community science project",
-          "collecting ocean water samples across O'ahu and Maui Nui to",
+          strong("What\u2019s In Your Water?"), "is a community science project",
+          "collecting ocean water samples across O\u02BBahu and Maui Nui to",
           "assess coastal water quality after the March 2026 Kona Low storm.",
           "Samples are gathered by volunteer community members and scientists.",
           "We are in the process of analyzing these samples for salinity, nutrients,",
-          "and dissolved organic matter — important indicators of coral reef health."
+          "and dissolved organic matter \u2014 important indicators of coral reef health."
         ),
         p(
-          tags$a(
-            href    = "javascript:void(0);",
-            onclick = paste0(
-              "document.querySelectorAll('.nav-link').forEach(",
-              "function(el){",
-              "  if(el.textContent.trim()==='What are we measuring?') el.click();",
-              "});"
-            ),
-            HTML(fa("circle-arrow-right", height = "0.9em")),
-            " Learn about what we are measuring and why"
-          )
-        ),
-        p(
-          tags$a(
-            href    = "javascript:void(0);",
-            onclick = paste0(
-              "document.querySelectorAll('.nav-link').forEach(",
-              "function(el){",
-              "  if(el.textContent.trim()==='Press') el.click();",
-              "});"
-            ),
-            HTML(fa("newspaper", height = "0.9em")),
-            " See press coverage of this project"
-          )
-        ),
-        p(
-          tags$a(
-            href    = "javascript:void(0);",
-            onclick = paste0(
-              "document.querySelectorAll('.nav-link').forEach(",
-              "function(el){",
-              "  if(el.textContent.trim()==='About Us') el.click();",
-              "});"
-            ),
-            HTML(fa("users", height = "0.9em")),
-            " Learn about the scientists behind this event"
-          )
-        ),
-        p(
-          "Use the filters below to explore samples by island and time of",
+          "Use the filters below to explore samples by mokupuni and time of",
           "collection. Click any marker on the map for collection details."
         ),
-
-        hr(),
-
-        radioButtons(
-          inputId  = "color_by",
-          label    = "Color Points By",
-          choices  = c("Default" = "default", "Salinity (psu)" = "salinity"),
-          selected = "default"
-        ),
-
-        hr(),
-
-        checkboxGroupInput(
-          inputId  = "island",
-          label    = "Island",
-          choices  = island_choices,
-          selected = island_choices
-        ),
-
-        hr(),
-
-        # checkboxGroupInput(
-        #   inputId  = "time_of_day",
-        #   label    = "Time of Day",
-        #   choices  = tod_choices,
-        #   selected = tod_choices
-        # ),
-        #
-        # hr(),
-
         tags$div(
-          class = "d-flex justify-content-between align-items-center mb-1",
-          tags$label("Sampling Date", class = "fw-semibold mb-0"),
-          tags$span(
-            actionLink("date_select_all",   "All",  class = "small"),
-            " / ",
-            actionLink("date_deselect_all", "None", class = "small")
-          )
-        ),
-        checkboxGroupInput(
-          inputId  = "sampling_date",
-          label    = NULL,
-          choices  = date_choices,
-          selected = date_choices
-        ),
-
-        hr(),
-
-        # ---- Sample ID search ----------------------------------
-        tags$label("Find Sample by ID", class = "fw-semibold mb-1 d-block"),
-        textInput(
-          "sample_id_search",
-          label       = NULL,
-          placeholder = "e.g. OA324",
-          width       = "100%"
-        ),
-        tags$div(
-          class = "d-flex gap-2 mb-2",
-          actionButton(
-            "search_sample_btn", "Search",
-            class = "btn-sm btn-primary flex-fill"
+          class = "d-flex flex-column gap-1 mb-2",
+          tags$small(
+            tags$a(
+              href    = "javascript:void(0);",
+              onclick = paste0(
+                "document.querySelectorAll('.nav-link').forEach(",
+                "function(el){",
+                "  if(el.textContent.trim()==='What are we measuring?') el.click();",
+                "});"
+              ),
+              HTML(fa("circle-arrow-right", height = "0.85em")),
+              " What are we measuring?"
+            )
           ),
-          actionButton(
-            "clear_sample_btn", "Clear",
-            class = "btn-sm btn-outline-secondary"
+          tags$small(
+            tags$a(
+              href    = "javascript:void(0);",
+              onclick = paste0(
+                "document.querySelectorAll('.nav-link').forEach(",
+                "function(el){",
+                "  if(el.textContent.trim()==='Press') el.click();",
+                "});"
+              ),
+              HTML(fa("newspaper", height = "0.85em")),
+              " Press coverage"
+            )
+          ),
+          tags$small(
+            tags$a(
+              href    = "javascript:void(0);",
+              onclick = paste0(
+                "document.querySelectorAll('.nav-link').forEach(",
+                "function(el){",
+                "  if(el.textContent.trim()==='About Us') el.click();",
+                "});"
+              ),
+              HTML(fa("users", height = "0.85em")),
+              " About the scientists"
+            )
           )
         ),
-        uiOutput("sample_search_result"),
 
-        hr(),
+        accordion(
+          open = c("Map Display", "Filter Samples"),
 
-        # ---- Download ------------------------------------------
-        downloadButton(
-          "download_data",
-          label = "Download Samples (CSV)",
-          class = "btn-sm btn-outline-primary w-100"
-        ),
+          accordion_panel(
+            title = "Map Display",
+            icon  = HTML(fa("map", height = "0.9em")),
+            radioButtons(
+              inputId  = "color_by",
+              label    = "Color Points By",
+              choices  = c("Default" = "default", "Salinity (psu)" = "salinity"),
+              selected = "default"
+            )
+          ),
 
-        # ---- Data freshness ----------------------------------------
-        tags$small(
-          class = "text-muted",
-          HTML(fa("rotate", height = "0.8em")),
-          " Data last loaded: ",
-          textOutput("data_loaded_at_text", inline = TRUE)
-        ),
-
-        # ---- Funding acknowledgment --------------------------------
-        hr(),
-        div(
-          class = "funding-section",
-          div(class = "funding-label", "Funding generously provided by"),
-          div(
-            class = "logo-grid",
-            tags$a(
-              href = "https://www.soest.hawaii.edu", target = "_blank",
-              tags$img(src = "https://www.soest.hawaii.edu/soest_web/logos/soest_logo_textline_307C_white_1000px.jpg",
-                       alt = "School of Ocean and Earth Science and Technology (SOEST)",
-                       title = "School of Ocean and Earth Science and Technology (SOEST)")
+          accordion_panel(
+            title = "Filter Samples",
+            icon  = HTML(fa("filter", height = "0.9em")),
+            checkboxGroupInput(
+              inputId  = "island",
+              label    = "Mokupuni (Island)",
+              choices  = island_choices,
+              selected = island_choices
             ),
-            tags$a(
-              href = "https://seagrant.soest.hawaii.edu", target = "_blank",
-              tags$img(src = "logo_seagrant.png",
-                       alt = "University of Hawaiʻi Sea Grant College Program",
-                       title = "University of Hawaiʻi Sea Grant College Program")
+            tags$div(
+              class = "d-flex justify-content-between align-items-center mb-1 mt-2",
+              tags$label("Sampling Date", class = "fw-semibold mb-0"),
+              tags$span(
+                actionLink("date_select_all",   "All",  class = "small"),
+                " / ",
+                actionLink("date_deselect_all", "None", class = "small")
+              )
             ),
-            tags$a(
-              href = "https://manoa.hawaii.edu", target = "_blank",
-              tags$img(src = "logo_uhmanoa.png",
-                       alt = "University of Hawaiʻi at Mānoa",
-                       title = "University of Hawaiʻi at Mānoa",
-                       style = "max-height: 30px;")
+            checkboxGroupInput(
+              inputId  = "sampling_date",
+              label    = NULL,
+              choices  = date_choices,
+              selected = date_choices
+            )
+          ),
+
+          accordion_panel(
+            title = "Search & Export",
+            icon  = HTML(fa("magnifying-glass", height = "0.9em")),
+            tags$label("Find Sample by ID", class = "fw-semibold mb-1 d-block"),
+            textInput(
+              "sample_id_search",
+              label       = NULL,
+              placeholder = "e.g. OA324",
+              width       = "100%"
+            ),
+            tags$div(
+              class = "d-flex gap-2 mb-2",
+              actionButton(
+                "search_sample_btn", "Search",
+                class = "btn-sm btn-primary flex-fill"
+              ),
+              actionButton(
+                "clear_sample_btn", "Clear",
+                class = "btn-sm btn-outline-secondary"
+              )
+            ),
+            uiOutput("sample_search_result"),
+            downloadButton(
+              "download_data",
+              label = "Download Samples (CSV)",
+              class = "btn-sm btn-outline-primary w-100 mt-2"
+            ),
+            tags$small(
+              class = "text-muted mt-1 d-block",
+              HTML(fa("rotate", height = "0.8em")),
+              " Data last loaded: ",
+              textOutput("data_loaded_at_text", inline = TRUE)
             )
           )
         )
@@ -519,7 +517,7 @@ ui <- page_navbar(
         heights_equal = "row",
         uiOutput("samples_box"),
         value_box(
-          title = "Islands",
+          title = "Mokupuni (Islands)",
           value = textOutput("n_islands"),
           showcase = fa("map-location-dot"),
           theme = "info",
@@ -545,7 +543,9 @@ ui <- page_navbar(
         full_screen = TRUE,
         card_header("Sample Collection Locations"),
         leafletOutput("map", height = "650px")
-      )
+      ),
+
+      funding_banner
     )
   ),
 
@@ -940,7 +940,9 @@ ui <- page_navbar(
             )
           )
         )
-      )
+      ),
+
+      funding_banner
     )
   ),
 
@@ -1054,7 +1056,9 @@ ui <- page_navbar(
             )
           )
         )
-      )
+      ),
+
+      funding_banner
     )
   ),
 
@@ -1140,7 +1144,9 @@ ui <- page_navbar(
             "nearly-week-after-kona-storms-more-effects-health-are-emerging/"
           )
         )
-      )
+      ),
+
+      funding_banner
     )
   )
 
@@ -1422,10 +1428,16 @@ server <- function(input, output, session) {
         paste0("<br>Salinity: ", round(d$Salinity, 2), " psu"),
         "<br>Salinity: <i>Not yet processed</i>"
       )
+      ahupuaa_line <- if_else(
+        !is.na(d$ahupuaa),
+        paste0("<br>Ahupuaʻa: ", d$ahupuaa, " (", d$moku, ")"),
+        ""
+      )
       paste0(
         "<b>Sample: ", d$sample_id, "</b><br>",
-        "Island: ", d$island, "<br>",
+        "Mokupuni: ", d$island, "<br>",
         "Collected: ", format(d$collected_hst, "%b %d, %Y %I:%M %p HST"),
+        ahupuaa_line,
         salinity_line,
         if_else(
           !is.na(d$notes) & nchar(trimws(d$notes)) > 0,
@@ -1433,6 +1445,36 @@ server <- function(input, output, session) {
           ""
         )
       )
+    }
+
+    if (input$color_by == "moku") {
+      all_moku <- sort(unique(na.omit(live_data()$df$moku)))
+      moku_colors <- c(
+        RColorBrewer::brewer.pal(9, "Set1"),
+        RColorBrewer::brewer.pal(min(length(all_moku) - 9, 8), "Set2")
+      )
+      pal <- colorFactor(palette = moku_colors, domain = all_moku)
+
+      proxy |>
+        addCircleMarkers(
+          data        = df,
+          lng         = ~longitude,
+          lat         = ~latitude,
+          radius      = 7,
+          color       = "white",
+          fillColor   = ~pal(moku),
+          fillOpacity = 0.85,
+          weight      = 1.5,
+          popup       = make_popup(df)
+        ) |>
+        addLegend(
+          position  = "bottomright",
+          pal       = pal,
+          values    = all_moku,
+          title     = "Moku",
+          opacity   = 0.85
+        )
+      return()
     }
 
     if (input$color_by == "salinity") {

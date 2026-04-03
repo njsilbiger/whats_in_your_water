@@ -8,6 +8,7 @@
 
 library(tidyverse)
 library(googlesheets4)
+library(sf)
 
 
 # --------------------------------------------------------------
@@ -166,7 +167,104 @@ df_clean <- df_clean |>
 
 
 # --------------------------------------------------------------
-# 7. Read config values from Config sheet tab
+# 7. Assign ahupuaʻa to each sample via spatial join
+# --------------------------------------------------------------
+#
+# Ahupuaʻa boundaries come from the Hawaii Statewide GIS Program
+# (Office of Hawaiian Affairs / DLNR). The boundary file is
+# downloaded once and cached locally. Assignments are cached
+# per sample so only new samples require a spatial join.
+
+ahupuaa_bounds_path <- "data/ahupuaa_boundaries.geojson"
+ahupuaa_cache_path  <- "data/ahupuaa_cache.csv"
+
+ahupuaa_url <- paste0(
+  "https://geodata.hawaii.gov/arcgis/rest/services/HistoricCultural/MapServer/1/query",
+  "?where=1%3D1&outFields=ahupuaa,moku,mokupuni&f=geojson&outSR=4326"
+)
+
+# Download boundary file once; reload from disk on subsequent runs
+if (!file.exists(ahupuaa_bounds_path)) {
+  message("Downloading ahupuaʻa boundaries from Hawaii GIS portal...")
+  ahupuaa_sf <- st_read(ahupuaa_url, quiet = TRUE) |>
+    st_transform(crs = 4326)
+  st_write(ahupuaa_sf, ahupuaa_bounds_path, delete_dsn = TRUE, quiet = TRUE)
+  message("Boundaries saved to: ", ahupuaa_bounds_path)
+} else {
+  ahupuaa_sf <- st_read(ahupuaa_bounds_path, quiet = TRUE)
+}
+
+# Load or initialize the per-sample assignment cache
+if (file.exists(ahupuaa_cache_path)) {
+  ahupuaa_cache <- read_csv(ahupuaa_cache_path, show_col_types = FALSE)
+} else {
+  ahupuaa_cache <- tibble(
+    sample_id = character(),
+    ahupuaa   = character(),
+    moku      = character(),
+    mokupuni  = character()
+  )
+}
+
+# Identify samples not yet assigned
+to_assign <- df_clean |>
+  filter(!is.na(latitude), !is.na(longitude)) |>
+  anti_join(ahupuaa_cache, by = "sample_id") |>
+  select(sample_id, latitude, longitude)
+
+# Spatial join for any new samples
+if (nrow(to_assign) > 0) {
+  message("Assigning ahupuaʻa to ", nrow(to_assign), " new sample(s)...")
+
+  pts <- st_as_sf(to_assign, coords = c("longitude", "latitude"),
+                  crs = 4326, remove = FALSE)
+
+  # Pass 1: exact spatial containment (sample within ahupuaʻa polygon)
+  within_join <- st_join(
+    pts,
+    ahupuaa_sf |> select(ahupuaa, moku, mokupuni),
+    join = st_within
+  ) |>
+    st_drop_geometry()
+
+  # Pass 2: nearest-feature fallback for offshore/open-water samples
+  unmatched <- within_join |> filter(is.na(ahupuaa)) |> pull(sample_id)
+
+  if (length(unmatched) > 0) {
+    pts_unmatched <- pts |> filter(sample_id %in% unmatched)
+    nearest_idx   <- st_nearest_feature(pts_unmatched, ahupuaa_sf)
+    nearest_vals  <- ahupuaa_sf |>
+      st_drop_geometry() |>
+      select(ahupuaa, moku, mokupuni) |>
+      slice(nearest_idx)
+
+    nearest_join <- bind_cols(
+      pts_unmatched |> st_drop_geometry() |> select(sample_id),
+      nearest_vals
+    )
+
+    within_join <- within_join |>
+      rows_update(nearest_join, by = "sample_id")
+  }
+
+  new_assignments <- within_join |>
+    select(sample_id, ahupuaa, moku, mokupuni)
+
+  ahupuaa_cache <- bind_rows(ahupuaa_cache, new_assignments)
+  write_csv(ahupuaa_cache, ahupuaa_cache_path)
+  message("Ahupuaʻa cache updated.")
+}
+
+# Join ahupuaʻa fields back to df_clean
+df_clean <- df_clean |>
+  left_join(
+    ahupuaa_cache |> select(sample_id, ahupuaa, moku, mokupuni),
+    by = "sample_id"
+  )
+
+
+# --------------------------------------------------------------
+# 8. Read config values from Config sheet tab
 # --------------------------------------------------------------
 #
 # In your Google Sheet, add a tab named "Config" with two columns:
@@ -193,7 +291,7 @@ nutrients_analyzed <- get_config("nutrients_analyzed")
 
 
 # --------------------------------------------------------------
-# 8. Interactive map for visual coordinate verification
+# 9. Interactive map for visual coordinate verification
 # --------------------------------------------------------------
 
 library(leaflet)
