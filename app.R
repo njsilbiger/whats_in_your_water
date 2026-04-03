@@ -1612,22 +1612,22 @@ server <- function(input, output, session) {
       clearMarkers() |>
       clearControls()
 
-    if (nrow(df) == 0) {
-      proxy |>
-        addControl(
-          html = '<div style="background:white;padding:10px 14px;border-radius:6px;
-                              border:1px solid #dee2e6;font-size:13px;color:#6c757d;">
-                    No samples match the current filters.
-                  </div>',
-          position = "topright"
-        )
-      return()
-    }
+    if (nrow(df) == 0) return()
+
+    sal_tooltip <- paste0(
+      "Normal seawater is \u223434\u201336\u00a0psu. ",
+      "Lower values may indicate freshwater input ",
+      "from runoff, streams, or submarine groundwater discharge (SGD)."
+    )
 
     make_popup <- function(d) {
       salinity_line <- if_else(
         !is.na(d$Salinity),
-        paste0("<br>Salinity: ", round(d$Salinity, 2), " psu"),
+        paste0(
+          "<br>Salinity: ", round(d$Salinity, 2), " psu ",
+          "<span title='", sal_tooltip, "' ",
+          "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
+        ),
         "<br>Salinity: <i>Not yet processed</i>"
       )
       ahupuaa_line <- if_else(

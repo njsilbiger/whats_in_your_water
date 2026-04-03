@@ -177,6 +177,7 @@ df_clean <- df_clean |>
 
 ahupuaa_bounds_path <- "data/ahupuaa_boundaries.geojson"
 ahupuaa_cache_path  <- "data/ahupuaa_cache.csv"
+ahupuaa_zone_path   <- "data/ahupuaa_coastal_zone.rds"
 
 ahupuaa_url <- paste0(
   "https://geodata.hawaii.gov/arcgis/rest/services/HistoricCultural/MapServer/1/query",
@@ -194,15 +195,23 @@ if (!file.exists(ahupuaa_bounds_path)) {
   ahupuaa_sf <- st_read(ahupuaa_bounds_path, quiet = TRUE)
 }
 
-# Pre-compute a 5 km buffer around all ahupuaʻa polygons merged into one shape.
-# Used instead of st_distance (which has s2 winding-order issues) to decide
-# whether an unmatched sample is coastal (within 5 km of any ahupuaʻa) or
-# truly open ocean.  Uses UTM Zone 4N (EPSG 32604) for reliable metric units.
-ahupuaa_coastal_zone <- ahupuaa_sf |>
-  st_transform(crs = 32604) |>
-  st_buffer(dist = 5000) |>
-  st_union() |>
-  st_transform(crs = 4326)
+# 5 km coastal zone: buffer + union of all ahupuaʻa polygons.
+# Computed once and cached to disk; reloaded instantly on subsequent runs.
+# Only recomputed when the boundary file is newer than the cached zone.
+zone_stale <- !file.exists(ahupuaa_zone_path) ||
+  file.mtime(ahupuaa_bounds_path) > file.mtime(ahupuaa_zone_path)
+
+if (zone_stale) {
+  message("Building ahupuaʻa coastal zone (one-time, ~2 s)...")
+  ahupuaa_coastal_zone <- ahupuaa_sf |>
+    st_transform(crs = 32604) |>
+    st_buffer(dist = 5000) |>
+    st_union() |>
+    st_transform(crs = 4326)
+  saveRDS(ahupuaa_coastal_zone, ahupuaa_zone_path)
+} else {
+  ahupuaa_coastal_zone <- readRDS(ahupuaa_zone_path)
+}
 
 # Load or initialize the per-sample assignment cache
 if (file.exists(ahupuaa_cache_path)) {
