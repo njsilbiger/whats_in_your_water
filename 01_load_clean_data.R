@@ -120,7 +120,7 @@ df_clean <- df_clean |>
 
     # Trim any accidental whitespace from text fields
     island    = trimws(`Which island are you submitting this sample from?`),
-    sample_id = trimws(`Sample Bottle ID from the label (example OA1 for O'ahu, M1 for Maui)`),
+    sample_id = toupper(trimws(`Sample Bottle ID from the label (example OA1 for O'ahu, M1 for Maui)`)),
 
     # Extract the numeric portion of the sample ID for sorting/joining
     sample_num = as.integer(gsub("[^0-9]", "", sample_id)),
@@ -157,25 +157,43 @@ df_clean <- df_clean |>
 
 
 # --------------------------------------------------------------
-# 6. Read samples_analyzed from Config sheet tab
+# 6. Deduplicate: keep only the most recent submission per sample ID
+# --------------------------------------------------------------
+
+df_clean <- df_clean |>
+  arrange(sample_id, desc(timestamp_hst)) |>
+  distinct(sample_id, .keep_all = TRUE)
+
+
+# --------------------------------------------------------------
+# 7. Read config values from Config sheet tab
 # --------------------------------------------------------------
 #
 # In your Google Sheet, add a tab named "Config" with two columns:
-#   key              | value
-#   samples_analyzed | 0
+#   key                 | value
+#   samples_analyzed    | 0
+#   nutrients_analyzed  | 0
 #
-# Update the value in the sheet whenever a new batch of results
-# comes in — the app will pick it up automatically on the next
-# data refresh (every 5 minutes).
+# Update values whenever a new batch of results comes back from
+# the lab — the app will pick them up on the next data refresh.
 
-samples_analyzed <- tryCatch({
-  config <- read_sheet(sheet_url, sheet = "Config", col_names = TRUE)
-  as.integer(config$value[config$key == "samples_analyzed"])
-}, error = function(e) 0L)
+config_df <- tryCatch(
+  read_sheet(sheet_url, sheet = "Config", col_names = TRUE),
+  error = function(e) tibble(key = character(), value = character())
+)
+
+get_config <- function(key, default = 0L) {
+  val <- config_df$value[config_df$key == key]
+  if (length(val) == 0 || is.na(val)) return(default)
+  as.integer(val)
+}
+
+samples_analyzed   <- get_config("samples_analyzed")
+nutrients_analyzed <- get_config("nutrients_analyzed")
 
 
 # --------------------------------------------------------------
-# 7. Interactive map for visual coordinate verification
+# 8. Interactive map for visual coordinate verification
 # --------------------------------------------------------------
 
 library(leaflet)

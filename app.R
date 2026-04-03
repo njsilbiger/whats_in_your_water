@@ -25,6 +25,11 @@ library(fontawesome)
 # ------------------------------------------------------------------
 
 source("01_load_clean_data.R")
+
+# Read chemistry results and full join with sample metadata
+chem_data <- read_csv("data/ChemData.csv", show_col_types = FALSE) |>
+  rename(sample_id = sample_ID)
+
 df_app <- df_clean |>
   mutate(
     hour        = hour(collected_hst),
@@ -35,7 +40,8 @@ df_app <- df_clean |>
       "Daytime", "Nighttime"
     ),
     date = as.Date(collected_hst, tz = "Pacific/Honolulu")
-  )
+  ) |>
+  full_join(chem_data, by = "sample_id")
 
 island_choices   <- sort(unique(df_app$island))
 tod_choices      <- c("Daytime", "Nighttime")
@@ -357,7 +363,7 @@ ui <- page_navbar(
               "});"
             ),
             HTML(fa("circle-arrow-right", height = "0.9em")),
-            " Learn what we are measuring and why"
+            " Learn about what we are measuring and why"
           )
         ),
         p(
@@ -374,8 +380,30 @@ ui <- page_navbar(
           )
         ),
         p(
+          tags$a(
+            href    = "javascript:void(0);",
+            onclick = paste0(
+              "document.querySelectorAll('.nav-link').forEach(",
+              "function(el){",
+              "  if(el.textContent.trim()==='About Us') el.click();",
+              "});"
+            ),
+            HTML(fa("users", height = "0.9em")),
+            " Learn about the scientists behind this event"
+          )
+        ),
+        p(
           "Use the filters below to explore samples by island and time of",
           "collection. Click any marker on the map for collection details."
+        ),
+
+        hr(),
+
+        radioButtons(
+          inputId  = "color_by",
+          label    = "Color Points By",
+          choices  = c("Default" = "default", "Salinity (psu)" = "salinity"),
+          selected = "default"
         ),
 
         hr(),
@@ -389,14 +417,14 @@ ui <- page_navbar(
 
         hr(),
 
-        checkboxGroupInput(
-          inputId  = "time_of_day",
-          label    = "Time of Day",
-          choices  = tod_choices,
-          selected = tod_choices
-        ),
-
-        hr(),
+        # checkboxGroupInput(
+        #   inputId  = "time_of_day",
+        #   label    = "Time of Day",
+        #   choices  = tod_choices,
+        #   selected = tod_choices
+        # ),
+        #
+        # hr(),
 
         tags$div(
           class = "d-flex justify-content-between align-items-center mb-1",
@@ -413,6 +441,31 @@ ui <- page_navbar(
           choices  = date_choices,
           selected = date_choices
         ),
+
+        hr(),
+
+        # ---- Sample ID search ----------------------------------
+        tags$label("Find Sample by ID", class = "fw-semibold mb-1 d-block"),
+        textInput(
+          "sample_id_search",
+          label       = NULL,
+          placeholder = "e.g. OA324",
+          width       = "100%"
+        ),
+        tags$div(
+          class = "d-flex gap-2 mb-2",
+          actionButton(
+            "search_sample_btn", "Search",
+            class = "btn-sm btn-primary flex-fill"
+          ),
+          actionButton(
+            "clear_sample_btn", "Clear",
+            class = "btn-sm btn-outline-secondary"
+          )
+        ),
+        uiOutput("sample_search_result"),
+
+        hr(),
 
         # ---- Download ------------------------------------------
         downloadButton(
@@ -464,12 +517,7 @@ ui <- page_navbar(
         width = 1 / 4,
         fill  = FALSE,
         heights_equal = "row",
-        value_box(
-          title = "Samples Shown",
-          value = textOutput("n_samples"),
-          theme = "primary",
-          height = "90px"
-        ),
+        uiOutput("samples_box"),
         value_box(
           title = "Islands",
           value = textOutput("n_islands"),
@@ -485,7 +533,7 @@ ui <- page_navbar(
           height = "90px"
         ),
         value_box(
-          title = "Samplers",
+          title = "Participants",
           value = textOutput("n_samplers"),
           showcase = fa("users"),
           theme = "success",
@@ -541,18 +589,13 @@ ui <- page_navbar(
         make_timeline_step(
           "flask", "Nutrients",
           "Batches Arriving", "soon",
-          "Nitrate, phosphate & silicate — run alongside salinity."
+          "Nitrate, phosphate & silicate."
         ),
         make_timeline_step(
           "sun", "Organic Matter",
           "Coming Soon", "future",
           "Fluorescent dissolved organic matter (fDOM) via fluorometry."
         ),
-        make_timeline_step(
-          "skull-crossbones", "Toxins",
-          "Select Subsamples", "future",
-          "A small subset of samples screened for coastal toxins."
-        )
       ),
 
       # ---- Progress indicator ------------------------------------
@@ -567,8 +610,8 @@ ui <- page_navbar(
           "We received an overwhelming number of samples — thank you! ",
           "Samples are being processed in batches of ~50 and sent to ",
           "multiple specialized labs. Salinity and nutrient results will come ",
-          "in first, followed by dissolved organic matter (fDOM) and any toxin ",
-          "screens. We'll update the data map as results arrive."
+          "in first, followed by dissolved organic matter (fDOM). ",
+          "We'll update the data map as results arrive."
         )
       ),
 
@@ -790,6 +833,28 @@ ui <- page_navbar(
         ),
 
         accordion_panel(
+          title = "Can I make a financial contribution to the project?",
+          icon  = HTML(fa("hand-holding-dollar", fill = "#0077b6", height = "1em")),
+          p(
+            "Yes — and thank you for asking! Sampling efforts like this one require",
+            "significant funding to cover lab processing, equipment, coordination,",
+            "and the many hands it takes to make community science work.",
+            "We are actively seeking support to be able to conduct similar sampling",
+            "efforts in the future. Thank you to SOEST for funding this first effort!"
+          ),
+          p(
+            "If you're interested in contributing or know of funding opportunities,",
+            "please reach out to one of the PIs on this project:",
+            tags$ul(
+              class = "mb-0",
+              tags$li(tags$a(href = "mailto:nyssa.silbiger@hawaii.edu", "Dr. Nyssa Silbiger")),
+              tags$li(tags$a(href = "mailto:andreake@hawaii.edu", "Dr. Andrea Kealoha")),
+              tags$li(tags$a(href = "mailto:sara.kahanamoku@berkeley.edu", "Dr. Sara Kahanamoku"))
+            )
+          )
+        ),
+
+        accordion_panel(
           title = "Can I still get involved?",
           icon  = HTML(fa("hand", fill = "#0077b6", height = "1em")),
           p(
@@ -881,7 +946,120 @@ ui <- page_navbar(
 
 
   # ================================================================
-  # Page 3: Press
+  # Page 3: About Us
+  # ================================================================
+
+  nav_panel(
+    title = "About Us",
+    fillable = FALSE,
+
+    div(
+      class = "container-lg py-4",
+
+      h3(
+        class = "mb-1",
+        HTML(fa("users", fill = "#0077b6", height = "1em")),
+        " Meet the Team"
+      ),
+      p(
+        class = "text-muted mb-4",
+        "The scientists behind What's in Your Water."
+      ),
+
+      layout_column_wrap(
+        width = 1/3,
+
+        # --- Nyssa Silbiger ---
+        card(
+          card_image(
+            src   = "https://nyssasilbiger.com/x/cdn/?https://storage.googleapis.com/production-sitebuilder-v1-0-1/231/293231/6KnGbg0A/3d4b35a0e35a4baea7fa48ee592a4b29",
+            alt   = "Dr. Nyssa Silbiger",
+            style = "object-fit: contain; height: 280px; width: 100%; background-color: #f8f9fa;"
+          ),
+          card_body(
+            h5("Dr. Nyssa Silbiger", class = "mb-0"),
+            tags$p(class = "text-muted small mb-2",
+              "Associate Professor, Department of Oceanography, UH Mānoa",
+              tags$br(),
+              "Associate Director, Uehiro Center for the Advancement of Oceanography"
+            ),
+            p(class = "small",
+              "Nyssa is a marine ecologist and data scientist studying how climate change ",
+              "affects coral reef ecosystems. Her research focuses on the interplay between ",
+              "ocean acidification, nutrient pollution, and reef carbonate dynamics across ",
+              "the Hawaiian Archipelago and beyond."
+            ),
+            tags$a(
+              href   = "https://silbigerlab.com",
+              target = "_blank",
+              class  = "btn btn-outline-primary btn-sm",
+              "Silbiger Website"
+            )
+          )
+        ),
+
+        # --- Andrea Kealoha ---
+        card(
+          card_image(
+            src   = "https://static.wixstatic.com/media/77a9be_e0c64ab3a14a45509fb87d197d512559~mv2.png",
+            alt   = "Dr. Andrea Kealoha",
+            style = "object-fit: contain; height: 280px; width: 100%; background-color: #f8f9fa;"
+          ),
+          card_body(
+            h5("Dr. Andrea Kealoha", class = "mb-0"),
+            tags$p(class = "text-muted small mb-2",
+              "Assistant Professor, Department of Oceanography, UH Mānoa"
+            ),
+            p(class = "small",
+              "Andrea is a Kanaka ʻŌiwi (Native Hawaiian) scientist raised in Maui. Her research focuses on global and local stressors to marine ecosystems, ",
+              "particularly coral reefs. Her lab investigates the physical and chemical conditions ",
+              "that support or inhibit coral reef functioning using carbonate chemistry, ",
+              "biogeochemistry, and in-situ sensors."
+            ),
+            tags$a(
+              href   = "https://andreake6.wixsite.com/andreakealoha",
+              target = "_blank",
+              class  = "btn btn-outline-primary btn-sm",
+              "Kealoha Website"
+            )
+          )
+        ),
+
+        # --- Sara Kahanamoku ---
+        card(
+          card_image(
+            src   = "Kahanamoku-SR2422.JPEG",
+            alt   = "Dr. Sara Kahanamoku",
+            style = "object-fit: cover; height: 280px; width: 100%;"
+          ),
+          card_body(
+            h5("Dr. Sara Kahanamoku", class = "mb-0"),
+            tags$p(class = "text-muted small mb-2",
+              "Early Career Research Fellow, Hawaiʻi Sea Grant / SOEST, UH Mānoa"
+            ),
+            p(class = "small",
+              "Sara is a geologist and ecologist who reconstructs past marine ecosystem ",
+              "change using high-resolution sediment core records to understand how climate ",
+              "warming, land-use change, and habitat loss have shaped modern reef systems ",
+              "across intermediate timescales relevant to conservation. A Kanaka ʻŌiwi ",
+              "(Native Hawaiian) and Maʻohi (Indigenous Tahitian) scientist, they integrate ",
+              "Indigenous knowledge and cutting-edge science to advance community-driven ",
+              "climate resilience."
+            ),
+            tags$a(
+              href   = "https://www.skahanamoku.com",
+              target = "_blank",
+              class  = "btn btn-outline-primary btn-sm",
+              "Kahanamoku Website"
+            )
+          )
+        )
+      )
+    )
+  ),
+
+  # ================================================================
+  # Page 4: Press
   # ================================================================
 
   nav_panel(
@@ -965,6 +1143,7 @@ ui <- page_navbar(
       )
     )
   )
+
 )
 
 
@@ -987,21 +1166,31 @@ server <- function(input, output, session) {
     tryCatch({
       suppressMessages(source("01_load_clean_data.R", local = TRUE))
       data_loaded_rv(format(Sys.time(), "%b %d, %Y %I:%M %p HST"))
-      list(
-        df = df_clean |>
-          mutate(
-            hour        = hour(collected_hst),
-            minute      = minute(collected_hst),
-            time_of_day = if_else(
-              (hour * 60 + minute) >= (6 * 60) & (hour * 60 + minute) < (18 * 60 + 45),
-              "Daytime", "Nighttime"
-            ),
-            date = as.Date(collected_hst, tz = "Pacific/Honolulu")
+      df_joined <- df_clean |>
+        mutate(
+          hour        = hour(collected_hst),
+          minute      = minute(collected_hst),
+          time_of_day = if_else(
+            (hour * 60 + minute) >= (6 * 60) & (hour * 60 + minute) < (18 * 60 + 45),
+            "Daytime", "Nighttime"
           ),
-        samples_analyzed = samples_analyzed
+          date = as.Date(collected_hst, tz = "Pacific/Honolulu")
+        ) |>
+        full_join(chem_data, by = "sample_id")
+      list(
+        df                 = df_joined,
+        samples_analyzed   = samples_analyzed,
+        salinity_analyzed  = df_joined |>
+          filter(!is.na(Salinity)) |> distinct(sample_id) |> nrow(),
+        nutrients_analyzed = nutrients_analyzed
       )
     }, error = function(e) {
-      list(df = df_app, samples_analyzed = 0L)
+      list(
+        df                 = df_app,
+        samples_analyzed   = 0L,
+        salinity_analyzed  = 0L,
+        nutrients_analyzed = 0L
+      )
     })
   })
 
@@ -1041,23 +1230,17 @@ server <- function(input, output, session) {
   })
 
   # Progress bar (reactive so it updates when samples_analyzed changes)
-  output$progress_section <- renderUI({
-    ld  <- live_data()
-    sa  <- ld$samples_analyzed
-    tot <- nrow(ld$df)
-    pct       <- round(sa / tot * 100)
+  make_progress_bar <- function(label, n, tot) {
+    pct       <- if (tot > 0) round(n / tot * 100) else 0
     bar_color <- if (pct == 0) "bg-secondary" else "bg-primary"
     bar_width <- paste0(max(pct, 2), "%")
-
     div(
-      class = "progress-section",
+      class = "mb-3",
       div(
         class = "progress-label",
         tags$span(
-          class = "big-count",
-          sa,
-          tags$span(class = "total-count",
-                    paste0(" of ~", tot, " samples analyzed"))
+          class = "big-count", n,
+          tags$span(class = "total-count", paste0(" of ~", tot, " ", label))
         ),
         tags$span(class = "total-count", paste0(pct, "% complete"))
       ),
@@ -1067,7 +1250,18 @@ server <- function(input, output, session) {
         `aria-valuenow` = pct, `aria-valuemin` = 0, `aria-valuemax` = 100,
         tags$div(class = paste("progress-bar", bar_color),
                  style = paste0("width: ", bar_width, ";"))
-      ),
+      )
+    )
+  }
+
+  output$progress_section <- renderUI({
+    ld  <- live_data()
+    tot <- nrow(ld$df)
+
+    div(
+      class = "progress-section",
+      make_progress_bar("salinity samples processed", ld$salinity_analyzed,  tot),
+      make_progress_bar("nutrient samples processed", ld$nutrients_analyzed, tot),
       tags$small(
         class = "text-muted mt-2 d-block",
         HTML(fa("rotate", height = "0.85em")),
@@ -1112,18 +1306,76 @@ server <- function(input, output, session) {
     updateCheckboxGroupInput(session, "sampling_date", selected = character(0))
   })
 
+  # ---- Sample ID search --------------------------------------------------
+  sample_id_query <- reactiveVal("")
+
+  observeEvent(input$search_sample_btn, {
+    sample_id_query(toupper(trimws(input$sample_id_search)))
+  })
+
+  observeEvent(input$clear_sample_btn, {
+    sample_id_query("")
+    updateTextInput(session, "sample_id_search", value = "")
+  })
+
+  output$sample_search_result <- renderUI({
+    q <- sample_id_query()
+    if (!nzchar(q)) return(NULL)
+    match <- live_data()$df |> filter(toupper(sample_id) == q)
+    if (nrow(match) == 0) {
+      tags$small(class = "text-danger", paste0("No sample found for \u201c", q, "\u201d."))
+    } else {
+      tags$small(class = "text-success",
+        HTML(fa("circle-check", height = "0.85em")),
+        paste0(" Found: ", match$sample_id[1], " \u2014 zoomed to marker.")
+      )
+    }
+  })
+
+
+
   # Reactive filtered data (uses live_data so updates automatically)
   df_filtered <- reactive({
+    q <- sample_id_query()
+
+    # When a sample ID search is active, bypass island/date filters so the
+    # marker is always visible on the map regardless of current filter state
+    if (nzchar(q)) {
+      return(
+        live_data()$df |> filter(toupper(sample_id) == q, !is.na(latitude))
+      )
+    }
+
     live_data()$df |>
       filter(
         island        %in% input$island,
-        time_of_day   %in% input$time_of_day,
+        # time_of_day   %in% input$time_of_day,
         as.character(date) %in% input$sampling_date
       )
   })
 
   # Value box outputs
-  output$n_samples <- renderText(nrow(df_filtered()))
+  output$samples_box <- renderUI({
+    df  <- df_filtered()
+    tot <- nrow(live_data()$df)
+
+    if (input$color_by == "salinity") {
+      df_sal <- df |> filter(!is.na(Salinity))
+      value_box(
+        title  = "Salinity Samples Shown out of Total",
+        value  = paste(nrow(df_sal), "of", tot),
+        theme  = "primary",
+        height = "90px"
+      )
+    } else {
+      value_box(
+        title  = "Samples Shown out of Total",
+        value  = paste(nrow(df), "of", tot),
+        theme  = "primary",
+        height = "90px"
+      )
+    }
+  })
 
   output$n_islands <- renderText(n_distinct(df_filtered()$island))
 
@@ -1141,12 +1393,7 @@ server <- function(input, output, session) {
   output$map <- renderLeaflet({
     leaflet() |>
       addProviderTiles(providers$Esri.WorldImagery) |>
-      fitBounds(
-        lng1 = min(df_app$longitude) - 0.05,
-        lat1 = min(df_app$latitude)  - 0.05,
-        lng2 = max(df_app$longitude) + 0.05,
-        lat2 = max(df_app$latitude)  + 0.05
-      )
+      setView(lng = -157.5, lat = 20.5, zoom = 7)
   })
 
   # Update markers when filters change
@@ -1170,16 +1417,54 @@ server <- function(input, output, session) {
     }
 
     make_popup <- function(d) {
+      salinity_line <- if_else(
+        !is.na(d$Salinity),
+        paste0("<br>Salinity: ", round(d$Salinity, 2), " psu"),
+        "<br>Salinity: <i>Not yet processed</i>"
+      )
       paste0(
         "<b>Sample: ", d$sample_id, "</b><br>",
         "Island: ", d$island, "<br>",
         "Collected: ", format(d$collected_hst, "%b %d, %Y %I:%M %p HST"),
+        salinity_line,
         if_else(
           !is.na(d$notes) & nchar(trimws(d$notes)) > 0,
           paste0("<br><i>", d$notes, "</i>"),
           ""
         )
       )
+    }
+
+    if (input$color_by == "salinity") {
+      all_sal   <- live_data()$df$Salinity
+      sal_range <- range(all_sal, na.rm = TRUE)
+      has_data  <- any(!is.na(all_sal)) && sal_range[1] != sal_range[2]
+
+      if (has_data) {
+        df_sal <- df |> filter(!is.na(Salinity))
+        pal    <- colorNumeric(palette = "viridis", domain = sal_range)
+
+        proxy |>
+          addCircleMarkers(
+            data        = df_sal,
+            lng         = ~longitude,
+            lat         = ~latitude,
+            radius      = 7,
+            color       = "white",
+            fillColor   = ~pal(Salinity),
+            fillOpacity = 0.85,
+            weight      = 1.5,
+            popup       = make_popup(df_sal)
+          ) |>
+          addLegend(
+            position  = "bottomright",
+            pal       = pal,
+            values    = all_sal[!is.na(all_sal)],
+            title     = "Salinity (psu)",
+            opacity   = 0.85
+          )
+        return()
+      }
     }
 
     proxy |>
