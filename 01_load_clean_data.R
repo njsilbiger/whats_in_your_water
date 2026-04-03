@@ -238,10 +238,19 @@ if (nrow(to_assign) > 0) {
       select(ahupuaa, moku, mokupuni) |>
       slice(nearest_idx)
 
+    # Distance to nearest ahupuaʻa boundary (metres)
+    dist_m <- st_distance(pts_unmatched, ahupuaa_sf[nearest_idx, ], by_element = TRUE)
+
     nearest_join <- bind_cols(
       pts_unmatched |> st_drop_geometry() |> select(sample_id),
       nearest_vals
-    )
+    ) |>
+      # Samples > 100 m from any ahupuaʻa boundary are in open ocean —
+      # keep moku/mokupuni for geographic context but clear the ahupuaʻa name
+      mutate(
+        ahupuaa = if_else(as.numeric(dist_m) > 5000, "Open Ocean", ahupuaa),
+        moku    = if_else(as.numeric(dist_m) > 5000, "Open Ocean", moku)
+      )
 
     within_join <- within_join |>
       rows_update(nearest_join, by = "sample_id")
