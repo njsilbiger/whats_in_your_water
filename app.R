@@ -408,7 +408,52 @@ funding_banner <- tags$div(
   )
 )
 
-ui <- page_navbar(
+# ---- Social / OG meta tags ------------------------------------------------
+# Replace APP_URL with your deployed app URL (e.g. https://yourname.shinyapps.io/whats_in_your_water)
+app_url   <- "APP_URL"
+app_image <- paste0(app_url, "/map_preview.png")
+
+social_tags <- tags$head(
+  # Standard meta
+  tags$meta(name = "description",
+            content = paste(
+              "Community science water quality monitoring around O\u02BBahu and Maui Nui",
+              "after the March 2026 Kona Low storm.",
+              "Explore sample locations, collection details, and salinity data."
+            )),
+
+  # Open Graph (Facebook, LinkedIn, iMessage, Slack, etc.)
+  tags$meta(property = "og:type",        content = "website"),
+  tags$meta(property = "og:url",         content = app_url),
+  tags$meta(property = "og:title",
+            content = "What\u2019s In Your Water? \u2014 Hawai\u02BBi Ocean Sampling"),
+  tags$meta(property = "og:description",
+            content = paste(
+              "Community science water quality monitoring around O\u02BBahu and Maui Nui",
+              "after the March 2026 Kona Low storm."
+            )),
+  tags$meta(property = "og:image",       content = app_image),
+  tags$meta(property = "og:image:alt",
+            content = "Researchers collecting ocean water samples in Hawai\u02BBi"),
+  tags$meta(property = "og:locale",      content = "en_US"),
+
+  # Twitter / X card
+  tags$meta(name = "twitter:card",        content = "summary_large_image"),
+  tags$meta(name = "twitter:title",
+            content = "What\u2019s In Your Water? \u2014 Hawai\u02BBi Ocean Sampling"),
+  tags$meta(name = "twitter:description",
+            content = paste(
+              "Community science water quality monitoring around O\u02BBahu and Maui Nui",
+              "after the March 2026 Kona Low storm."
+            )),
+  tags$meta(name = "twitter:image",       content = app_image),
+  tags$meta(name = "twitter:image:alt",
+            content = "Researchers collecting ocean water samples in Hawai\u02BBi")
+)
+
+ui <- tagList(
+  social_tags,
+  page_navbar(
   title  = "What's In Your Water? — Hawaiʻi Ocean Sampling",
   theme  = bs_theme(
     version    = 5,
@@ -1273,7 +1318,8 @@ ui <- page_navbar(
     )
   )
 
-)
+) # end page_navbar
+) # end tagList
 
 
 # ------------------------------------------------------------------
