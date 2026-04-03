@@ -1,0 +1,734 @@
+sample_id,ahupuaa,moku,mokupuni
+M1,Waikapū,Pūʻali Komohana,Maui
+M10,Waikapū,Pūʻali Komohana,Maui
+M100,Wailuku,Pūʻali Komohana,Maui
+M101,Honokōwai,Kāʻanapali,Maui
+M102,Honokōwai,Kāʻanapali,Maui
+M103,ʻAlaeloa,Kāʻanapali,Maui
+M104,Honokōwai,Kāʻanapali,Maui
+M105,Honokōwai,Kāʻanapali,Maui
+M106,Hanakaʻōʻō,Lāhainā,Maui
+M107,Honolua,Kāʻanapali,Maui
+M108,Honolua,Kāʻanapali,Maui
+M109,Honokahua,Kāʻanapali,Maui
+M11,Ukumehame,Lāhainā,Maui
+M110,Honokōwai,Kāʻanapali,Maui
+M111,Hanakaʻōʻō,Lāhainā,Maui
+M112,Paunau,Lāhainā,Maui
+M113,Hanakaʻōʻō,Lāhainā,Maui
+M114,Hanakaʻōʻō,Lāhainā,Maui
+M115,Wahikuli,Lāhainā,Maui
+M119,Hanakaʻōʻō,Lāhainā,Maui
+M120,Wailuku,Pūʻali Komohana,Maui
+M121,Paunau,Lāhainā,Maui
+M122,Hanakaʻōʻō,Lāhainā,Maui
+M123,Hanakaʻōʻō,Lāhainā,Maui
+M125,Wahikuli,Lāhainā,Maui
+M126,Hanakaʻōʻō,Lāhainā,Maui
+M127,Hanakaʻōʻō,Lāhainā,Maui
+M128,Hanakaʻōʻō,Lāhainā,Maui
+M13,Waikapū,Pūʻali Komohana,Maui
+M130,Wahikuli,Lāhainā,Maui
+M135,Pūlehunui,Kula,Maui
+M136,Palauea,Honuaʻula,Maui
+M141,Paeahu,Kula,Maui
+M142,Kalihi,Honuaʻula,Maui
+M143,Kalihi,Honuaʻula,Maui
+M147,Wailuku,Pūʻali Komohana,Maui
+M148,Kalihi,Honuaʻula,Maui
+M15,Hāmākuapoko,Hāmākuapoko,Maui
+M150,Paunau,Lāhainā,Maui
+M151,Paunau,Lāhainā,Maui
+M153,Ukumehame,Lāhainā,Maui
+M154,Wailuku,Pūʻali Komohana,Maui
+M155,Wailuku,Pūʻali Komohana,Maui
+M16,Waikapū,Pūʻali Komohana,Maui
+M162,Olowalu,Lāhainā,Maui
+M164,Pūlehunui,Kula,Maui
+M167,‘Ualapu‘e,Kona,Molokaʻi
+M169,Waialua,Kona,Molokaʻi
+M171,Makakupa‘ia,Kona,Molokaʻi
+M172,Ukumehame,Lāhainā,Maui
+M176,Ukumehame,Lāhainā,Maui
+M177,Ukumehame,Lāhainā,Maui
+M178,Olowalu,Lāhainā,Maui
+M179,Olowalu,Lāhainā,Maui
+M18,Ukumehame,Lāhainā,Maui
+M180,Olowalu,Lāhainā,Maui
+M181,Palauea,Honuaʻula,Maui
+M182,Honokahua,Kāʻanapali,Maui
+M183,Palauea,Honuaʻula,Maui
+M184,Hanakaʻōʻō,Lāhainā,Maui
+M185,Haʻikū,Hāmākualoa,Maui
+M186,Kamaʻole,Kula,Maui
+M189,Pūlehunui,Kula,Maui
+M19,Hāmākuapoko,Hāmākuapoko,Maui
+M190,Kamaʻole,Kula,Maui
+M191,Papaʻanui,Honuaʻula,Maui
+M192,Hanakaʻōʻō,Lāhainā,Maui
+M193,Papaʻanui,Honuaʻula,Maui
+M194,Honokahua,Kāʻanapali,Maui
+M195,Nāpili 2-3,Kāʻanapali,Maui
+M196,Nāpili 2-3,Kāʻanapali,Maui
+M199,Kamaʻole,Kula,Maui
+M201,Papaʻanui,Honuaʻula,Maui
+M202,Hāmākuapoko,Hāmākuapoko,Maui
+M203,Hanakaʻōʻō,Lāhainā,Maui
+M205,East Kaupakulua,Hāmākualoa,Maui
+M207,Kawela,Kona,Molokaʻi
+M208,Kaluako‘i,Kona,Molokaʻi
+M211,Honoulimaloʻo,Kona,Molokaʻi
+M212,Kaluako‘i,Kona,Molokaʻi
+M213,Kaluako‘i,Kona,Molokaʻi
+M214,Kaluako‘i,Kona,Molokaʻi
+M216,Kaluako‘i,Kona,Molokaʻi
+M217,Kaluako‘i,Kona,Molokaʻi
+M218,Kaluako‘i,Kona,Molokaʻi
+M219,Kaluako‘i,Kona,Molokaʻi
+M22,Ukumehame,Lāhainā,Maui
+M220,Kaluako‘i,Kona,Molokaʻi
+M222,Kumimi,Kona,Molokaʻi
+M223,Pālāʻau,Kona,Molokaʻi
+M224,Kalua‘aha,Kona,Molokaʻi
+M225,Kaluako‘i,Kona,Molokaʻi
+M226,Kaluako‘i,Kona,Molokaʻi
+M227,Kaluako‘i,Kona,Molokaʻi
+M228,Kaluako‘i,Kona,Molokaʻi
+M23,Hāmākuapoko,Hāmākuapoko,Maui
+M230,Kaluako‘i,Kona,Molokaʻi
+M231,Kaluako‘i,Kona,Molokaʻi
+M232,Makakupa‘ia,Kona,Molokaʻi
+M233,Kaluako‘i,Kona,Molokaʻi
+M234,Kaluako‘i,Kona,Molokaʻi
+M236,Makakupa‘ia,Kona,Molokaʻi
+M237,Makakupa‘ia,Kona,Molokaʻi
+M238,Pālāʻau,Kona,Molokaʻi
+M239,Pālāʻau,Kona,Molokaʻi
+M24,Waikapū,Pūʻali Komohana,Maui
+M240,Honoulimaloʻo,Kona,Molokaʻi
+M241,Kalamaʻula,Kona,Molokaʻi
+M242,Kaluako‘i,Kona,Molokaʻi
+M243,Kawela,Kona,Molokaʻi
+M247,Pālāʻau,Kona,Molokaʻi
+M248,Waialua,Kona,Molokaʻi
+M249,Kainalu,Kona,Molokaʻi
+M25,Hāmākuapoko,Hāmākuapoko,Maui
+M252,Kalua‘aha,Kona,Molokaʻi
+M253,‘Ualapu‘e,Kona,Molokaʻi
+M254,Kaluako‘i,Kona,Molokaʻi
+M258,Pūkoʻo 1,Kona,Molokaʻi
+M259,Kawela,Kona,Molokaʻi
+M26,Ukumehame,Lāhainā,Maui
+M261,Pūkoʻo 1,Kona,Molokaʻi
+M262,Kaluako‘i,Kona,Molokaʻi
+M263,Kaluako‘i,Kona,Molokaʻi
+M264,Kaluako‘i,Kona,Molokaʻi
+M265,Kamiloloa (Government),Kona,Molokaʻi
+M266,Kaluako‘i,Kona,Molokaʻi
+M268,Kaunakakai,Kona,Molokaʻi
+M269,Kumimi,Kona,Molokaʻi
+M27,Kaʻonoʻulu,Kula,Maui
+M270,Kaluako‘i,Kona,Molokaʻi
+M271,Kaluako‘i,Kona,Molokaʻi
+M273,Kaluako‘i,Kona,Molokaʻi
+M274,Kaluako‘i,Kona,Molokaʻi
+M275,Waialua,Kona,Molokaʻi
+M276,Kaluako‘i,Kona,Molokaʻi
+M277,Kaʻamola,Kona,Molokaʻi
+M278,Kumimi,Kona,Molokaʻi
+M279,Kaunakakai,Kona,Molokaʻi
+M28,Ukumehame,Lāhainā,Maui
+M282,Honouliwai,Kona,Molokaʻi
+M283,Pālāʻau,Kona,Molokaʻi
+M284,West ʻŌhiʻa,Kona,Molokaʻi
+M285,Kumimi,Kona,Molokaʻi
+M286,Kaunakakai,Kona,Molokaʻi
+M288,Pūkoʻo 2,Kona,Molokaʻi
+M289,Kaluako‘i,Kona,Molokaʻi
+M29,Waiohuli,Kula,Maui
+M290,Makakupa‘ia,Kona,Molokaʻi
+M292,Hālawa,Koʻolau,Molokaʻi
+M293,Hālawa,Koʻolau,Molokaʻi
+M294,Kaunakakai,Kona,Molokaʻi
+M295,Moanui,Kona,Molokaʻi
+M296,Kūpeke,Kona,Molokaʻi
+M297,Waialua,Kona,Molokaʻi
+M298,Moanui,Kona,Molokaʻi
+M299,Makakupa‘ia,Kona,Molokaʻi
+M30,Ukumehame,Lāhainā,Maui
+M300,Kaluako‘i,Kona,Molokaʻi
+M31,Ukumehame,Lāhainā,Maui
+M32,Ukumehame,Lāhainā,Maui
+M33,Kamaʻole,Kula,Maui
+M34,Kamaʻole,Kula,Maui
+M35,Ukumehame,Lāhainā,Maui
+M36,Kēōkea,Kula,Maui
+M37,Waiohuli,Kula,Maui
+M38,Waiohuli,Kula,Maui
+M39,Waiohuli,Kula,Maui
+M4,Waikapū,Pūʻali Komohana,Maui
+M40,Kēōkea,Kula,Maui
+M41,Waiohuli,Kula,Maui
+M42,Waiohuli,Kula,Maui
+M43,Waiohuli,Kula,Maui
+M44,Waiohuli,Kula,Maui
+M45,Waiohuli,Kula,Maui
+M46,Kamaʻole,Kula,Maui
+M47,Wailuku,Pūʻali Komohana,Maui
+M48,Kaʻonoʻulu,Kula,Maui
+M49,Kēōkea,Kula,Maui
+M5,Waikapū,Pūʻali Komohana,Maui
+M50,Wailuku,Pūʻali Komohana,Maui
+M52,Waikapū,Pūʻali Komohana,Maui
+M53,Waikapū,Pūʻali Komohana,Maui
+M56,Pūlehunui,Kula,Maui
+M57,Waikapū,Pūʻali Komohana,Maui
+M58,Pūlehunui,Kula,Maui
+M59,Pūlehunui,Kula,Maui
+M6,Ukumehame,Lāhainā,Maui
+M62,Waikapū,Pūʻali Komohana,Maui
+M63,Waikapū,Pūʻali Komohana,Maui
+M64,Waikapū,Pūʻali Komohana,Maui
+M68,Hāmākuapoko,Hāmākuapoko,Maui
+M69,Waiohuli,Kula,Maui
+M7,Ukumehame,Lāhainā,Maui
+M73,Hāmākuapoko,Hāmākuapoko,Maui
+M74,Moaliʻi,Lāhainā,Maui
+M75,Olowalu,Lāhainā,Maui
+M76,Waikapū,Pūʻali Komohana,Maui
+M77,Waikapū,Pūʻali Komohana,Maui
+M78,Paunau,Lāhainā,Maui
+M79,Kahana,Kāʻanapali,Maui
+M8,Waikapū,Pūʻali Komohana,Maui
+M81,Ukumehame,Lāhainā,Maui
+M83,Olowalu,Lāhainā,Maui
+M86,Wailuku,Pūʻali Komohana,Maui
+M87,Kahana,Kāʻanapali,Maui
+M88,Mailepai,Kāʻanapali,Maui
+M89,Honokahua,Kāʻanapali,Maui
+M9,Waikapū,Pūʻali Komohana,Maui
+M91,Wailuku,Pūʻali Komohana,Maui
+M92,Honokōwai,Kāʻanapali,Maui
+M93,Mailepai,Kāʻanapali,Maui
+M94,Nāpili 4-5,Kāʻanapali,Maui
+M95,Honokōwai,Kāʻanapali,Maui
+M96,Honokōwai,Kāʻanapali,Maui
+M97,Wailuku,Pūʻali Komohana,Maui
+M98,Honokōwai,Kāʻanapali,Maui
+M99,Nāpili 2-3,Kāʻanapali,Maui
+MA1,Launiupoko,Lāhainā,Maui
+MK 11,Kaluako‘i,Kona,Molokaʻi
+MK 12,Kaluako‘i,Kona,Molokaʻi
+MK 13,Kaluako‘i,Kona,Molokaʻi
+MK 15,Kaluako‘i,Kona,Molokaʻi
+MK 17,Kaluako‘i,Kona,Molokaʻi
+MK 18,Kaluako‘i,Kona,Molokaʻi
+MK 21,Kaluako‘i,Kona,Molokaʻi
+MK 22,Kaluako‘i,Kona,Molokaʻi
+MK 26,Kaluako‘i,Kona,Molokaʻi
+MK 27,Kaluako‘i,Kona,Molokaʻi
+MK 30,Kaluako‘i,Kona,Molokaʻi
+MK1,Kahanui,Kona,Molokaʻi
+MK2,Kaluako‘i,Kona,Molokaʻi
+MK23,Hālawa,Koʻolau,Molokaʻi
+MK24,Kalaupapa,Koʻolau,Molokaʻi
+MK25,Kalaupapa,Koʻolau,Molokaʻi
+MK28,Kalaupapa,Koʻolau,Molokaʻi
+MK29,Kalaupapa,Koʻolau,Molokaʻi
+MK3,Kamiloloa (Government),Kona,Molokaʻi
+MK31,Kalaupapa,Koʻolau,Molokaʻi
+MK4,Kamiloloa (Government),Kona,Molokaʻi
+MK5,Kapa‘akea,Kona,Molokaʻi
+MRK13,Waikapū,Pūʻali Komohana,Maui
+OA 168,Kailua,Koʻolaupoko,Oʻahu
+OA 274,Maunalua,Kona,Oʻahu
+OA 375,Kaʻaʻawa,Koʻolauloa,Oʻahu
+OA 394,Kahaluʻu,Koʻolaupoko,Oʻahu
+OA 425,Kaʻaʻawa,Koʻolauloa,Oʻahu
+OA 436,Kaʻaʻawa,Koʻolauloa,Oʻahu
+OA 465,Waimānalo,Koʻolaupoko,Oʻahu
+OA 54,Kamaʻole,Kula,Maui
+OA 75,Wailuku,Pūʻali Komohana,Maui
+OA1,Kawailoa,Waialua,Oʻahu
+OA10,Heʻeia,Koʻolaupoko,Oʻahu
+OA100,Waikīkī,Kona,Oʻahu
+OA1001,Open Ocean,Open Ocean,Oʻahu
+OA1002,Open Ocean,Open Ocean,Oʻahu
+OA1003,Open Ocean,Open Ocean,Oʻahu
+OA1004,Open Ocean,Open Ocean,Oʻahu
+OA1005,Open Ocean,Open Ocean,Oʻahu
+OA1006,Open Ocean,Open Ocean,Oʻahu
+OA101,Waikīkī,Kona,Oʻahu
+OA106,Honokōwai,Kāʻanapali,Maui
+OA107,Hāmākuapoko,Hāmākuapoko,Maui
+OA109,Moaliʻi,Lāhainā,Maui
+OA11,Heʻeia,Koʻolaupoko,Oʻahu
+OA110,Mohopilo,Honuaʻula,Maui
+OA111,Hanakaʻōʻō,Lāhainā,Maui
+OA112,Hāmākuapoko,Hāmākuapoko,Maui
+OA113,Kamaʻole,Kula,Maui
+OA114,Honokōwai,Kāʻanapali,Maui
+OA115,Palauea,Honuaʻula,Maui
+OA116,Honokōwai,Kāʻanapali,Maui
+OA117,Paunau,Lāhainā,Maui
+OA118,‘Ualapu‘e,Kona,Molokaʻi
+OA12,Kahaluʻu,Koʻolaupoko,Oʻahu
+OA121,Manawai,Kona,Molokaʻi
+OA123,Makakupa‘ia,Kona,Molokaʻi
+OA127,Kawela,Kona,Molokaʻi
+OA128,Kamalō,Kona,Molokaʻi
+OA129,Kawela,Kona,Molokaʻi
+OA13,Kahaluʻu,Koʻolaupoko,Oʻahu
+OA130,Kapulei,Kona,Molokaʻi
+OA131,Mākolelau,Kona,Molokaʻi
+OA133,Pūlehunui,Kula,Maui
+OA134,Waiakoa,Kula,Maui
+OA139,Waiakoa,Kula,Maui
+OA14,Kahaluʻu,Koʻolaupoko,Oʻahu
+OA140,Waiohuli,Kula,Maui
+OA142,Kaʻonoʻulu,Kula,Maui
+OA143,Waiohuli,Kula,Maui
+OA144,Heʻeia,Koʻolaupoko,Oʻahu
+OA145,Kāneʻohe,Koʻolaupoko,Oʻahu
+OA146,Heʻeia,Koʻolaupoko,Oʻahu
+OA147,Heʻeia,Koʻolaupoko,Oʻahu
+OA148,Kāneʻohe,Koʻolaupoko,Oʻahu
+OA149,Heʻeia,Koʻolaupoko,Oʻahu
+OA15,Waiāhole,Koʻolaupoko,Oʻahu
+OA150,Kāneʻohe,Koʻolaupoko,Oʻahu
+OA151,Heʻeia,Koʻolaupoko,Oʻahu
+OA152,Heʻeia,Koʻolaupoko,Oʻahu
+OA153,Heʻeia,Koʻolaupoko,Oʻahu
+OA154,Kāneʻohe,Koʻolaupoko,Oʻahu
+OA155,Heʻeia,Koʻolaupoko,Oʻahu
+OA156,Mākaha,Waiʻanae,Oʻahu
+OA157,Kāneʻohe,Koʻolaupoko,Oʻahu
+OA16,Waiāhole,Koʻolaupoko,Oʻahu
+OA160,Maunalua,Kona,Oʻahu
+OA162,Waikīkī,Kona,Oʻahu
+OA164,Open Ocean,Open Ocean,Oʻahu
+OA165,Kailua,Koʻolaupoko,Oʻahu
+OA166,Waikīkī,Kona,Oʻahu
+OA167,Waikīkī,Kona,Oʻahu
+OA169,Lāʻiewai,Koʻolauloa,Oʻahu
+OA17,Maunalua,Kona,Oʻahu
+OA170,Punanue,Waialua,Oʻahu
+OA171,Paumalū,Koʻolauloa,Oʻahu
+OA173,Waikīkī,Kona,Oʻahu
+OA174,Mokulēʻia 1,Waialua,Oʻahu
+OA175,Mokulēʻia 2,Waialua,Oʻahu
+OA176,Malaekahana,Koʻolauloa,Oʻahu
+OA178,Kawailoa,Waialua,Oʻahu
+OA179,Kikahi,Waialua,Oʻahu
+OA18,Maunalua,Kona,Oʻahu
+OA180,Waikīkī,Kona,Oʻahu
+OA181,Pahipahiʻālua,Koʻolauloa,Oʻahu
+OA182,Paʻalaʻa,Waialua,Oʻahu
+OA183,Waimea,Koʻolauloa,Oʻahu
+OA184,Kuikuiloloa,Waialua,Oʻahu
+OA185,Waikīkī,Kona,Oʻahu
+OA186,Waimānalo,Koʻolaupoko,Oʻahu
+OA189,Kawaihāpai,Waialua,Oʻahu
+OA19,Maunalua,Kona,Oʻahu
+OA190,Paʻalaʻa,Waialua,Oʻahu
+OA193,Waikīkī,Kona,Oʻahu
+OA195,Kailua,Koʻolaupoko,Oʻahu
+OA196,Kailua,Koʻolaupoko,Oʻahu
+OA197,Maunalua,Kona,Oʻahu
+OA2,Kapaeloa,Waialua,Oʻahu
+OA20,Maunalua,Kona,Oʻahu
+OA206,Kailua,Koʻolaupoko,Oʻahu
+OA207,Kailua,Koʻolaupoko,Oʻahu
+OA208,Kailua,Koʻolaupoko,Oʻahu
+OA21,Waikapū,Pūʻali Komohana,Maui
+OA210,Kāneʻohe,Koʻolaupoko,Oʻahu
+OA211,Waikīkī,Kona,Oʻahu
+OA212,Waikīkī,Kona,Oʻahu
+OA213,Waikīkī,Kona,Oʻahu
+OA214,Waikīkī,Kona,Oʻahu
+OA215,Honouliuli,ʻEwa,Oʻahu
+OA216,Waikīkī,Kona,Oʻahu
+OA217,Waikīkī,Kona,Oʻahu
+OA218,Waikīkī,Kona,Oʻahu
+OA219,Waikīkī,Kona,Oʻahu
+OA22,Waikapū,Pūʻali Komohana,Maui
+OA220,Waikīkī,Kona,Oʻahu
+OA221,Waikīkī,Kona,Oʻahu
+OA222,Honolulu,Kona,Oʻahu
+OA226,Mākaha,Waiʻanae,Oʻahu
+OA227,Waiʻanae,Waiʻanae,Oʻahu
+OA228,Honouliuli,ʻEwa,Oʻahu
+OA229,Nānākuli,Waiʻanae,Oʻahu
+OA23,Kamaʻole,Kula,Maui
+OA230,Wailuku,Pūʻali Komohana,Maui
+OA231,Kaluako‘i,Kona,Molokaʻi
+OA234,Wailuku,Pūʻali Komohana,Maui
+OA235,Pūlehunui,Kula,Maui
+OA238,Kaluako‘i,Kona,Molokaʻi
+OA239,Kaluako‘i,Kona,Molokaʻi
+OA24,Waiakoa,Kula,Maui
+OA242,Kaluako‘i,Kona,Molokaʻi
+OA246,Kaluako‘i,Kona,Molokaʻi
+OA247,Kaluako‘i,Kona,Molokaʻi
+OA25,Pūlehunui,Kula,Maui
+OA251,Kaluako‘i,Kona,Molokaʻi
+OA252,Waikīkī,Kona,Oʻahu
+OA254,Waikīkī,Kona,Oʻahu
+OA255,Maunalua,Kona,Oʻahu
+OA256,Waikīkī,Kona,Oʻahu
+OA257,Maunalua,Kona,Oʻahu
+OA258,Waimānalo,Koʻolaupoko,Oʻahu
+OA259,Waikīkī,Kona,Oʻahu
+OA26,Kamaʻole,Kula,Maui
+OA260,Maunalua,Kona,Oʻahu
+OA261,Kualoa 1,Koʻolaupoko,Oʻahu
+OA262,Kualoa 1,Koʻolaupoko,Oʻahu
+OA263,Waikane,Koʻolaupoko,Oʻahu
+OA264,Kaʻaʻawa,Koʻolauloa,Oʻahu
+OA266,Waikīkī,Kona,Oʻahu
+OA267,Waikīkī,Kona,Oʻahu
+OA27,Kaʻonoʻulu,Kula,Maui
+OA272,Honouliuli,ʻEwa,Oʻahu
+OA275,Maunalua,Kona,Oʻahu
+OA276,Waikīkī,Kona,Oʻahu
+OA277,Honouliuli,ʻEwa,Oʻahu
+OA278,Waikīkī,Kona,Oʻahu
+OA28,Kamaʻole,Kula,Maui
+OA280,Waikīkī,Kona,Oʻahu
+OA281,Kailua,Koʻolaupoko,Oʻahu
+OA283,Honouliuli,ʻEwa,Oʻahu
+OA284,Honouliuli,ʻEwa,Oʻahu
+OA285,Open Ocean,Open Ocean,Oʻahu
+OA287,Open Ocean,Open Ocean,Kauaʻi
+OA288,Open Ocean,Open Ocean,Oʻahu
+OA29,Kēōkea,Kula,Maui
+OA290,Waimānalo,Koʻolaupoko,Oʻahu
+OA292,Waiʻanae,Waiʻanae,Oʻahu
+OA293,Waikīkī,Kona,Oʻahu
+OA296,Kailua,Koʻolaupoko,Oʻahu
+OA297,Kailua,Koʻolaupoko,Oʻahu
+OA298,Heʻeia,Koʻolaupoko,Oʻahu
+OA299,Open Ocean,Open Ocean,Oʻahu
+OA3,Kapaeloa,Waialua,Oʻahu
+OA30,Kamaʻole,Kula,Maui
+OA301,Kailua,Koʻolaupoko,Oʻahu
+OA302,Waikīkī,Kona,Oʻahu
+OA309,Waimānalo,Koʻolaupoko,Oʻahu
+OA31,Kēōkea,Kula,Maui
+OA311,Honouliuli,ʻEwa,Oʻahu
+OA312,Waikīkī,Kona,Oʻahu
+OA315,Paumalū,Koʻolauloa,Oʻahu
+OA316,Lāʻiewai,Koʻolauloa,Oʻahu
+OA319,Kailua,Koʻolaupoko,Oʻahu
+OA32,Wailuku,Pūʻali Komohana,Maui
+OA320,Kailua,Koʻolaupoko,Oʻahu
+OA321,Pūpūkea,Koʻolauloa,Oʻahu
+OA323,Lauhulu,Waialua,Oʻahu
+OA324,Pūpūkea,Koʻolauloa,Oʻahu
+OA325,Paʻalaʻa,Waialua,Oʻahu
+OA326,Pūpūkea,Koʻolauloa,Oʻahu
+OA327,Kaʻena,Waialua,Oʻahu
+OA328,Waialeʻe,Koʻolauloa,Oʻahu
+OA33,Wahikuli,Lāhainā,Maui
+OA331,Kawaihāpai,Waialua,Oʻahu
+OA332,Kawaihāpai,Waialua,Oʻahu
+OA333,Kawaihāpai,Waialua,Oʻahu
+OA334,Kawaihāpai,Waialua,Oʻahu
+OA336,Paumalū,Koʻolauloa,Oʻahu
+OA337,ʻŌiʻo 2,Koʻolauloa,Oʻahu
+OA338,Pūpūkea,Koʻolauloa,Oʻahu
+OA34,Hāmākuapoko,Hāmākuapoko,Maui
+OA340,Nānākuli,Waiʻanae,Oʻahu
+OA341,Waikīkī,Kona,Oʻahu
+OA342,Maunalua,Kona,Oʻahu
+OA343,Waikīkī,Kona,Oʻahu
+OA345,Kawaihāpai,Waialua,Oʻahu
+OA346,Kawaihāpai,Waialua,Oʻahu
+OA347,Kawaihāpai,Waialua,Oʻahu
+OA348,Mokulēʻia 1,Waialua,Oʻahu
+OA349,Kawaihāpai,Waialua,Oʻahu
+OA35,Kamaʻole,Kula,Maui
+OA350,Waikīkī,Kona,Oʻahu
+OA351,Honouliuli,ʻEwa,Oʻahu
+OA352,Honouliuli,ʻEwa,Oʻahu
+OA353,Waikīkī,Kona,Oʻahu
+OA354,Maunalua,Kona,Oʻahu
+OA355,Waikīkī,Kona,Oʻahu
+OA356,Maunalua,Kona,Oʻahu
+OA357,Hālawa,ʻEwa,Oʻahu
+OA358,Honolulu,Kona,Oʻahu
+OA359,Waimānalo,Koʻolaupoko,Oʻahu
+OA36,Haʻikū,Hāmākualoa,Maui
+OA360,Kuliʻouʻou,Kona,Oʻahu
+OA362,Honouliuli,ʻEwa,Oʻahu
+OA363,Kahaluʻu,Koʻolaupoko,Oʻahu
+OA364,Honouliuli,ʻEwa,Oʻahu
+OA367,Keaʻau,Waiʻanae,Oʻahu
+OA369,Mākaha,Waiʻanae,Oʻahu
+OA370,Waikīkī,Kona,Oʻahu
+OA378,Waiʻanae,Waiʻanae,Oʻahu
+OA38,Paeahu,Kula,Maui
+OA380,Honouliuli,ʻEwa,Oʻahu
+OA381,Kahaluʻu,Koʻolaupoko,Oʻahu
+OA383,Heʻeia,Koʻolaupoko,Oʻahu
+OA386,Waikīkī,Kona,Oʻahu
+OA389,Kahanahāiki,Waiʻanae,Oʻahu
+OA39,Kēōkea,Kula,Maui
+OA391,Waimānalo,Koʻolaupoko,Oʻahu
+OA394,Kualoa 1,Koʻolaupoko,Oʻahu
+OA396,Heʻeia,Koʻolaupoko,Oʻahu
+OA399,Kailua,Koʻolaupoko,Oʻahu
+OA4,Kapaeloa,Waialua,Oʻahu
+OA40,Hāmākuapoko,Hāmākuapoko,Maui
+OA403,Kualoa 1,Koʻolaupoko,Oʻahu
+OA406,Waikīkī,Kona,Oʻahu
+OA408,Maunalua,Kona,Oʻahu
+OA416,Heʻeia,Koʻolaupoko,Oʻahu
+OA418,Kuliʻouʻou,Kona,Oʻahu
+OA419,Kāneʻohe,Koʻolaupoko,Oʻahu
+OA420,Kuliʻouʻou,Kona,Oʻahu
+OA423,Waikīkī,Kona,Oʻahu
+OA424,Waikīkī,Kona,Oʻahu
+OA426,Heʻeia,Koʻolaupoko,Oʻahu
+OA429,Keawaʻula,Waiʻanae,Oʻahu
+OA43,Heʻeia,Koʻolaupoko,Oʻahu
+OA433,Heʻeia,Koʻolaupoko,Oʻahu
+OA434,Kahaluʻu,Koʻolaupoko,Oʻahu
+OA437,Kāneʻohe,Koʻolaupoko,Oʻahu
+OA439,Kailua,Koʻolaupoko,Oʻahu
+OA44,Pūehuehunui,Lāhainā,Maui
+OA440,Honouliuli,ʻEwa,Oʻahu
+OA443,Maunalua,Kona,Oʻahu
+OA444,Kahaluʻu,Koʻolaupoko,Oʻahu
+OA446,Maunalua,Kona,Oʻahu
+OA448,Waikīkī,Kona,Oʻahu
+OA449,Honouliuli,ʻEwa,Oʻahu
+OA450,Nānākuli,Waiʻanae,Oʻahu
+OA451,Kāneʻohe,Koʻolaupoko,Oʻahu
+OA452,Waikīkī,Kona,Oʻahu
+OA453,Honouliuli,ʻEwa,Oʻahu
+OA454,Waiʻanae,Waiʻanae,Oʻahu
+OA455,Waiʻanae,Waiʻanae,Oʻahu
+OA456,Honolulu,Kona,Oʻahu
+OA457,Waikīkī,Kona,Oʻahu
+OA458,Kāneʻohe,Koʻolaupoko,Oʻahu
+OA459,Waiʻanae,Waiʻanae,Oʻahu
+OA46,Olowalu,Lāhainā,Maui
+OA460,Kalihi,Kona,Oʻahu
+OA461,Waikīkī,Kona,Oʻahu
+OA464,Waiʻanae,Waiʻanae,Oʻahu
+OA466,Kāneʻohe,Koʻolaupoko,Oʻahu
+OA467,Honolulu,Kona,Oʻahu
+OA469,N/A,ʻEwa,Oʻahu
+OA47,Launiupoko,Lāhainā,Maui
+OA470,Honolulu,Kona,Oʻahu
+OA472,Kuliʻouʻou,Kona,Oʻahu
+OA473,Maunalua,Kona,Oʻahu
+OA474,Maunalua,Kona,Oʻahu
+OA475,N/A,ʻEwa,Oʻahu
+OA476,Kailua,Koʻolaupoko,Oʻahu
+OA477,Honouliuli,ʻEwa,Oʻahu
+OA478,Waikīkī,Kona,Oʻahu
+OA479,Waikīkī,Kona,Oʻahu
+OA480,Waikīkī,Kona,Oʻahu
+OA482,Maunalua,Kona,Oʻahu
+OA484,Waikīkī,Kona,Oʻahu
+OA485,Kuliʻouʻou,Kona,Oʻahu
+OA486,Honouliuli,ʻEwa,Oʻahu
+OA487,Honouliuli,ʻEwa,Oʻahu
+OA488,Honolulu,Kona,Oʻahu
+OA489,Waikīkī,Kona,Oʻahu
+OA49,Paunau,Lāhainā,Maui
+OA490,Maunalua,Kona,Oʻahu
+OA491,Waikīkī,Kona,Oʻahu
+OA492,Waikīkī,Kona,Oʻahu
+OA493,Honolulu,Kona,Oʻahu
+OA494,Waikīkī,Kona,Oʻahu
+OA496,Waimānalo,Koʻolaupoko,Oʻahu
+OA497,Honolulu,Kona,Oʻahu
+OA498,Honolulu,Kona,Oʻahu
+OA499,Heʻeia,Koʻolaupoko,Oʻahu
+OA5,Kapaeloa,Waialua,Oʻahu
+OA50,Launiupoko,Lāhainā,Maui
+OA500,Kuliʻouʻou,Kona,Oʻahu
+OA501,Kuliʻouʻou,Kona,Oʻahu
+OA502,Kuliʻouʻou,Kona,Oʻahu
+OA503,Waikīkī,Kona,Oʻahu
+OA504,Waikīkī,Kona,Oʻahu
+OA51,Kalihi,Honuaʻula,Maui
+OA52,Kalihi,Honuaʻula,Maui
+OA521,Maunalua,Kona,Oʻahu
+OA522,Kuliʻouʻou,Kona,Oʻahu
+OA523,Maunalua,Kona,Oʻahu
+OA524,Maunalua,Kona,Oʻahu
+OA525,Maunalua,Kona,Oʻahu
+OA527,Honolulu,Kona,Oʻahu
+OA529,Waikīkī,Kona,Oʻahu
+OA53,Mohopilo,Honuaʻula,Maui
+OA531,Waikīkī,Kona,Oʻahu
+OA532,Waikīkī,Kona,Oʻahu
+OA533,Waikīkī,Kona,Oʻahu
+OA541,Waikīkī,Kona,Oʻahu
+OA55,Mohopilo,Honuaʻula,Maui
+OA552,Maunalua,Kona,Oʻahu
+OA553,Maunalua,Kona,Oʻahu
+OA554,Kalihi,Kona,Oʻahu
+OA557,Kuliʻouʻou,Kona,Oʻahu
+OA56,Mohopilo,Honuaʻula,Maui
+OA562,Waimānalo,Koʻolaupoko,Oʻahu
+OA563,Kuliʻouʻou,Kona,Oʻahu
+OA564,Honolulu,Kona,Oʻahu
+OA57,Mohopilo,Honuaʻula,Maui
+OA573,Waikīkī,Kona,Oʻahu
+OA574,Waimānalo,Koʻolaupoko,Oʻahu
+OA575,Waikīkī,Kona,Oʻahu
+OA58,Mohopilo,Honuaʻula,Maui
+OA582,Maunalua,Kona,Oʻahu
+OA583,Waikīkī,Kona,Oʻahu
+OA584,Waikīkī,Kona,Oʻahu
+OA585,Honolulu,Kona,Oʻahu
+OA59,Mohopilo,Honuaʻula,Maui
+OA593,Waikīkī,Kona,Oʻahu
+OA594,Waikīkī,Kona,Oʻahu
+OA595,Honolulu,Kona,Oʻahu
+OA6,Kāneʻohe,Koʻolaupoko,Oʻahu
+OA60,Palauea,Honuaʻula,Maui
+OA603,Waimānalo,Koʻolaupoko,Oʻahu
+OA604,Waikīkī,Kona,Oʻahu
+OA605,Kailua,Koʻolaupoko,Oʻahu
+OA606,Kailua,Koʻolaupoko,Oʻahu
+OA607,N/A,ʻEwa,Oʻahu
+OA608,Waikīkī,Kona,Oʻahu
+OA611,Maunalua,Kona,Oʻahu
+OA612,Waikīkī,Kona,Oʻahu
+OA613,Kailua,Koʻolaupoko,Oʻahu
+OA62,Wailuku,Pūʻali Komohana,Maui
+OA64,Wailuku,Pūʻali Komohana,Maui
+OA65,Wailuku,Pūʻali Komohana,Maui
+OA66,Wailuku,Pūʻali Komohana,Maui
+OA67,Hāmākuapoko,Hāmākuapoko,Maui
+OA68,Wailuku,Pūʻali Komohana,Maui
+OA69,Wailuku,Pūʻali Komohana,Maui
+OA7,Kāneʻohe,Koʻolaupoko,Oʻahu
+OA70,Hāmākuapoko,Hāmākuapoko,Maui
+OA700,ʻŌiʻo 1,Koʻolauloa,Oʻahu
+OA701,ʻŌiʻo 2,Koʻolauloa,Oʻahu
+OA702,Hanakaʻoe,Koʻolauloa,Oʻahu
+OA703,Kaunala,Koʻolauloa,Oʻahu
+OA704,Kaunala,Koʻolauloa,Oʻahu
+OA705,Paumalū,Koʻolauloa,Oʻahu
+OA706,Paumalū,Koʻolauloa,Oʻahu
+OA707,Paumalū,Koʻolauloa,Oʻahu
+OA708,Pūpūkea,Koʻolauloa,Oʻahu
+OA709,Pūpūkea,Koʻolauloa,Oʻahu
+OA71,Wailuku,Pūʻali Komohana,Maui
+OA710,Kahuku,Koʻolauloa,Oʻahu
+OA711,Keana,Koʻolauloa,Oʻahu
+OA712,Malaekahana,Koʻolauloa,Oʻahu
+OA713,Malaekahana,Koʻolauloa,Oʻahu
+OA714,Lāʻiewai,Koʻolauloa,Oʻahu
+OA715,Punalau,Koʻolauloa,Oʻahu
+OA716,Ulupehupehu,Koʻolauloa,Oʻahu
+OA717,Kawela,Koʻolauloa,Oʻahu
+OA718,Ulupehupehu,Koʻolauloa,Oʻahu
+OA719,Kahuku,Koʻolauloa,Oʻahu
+OA72,Wailuku,Pūʻali Komohana,Maui
+OA720,Hanakaʻoe,Koʻolauloa,Oʻahu
+OA721,Kawela,Koʻolauloa,Oʻahu
+OA722,Punalau,Koʻolauloa,Oʻahu
+OA723,Punalau,Koʻolauloa,Oʻahu
+OA724,Kawela,Koʻolauloa,Oʻahu
+OA725,Lāʻiewai,Koʻolauloa,Oʻahu
+OA726,Lāʻiewai,Koʻolauloa,Oʻahu
+OA727,Lāʻiewai,Koʻolauloa,Oʻahu
+OA728,Lāʻiewai,Koʻolauloa,Oʻahu
+OA729,Lāʻiewai,Koʻolauloa,Oʻahu
+OA73,Wailuku,Pūʻali Komohana,Maui
+OA730,Lāʻiemaloʻo,Koʻolauloa,Oʻahu
+OA731,Lāʻiemaloʻo,Koʻolauloa,Oʻahu
+OA732,Lāʻiemaloʻo,Koʻolauloa,Oʻahu
+OA733,Lāʻiemaloʻo,Koʻolauloa,Oʻahu
+OA734,Kaipapaʻu,Koʻolauloa,Oʻahu
+OA739,Kailua,Koʻolaupoko,Oʻahu
+OA74,Kamaʻole,Kula,Maui
+OA744,Kailua,Koʻolaupoko,Oʻahu
+OA745,Pahipahiʻālua,Koʻolauloa,Oʻahu
+OA746,Waialeʻe,Koʻolauloa,Oʻahu
+OA747,Pahipahiʻālua,Koʻolauloa,Oʻahu
+OA748,Kailua,Koʻolaupoko,Oʻahu
+OA749,ʻŌpana 2,Koʻolauloa,Oʻahu
+OA750,Kaluanui,Koʻolauloa,Oʻahu
+OA751,Kapaka,Koʻolauloa,Oʻahu
+OA752,Lāʻiewai,Koʻolauloa,Oʻahu
+OA753,Waialeʻe,Koʻolauloa,Oʻahu
+OA754,Pahipahiʻālua,Koʻolauloa,Oʻahu
+OA759,Kailua,Koʻolaupoko,Oʻahu
+OA76,Kēōkea,Kula,Maui
+OA764,Kailua,Koʻolaupoko,Oʻahu
+OA769,Kailua,Koʻolaupoko,Oʻahu
+OA78,Wailuku,Pūʻali Komohana,Maui
+OA780,Hauʻula,Koʻolauloa,Oʻahu
+OA781,Kapaka,Koʻolauloa,Oʻahu
+OA782,Punaluʻu,Koʻolauloa,Oʻahu
+OA783,Waiʻono,Koʻolauloa,Oʻahu
+OA784,Haleʻaha,Koʻolauloa,Oʻahu
+OA785,Waimānalo,Koʻolaupoko,Oʻahu
+OA79,Paeahu,Kula,Maui
+OA790,Waimānalo,Koʻolaupoko,Oʻahu
+OA791,Maunalua,Kona,Oʻahu
+OA792,Maunalua,Kona,Oʻahu
+OA793,Waimānalo,Koʻolaupoko,Oʻahu
+OA794,Waimānalo,Koʻolaupoko,Oʻahu
+OA796,Waimānalo,Koʻolaupoko,Oʻahu
+OA797,Maunalua,Kona,Oʻahu
+OA798,Waimānalo,Koʻolaupoko,Oʻahu
+OA799,Maunalua,Kona,Oʻahu
+OA8,Kāneʻohe,Koʻolaupoko,Oʻahu
+OA80,Wailuku,Pūʻali Komohana,Maui
+OA81,Honolulu,Kona,Oʻahu
+OA83,Honolulu,Kona,Oʻahu
+OA851,Hanakaʻoe,Koʻolauloa,Oʻahu
+OA852,Paumalū,Koʻolauloa,Oʻahu
+OA853,Pūpūkea,Koʻolauloa,Oʻahu
+OA854,Pūpūkea,Koʻolauloa,Oʻahu
+OA860,Pūpūkea,Koʻolauloa,Oʻahu
+OA865,Kawela,Koʻolauloa,Oʻahu
+OA866,Pūpūkea,Koʻolauloa,Oʻahu
+OA867,Pūpūkea,Koʻolauloa,Oʻahu
+OA88,Heʻeia,Koʻolaupoko,Oʻahu
+OA9,Kāneʻohe,Koʻolaupoko,Oʻahu
+OA90,Waiohuli,Kula,Maui
+OA91,Kaʻonoʻulu,Kula,Maui
+OA92,Waiohuli,Kula,Maui
+OA938,Waimānalo,Koʻolaupoko,Oʻahu
+OA939,Waimānalo,Koʻolaupoko,Oʻahu
+OA94,Kuikuiloloa,Waialua,Oʻahu
+OA940,Waimānalo,Koʻolaupoko,Oʻahu
+OA941,Waimānalo,Koʻolaupoko,Oʻahu
+OA942,Waimānalo,Koʻolaupoko,Oʻahu
+OA943,Waimānalo,Koʻolaupoko,Oʻahu
+OA944,Waimānalo,Koʻolaupoko,Oʻahu
+OA945,Waimānalo,Koʻolaupoko,Oʻahu
+OA946,Waimānalo,Koʻolaupoko,Oʻahu
+OA947,Waimānalo,Koʻolaupoko,Oʻahu
+OA949,Waimānalo,Koʻolaupoko,Oʻahu
+OA95,Kēōkea,Kula,Maui
+OA950,Waimānalo,Koʻolaupoko,Oʻahu
+OA953,Waiāhole,Koʻolaupoko,Oʻahu
+OA954,Kaʻaʻawa,Koʻolauloa,Oʻahu
+OA955,Kahana,Koʻolauloa,Oʻahu
+OA959,Kualoa 2,Koʻolaupoko,Oʻahu
+OA96,Waikīkī,Kona,Oʻahu
+OA960,Makaua 1,Koʻolauloa,Oʻahu
+OA963,Kualoa 1,Koʻolaupoko,Oʻahu
+OA964,Kaʻaʻawa,Koʻolauloa,Oʻahu
+OA965,Punaluʻu,Koʻolauloa,Oʻahu
+OA969,Kaʻaʻawa,Koʻolauloa,Oʻahu
+OA97,Kaluako‘i,Kona,Molokaʻi
+OA970,Kahana,Koʻolauloa,Oʻahu
+OA973,Waiheʻe,Koʻolaupoko,Oʻahu
+OA974,Kaʻaʻawa,Koʻolauloa,Oʻahu
+OA975,Punaluʻu,Koʻolauloa,Oʻahu
+OA98,Kaluako‘i,Kona,Molokaʻi
+OA99,Kahaluʻu,Koʻolaupoko,Oʻahu
+OA999,Kahaluʻu,Koʻolaupoko,Oʻahu
