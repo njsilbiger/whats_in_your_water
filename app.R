@@ -715,6 +715,20 @@ ui <- tagList(
               label = "Download Samples (CSV)",
               class = "btn-sm btn-outline-primary w-100 mt-2"
             ),
+            tags$div(
+              class = "mt-2 p-2 border rounded bg-light",
+              style = "font-size: 0.72rem; line-height: 1.4;",
+              tags$span(class = "fw-semibold d-block mb-1", "How to cite:"),
+              "Silbiger, N., Kealoha, A., & Kahanamoku, S. (2026). ",
+              tags$i("What\u2019s In Your Water? \u2014 Hawai\u02BBi Coastal Water Quality Samples, March 2026 Kona Low."),
+              " Zenodo. ",
+              tags$a(
+                href   = "https://doi.org/10.5281/zenodo.19410137",
+                target = "_blank",
+                class  = "text-muted",
+                "DOI: 10.5281/zenodo.19410137"
+              )
+            ),
             tags$small(
               class = "text-muted mt-1 d-block",
               HTML(fa("rotate", height = "0.8em")),
@@ -1104,7 +1118,7 @@ ui <- tagList(
           "Samples, March 2026 Kona Low."
         ),
         "Zenodo.",
-        tags$span(class = "text-muted", "DOI: TBD")
+        tags$span(class = "text-muted", "DOI: 10.5281/zenodo.19410137")
       ),
 
       tags$p(class = "small text-muted mb-2", "Ahupua\u02BBa boundary data:"),
