@@ -26,6 +26,13 @@ library(fontawesome)
 
 source("01_load_clean_data.R")
 
+# # Cesspool prioritization layers (pre-downloaded by 02_download_cesspool_layers.R)
+# cesspool_tracts <- sf::read_sf("data/cesspool_priority_tracts.geojson")
+# cesspool_pal    <- colorFactor(
+#   palette = c("red", "orange", "#FFD700"),
+#   levels  = c("High", "Medium", "Low")
+# )
+
 # Read chemistry results and full join with sample metadata
 chem_data <- read_csv("data/ChemData.csv", show_col_types = FALSE) |>
   rename(sample_id = sample_ID) |>
@@ -638,7 +645,40 @@ ui <- tagList(
               label    = "Color Points By",
               choices  = c("Default" = "default", "Salinity (psu)" = "salinity"),
               selected = "default"
-            )
+            ),
+            # tags$hr(class = "my-2"),
+            # checkboxInput(
+            #   inputId = "show_cesspools",
+            #   label   = tagList(
+            #     HTML(fa("triangle-exclamation", height = "0.85em", fill = "#c0392b")),
+            #     " Show Cesspool Priority Zones"
+            #   ),
+            #   value   = FALSE
+            # ),
+            # conditionalPanel(
+            #   condition = "input.show_cesspools",
+            #   tags$div(
+            #     class = "small text-muted mt-1",
+            #     tags$span(
+            #       style = "background:red; display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px;"
+            #     ), "High",
+            #     tags$span(
+            #       style = "background:orange; display:inline-block; width:10px; height:10px; border-radius:2px; margin: 0 4px 0 8px;"
+            #     ), "Medium",
+            #     tags$span(
+            #       style = "background:#FFD700; display:inline-block; width:10px; height:10px; border-radius:2px; margin: 0 4px 0 8px;"
+            #     ), "Low"
+            #   ),
+            #   tags$p(
+            #     class = "small text-muted mt-1 mb-0",
+            #     "Cesspool priority zones from the ",
+            #     tags$a(
+            #       href   = "https://seagrant.soest.hawaii.edu/cesspools-tool/",
+            #       target = "_blank",
+            #       "Hawaiʻi Cesspool Prioritization Tool (HCPT)"
+            #     ), "."
+            #   )
+            # )
           ),
 
           accordion_panel(
@@ -1709,7 +1749,28 @@ server <- function(input, output, session) {
     leaflet() |>
       addProviderTiles(providers$Esri.WorldImagery) |>
       setView(lng = -157.5, lat = 20.5, zoom = 7)
+      # |> addPolygons(
+      #   data        = cesspool_tracts,
+      #   fillColor   = ~cesspool_pal(final_cat_),
+      #   fillOpacity = 0.45,
+      #   color       = "white",
+      #   weight      = 0.4,
+      #   group       = "cesspools",
+      #   label       = ~paste0("Cesspool Priority: ", final_cat_),
+      #   labelOptions = labelOptions(textsize = "12px")
+      # ) |>
+      # hideGroup("cesspools")
   })
+
+  # # Show/hide cesspool layer in response to the checkbox
+  # observeEvent(input$show_cesspools, {
+  #   proxy <- leafletProxy("map")
+  #   if (input$show_cesspools) {
+  #     proxy |> showGroup("cesspools")
+  #   } else {
+  #     proxy |> hideGroup("cesspools")
+  #   }
+  # }, ignoreInit = TRUE)
 
   # Empty map overlay — shown when no samples match the current filters
   output$empty_map_overlay <- renderUI({
