@@ -35,7 +35,13 @@ source("01_load_clean_data.R")
 
 # Read chemistry results and full join with sample metadata
 chem_data <- read_csv("data/ChemData.csv", show_col_types = FALSE) |>
-  rename(sample_id = sample_ID) |>
+  rename(
+    sample_id = sample_ID,
+    NO3NO2    = `NO3+NO2 (umol/L)`,
+    PO4       = `PO4 (umol/L)`,
+    SiO2      = `SiO2 (umol/L)`,
+    NH3       = `NH3 (umol/L)`
+  ) |>
   mutate(sample_id = toupper(sample_id))
 
 df_app <- df_clean |>
@@ -643,7 +649,14 @@ ui <- tagList(
             radioButtons(
               inputId  = "color_by",
               label    = "Color Points By",
-              choices  = c("Default" = "default", "Salinity (psu)" = "salinity"),
+              choices  = c(
+                "Default"                         = "default",
+                "Salinity (psu)"                  = "salinity",
+                "Nitrate+Nitrite (\u00b5mol/L)"   = "nitrate",
+                "Phosphate (\u00b5mol/L)"         = "phosphate",
+                "Silicate (\u00b5mol/L)"          = "silicate",
+                "Ammonium (\u00b5mol/L)"          = "ammonium"
+              ),
               selected = "default"
             ),
             # tags$hr(class = "my-2"),
@@ -961,6 +974,23 @@ ui <- tagList(
           "Because silicate comes straight from eroding rock and soil, a spike
            in silicate after rain is a strong sign that muddy, sediment-heavy
            water poured off the land. It acts like a fingerprint of storm runoff."
+        ),
+
+        make_param_card(
+          "flask", "Ammonium (NH\u2084\u207A)",
+          "Ammonium is a form of nitrogen produced when organic matter — like
+           leaves, soil, animal waste, or sewage — breaks down in water. Unlike
+           nitrate, which mostly comes from fertilizers, ammonium is a direct
+           sign that decomposing organic material or sewage has entered the water.",
+          "Ammonium can directly stress corals and the tiny algae that live
+           inside them (zooxanthellae), disrupting the partnership that keeps
+           corals fed and healthy. Even at low concentrations, elevated ammonium
+           tips the balance toward fast-growing algae that can outcompete corals
+           on the reef.",
+          "A spike in ammonium after heavy rain is a strong signal that sewage,
+           cesspool overflow, or decomposing organic matter washed off the land.
+           Finding elevated ammonium alongside nitrate and phosphate paints a
+           clear picture of mixed urban and biological runoff reaching the reef."
         ),
 
         make_param_card(
@@ -1484,14 +1514,17 @@ server <- function(input, output, session) {
         samples_analyzed   = samples_analyzed,
         salinity_analyzed  = df_joined |>
           filter(!is.na(Salinity)) |> distinct(sample_id) |> nrow(),
-        nutrients_analyzed = nutrients_analyzed
+        nutrients_analyzed = df_joined |>
+          filter(!is.na(NO3NO2)) |> distinct(sample_id) |> nrow()
       )
     }, error = function(e) {
       list(
         df                 = df_app,
         samples_analyzed   = 0L,
-        salinity_analyzed  = 0L,
-        nutrients_analyzed = 0L
+        salinity_analyzed  = df_app |>
+          filter(!is.na(Salinity)) |> distinct(sample_id) |> nrow(),
+        nutrients_analyzed = df_app |>
+          filter(!is.na(NO3NO2)) |> distinct(sample_id) |> nrow()
       )
     })
   })
@@ -1714,11 +1747,20 @@ server <- function(input, output, session) {
     df  <- df_filtered()
     tot <- nrow(live_data()$df)
 
-    if (input$color_by == "salinity") {
-      df_sal <- df |> filter(!is.na(Salinity))
+    col_info <- list(
+      salinity  = list(col = "Salinity", label = "Salinity"),
+      nitrate   = list(col = "NO3NO2",   label = "Nitrate+Nitrite"),
+      phosphate = list(col = "PO4",      label = "Phosphate"),
+      silicate  = list(col = "SiO2",     label = "Silicate"),
+      ammonium  = list(col = "NH3",      label = "Ammonium")
+    )
+
+    if (input$color_by %in% names(col_info)) {
+      info  <- col_info[[input$color_by]]
+      n_sub <- df |> filter(!is.na(.data[[info$col]])) |> nrow()
       value_box(
-        title  = "Salinity Samples Shown out of Total",
-        value  = paste(nrow(df_sal), "of", tot),
+        title  = paste(info$label, "Samples Shown out of Total"),
+        value  = paste(n_sub, "of", tot),
         theme  = "primary",
         height = "90px"
       )
@@ -1813,6 +1855,10 @@ server <- function(input, output, session) {
       "Lower values may indicate freshwater input ",
       "from runoff, streams, or submarine groundwater discharge (SGD)."
     )
+    no3no2_tooltip <- "Normal range for Hawaiian nearshore reefs: <1\u00a0\u00b5mol/L"
+    po4_tooltip    <- "Normal range for Hawaiian nearshore reefs: <0.1\u00a0\u00b5mol/L"
+    sio2_tooltip   <- "Normal range for Hawaiian nearshore waters: <5\u00a0\u00b5mol/L"
+    nh3_tooltip    <- "Normal range for Hawaiian nearshore reefs: <1\u00a0\u00b5mol/L"
 
     make_popup <- function(d) {
       salinity_line <- if_else(
@@ -1823,6 +1869,42 @@ server <- function(input, output, session) {
           "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
         ),
         "<br>Salinity: <i>Not yet processed</i>"
+      )
+      no3no2_line <- if_else(
+        !is.na(d$NO3NO2),
+        paste0(
+          "<br>Nitrate+Nitrite: ", round(d$NO3NO2, 2), " \u00b5mol/L ",
+          "<span title='", no3no2_tooltip, "' ",
+          "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
+        ),
+        ""
+      )
+      po4_line <- if_else(
+        !is.na(d$PO4),
+        paste0(
+          "<br>Phosphate: ", round(d$PO4, 2), " \u00b5mol/L ",
+          "<span title='", po4_tooltip, "' ",
+          "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
+        ),
+        ""
+      )
+      sio2_line <- if_else(
+        !is.na(d$SiO2),
+        paste0(
+          "<br>Silicate: ", round(d$SiO2, 2), " \u00b5mol/L ",
+          "<span title='", sio2_tooltip, "' ",
+          "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
+        ),
+        ""
+      )
+      nh3_line <- if_else(
+        !is.na(d$NH3),
+        paste0(
+          "<br>Ammonium: ", round(d$NH3, 2), " \u00b5mol/L ",
+          "<span title='", nh3_tooltip, "' ",
+          "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
+        ),
+        ""
       )
       ahupuaa_line <- if_else(
         !is.na(d$ahupuaa),
@@ -1835,6 +1917,10 @@ server <- function(input, output, session) {
         "Collected: ", format(d$collected_hst, "%b %d, %Y %I:%M %p HST"),
         ahupuaa_line,
         salinity_line,
+        no3no2_line,
+        po4_line,
+        sio2_line,
+        nh3_line,
         if_else(
           !is.na(d$notes) & nchar(trimws(d$notes)) > 0,
           paste0("<br><i>", d$notes, "</i>"),
@@ -1873,32 +1959,42 @@ server <- function(input, output, session) {
       return()
     }
 
-    if (input$color_by == "salinity") {
-      all_sal   <- live_data()$df$Salinity
-      sal_range <- range(all_sal, na.rm = TRUE)
-      has_data  <- any(!is.na(all_sal)) && sal_range[1] != sal_range[2]
+    # ---- Numeric color scales (salinity + nutrients) -------------------
+    numeric_cols <- list(
+      salinity  = list(col = "Salinity", title = "Salinity (psu)"),
+      nitrate   = list(col = "NO3NO2",   title = "Nitrate+Nitrite (\u00b5mol/L)"),
+      phosphate = list(col = "PO4",      title = "Phosphate (\u00b5mol/L)"),
+      silicate  = list(col = "SiO2",     title = "Silicate (\u00b5mol/L)"),
+      ammonium  = list(col = "NH3",      title = "Ammonium (\u00b5mol/L)")
+    )
+
+    if (input$color_by %in% names(numeric_cols)) {
+      info     <- numeric_cols[[input$color_by]]
+      all_vals <- live_data()$df[[info$col]]
+      val_rng  <- range(all_vals, na.rm = TRUE)
+      has_data <- any(!is.na(all_vals)) && val_rng[1] != val_rng[2]
 
       if (has_data) {
-        df_sal <- df |> filter(!is.na(Salinity))
-        pal    <- colorNumeric(palette = "viridis", domain = sal_range)
+        df_sub <- df |> filter(!is.na(.data[[info$col]]))
+        pal    <- colorNumeric(palette = "viridis", domain = val_rng)
 
         proxy |>
           addCircleMarkers(
-            data        = df_sal,
+            data        = df_sub,
             lng         = ~longitude,
             lat         = ~latitude,
             radius      = 7,
             color       = "white",
-            fillColor   = ~pal(Salinity),
+            fillColor   = pal(df_sub[[info$col]]),
             fillOpacity = 0.85,
             weight      = 1.5,
-            popup       = make_popup(df_sal)
+            popup       = make_popup(df_sub)
           ) |>
           addLegend(
             position  = "bottomright",
             pal       = pal,
-            values    = all_sal[!is.na(all_sal)],
-            title     = "Salinity (psu)",
+            values    = all_vals[!is.na(all_vals)],
+            title     = info$title,
             opacity   = 0.85
           )
         return()
