@@ -299,6 +299,20 @@ app_css <- "
                    calc(var(--bs-card-inner-border-radius)) 0 0;
   }
 
+  /* ---- Leaflet legend: always visible inside map card ---- */
+  #map-card .card-body {
+    overflow: visible !important;
+  }
+  .leaflet-control-container {
+    overflow: visible !important;
+  }
+
+  /* ---- Leaflet legend: vertically centered on the right ---- */
+  #map .leaflet-top.leaflet-right {
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+  }
+
   /* ---- Parameter section heading ---- */
   .param-section-title {
     font-size: 1.25rem;
@@ -1159,6 +1173,34 @@ ui <- tagList(
         ),
 
         accordion_panel(
+          title = "What does \u201cbelow detection limit\u201d mean?",
+          icon  = HTML(fa("flask", fill = "#0077b6", height = "1em")),
+          p(
+            "Every instrument has a lower limit of sensitivity \u2014 a concentration",
+            "so small that the machine can\u2019t reliably distinguish it from background",
+            "noise. When a nutrient measurement falls below that threshold, we know",
+            "the concentration is very low, but we can\u2019t report an exact number.",
+            "In those cases, the value is recorded as 0."
+          ),
+          p(
+            "The detection limits for the instruments used in this study are:"
+          ),
+          tags$ul(
+            tags$li("Nitrate+Nitrite (N+N): 0.07\u00a0\u00b5mol/L"),
+            tags$li("Phosphate: 0.07\u00a0\u00b5mol/L"),
+            tags$li("Silicate: 0.01\u00a0\u00b5mol/L"),
+            tags$li("Ammonium: 0.08\u00a0\u00b5mol/L")
+          ),
+          p(
+            "A value of 0 for any of these nutrients means the true concentration",
+            "is somewhere between zero and the detection limit listed above \u2014",
+            "effectively, the water is very clean for that parameter.",
+            "You\u2019ll see a \u201cbelow detection limit\u201d note in the sample popup",
+            "on the map whenever this applies."
+          )
+        ),
+
+        accordion_panel(
           title = "Can I still get involved?",
           icon  = HTML(fa("hand", fill = "#0077b6", height = "1em")),
           p(
@@ -1873,8 +1915,9 @@ server <- function(input, output, session) {
       no3no2_line <- if_else(
         !is.na(d$NO3NO2),
         paste0(
-          "<br>Nitrate+Nitrite: ", round(d$NO3NO2, 2), " \u00b5mol/L ",
-          "<span title='", no3no2_tooltip, "' ",
+          "<br>Nitrate+Nitrite: ", round(d$NO3NO2, 2), " \u00b5mol/L",
+          if_else(d$NO3NO2 < 0.07, " <small style='color:#6c757d;'>(below detection limit)</small>", ""),
+          " <span title='", no3no2_tooltip, "' ",
           "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
         ),
         ""
@@ -1882,8 +1925,9 @@ server <- function(input, output, session) {
       po4_line <- if_else(
         !is.na(d$PO4),
         paste0(
-          "<br>Phosphate: ", round(d$PO4, 2), " \u00b5mol/L ",
-          "<span title='", po4_tooltip, "' ",
+          "<br>Phosphate: ", round(d$PO4, 2), " \u00b5mol/L",
+          if_else(d$PO4 < 0.07, " <small style='color:#6c757d;'>(below detection limit)</small>", ""),
+          " <span title='", po4_tooltip, "' ",
           "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
         ),
         ""
@@ -1891,8 +1935,9 @@ server <- function(input, output, session) {
       sio2_line <- if_else(
         !is.na(d$SiO2),
         paste0(
-          "<br>Silicate: ", round(d$SiO2, 2), " \u00b5mol/L ",
-          "<span title='", sio2_tooltip, "' ",
+          "<br>Silicate: ", round(d$SiO2, 2), " \u00b5mol/L",
+          if_else(d$SiO2 < 0.01, " <small style='color:#6c757d;'>(below detection limit)</small>", ""),
+          " <span title='", sio2_tooltip, "' ",
           "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
         ),
         ""
@@ -1900,8 +1945,9 @@ server <- function(input, output, session) {
       nh3_line <- if_else(
         !is.na(d$NH3),
         paste0(
-          "<br>Ammonium: ", round(d$NH3, 2), " \u00b5mol/L ",
-          "<span title='", nh3_tooltip, "' ",
+          "<br>Ammonium: ", round(d$NH3, 2), " \u00b5mol/L",
+          if_else(d$NH3 < 0.08, " <small style='color:#6c757d;'>(below detection limit)</small>", ""),
+          " <span title='", nh3_tooltip, "' ",
           "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
         ),
         ""
@@ -1950,7 +1996,7 @@ server <- function(input, output, session) {
           popup       = make_popup(df)
         ) |>
         addLegend(
-          position  = "bottomright",
+          position  = "topright",
           pal       = pal,
           values    = all_moku,
           title     = "Moku",
@@ -1961,11 +2007,11 @@ server <- function(input, output, session) {
 
     # ---- Numeric color scales (salinity + nutrients) -------------------
     numeric_cols <- list(
-      salinity  = list(col = "Salinity", title = "Salinity (psu)"),
-      nitrate   = list(col = "NO3NO2",   title = "Nitrate+Nitrite (\u00b5mol/L)"),
-      phosphate = list(col = "PO4",      title = "Phosphate (\u00b5mol/L)"),
-      silicate  = list(col = "SiO2",     title = "Silicate (\u00b5mol/L)"),
-      ammonium  = list(col = "NH3",      title = "Ammonium (\u00b5mol/L)")
+      salinity  = list(col = "Salinity", title = "Salinity<br><small>(psu)</small>"),
+      nitrate   = list(col = "NO3NO2",   title = "Nitrate+Nitrite<br><small>(\u00b5mol/L)</small>"),
+      phosphate = list(col = "PO4",      title = "Phosphate<br><small>(\u00b5mol/L)</small>"),
+      silicate  = list(col = "SiO2",     title = "Silicate<br><small>(\u00b5mol/L)</small>"),
+      ammonium  = list(col = "NH3",      title = "Ammonium<br><small>(\u00b5mol/L)</small>")
     )
 
     if (input$color_by %in% names(numeric_cols)) {
@@ -1991,7 +2037,7 @@ server <- function(input, output, session) {
             popup       = make_popup(df_sub)
           ) |>
           addLegend(
-            position  = "bottomright",
+            position  = "topright",
             pal       = pal,
             values    = all_vals[!is.na(all_vals)],
             title     = info$title,
