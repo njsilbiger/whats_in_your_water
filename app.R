@@ -2022,7 +2022,45 @@ server <- function(input, output, session) {
 
       if (has_data) {
         df_sub <- df |> filter(!is.na(.data[[info$col]]))
-        pal    <- colorNumeric(palette = "viridis", domain = val_rng)
+
+        if (input$color_by == "salinity") {
+          # Power transform (p > 1) compresses the low outlier into a narrow
+          # dark band and stretches colour differences across the high end,
+          # while the full value range remains visible in the legend.
+          sal_vals <- all_vals[!is.na(all_vals)]
+          min_sal  <- min(sal_vals)
+          max_sal  <- max(sal_vals)
+          p        <- 2
+
+          t_fwd <- function(x) ((x - min_sal) / (max_sal - min_sal)) ^ p
+          t_inv <- function(t) min_sal + (max_sal - min_sal) * t ^ (1 / p)
+
+          pal <- colorNumeric(palette = "viridis", domain = c(0, 1))
+
+          proxy |>
+            addCircleMarkers(
+              data        = df_sub,
+              lng         = ~longitude,
+              lat         = ~latitude,
+              radius      = 7,
+              color       = "white",
+              fillColor   = pal(t_fwd(df_sub$Salinity)),
+              fillOpacity = 0.85,
+              weight      = 1.5,
+              popup       = make_popup(df_sub)
+            ) |>
+            addLegend(
+              position  = "topright",
+              pal       = pal,
+              values    = t_fwd(sal_vals),
+              title     = info$title,
+              labFormat = labelFormat(transform = t_inv, digits = 1),
+              opacity   = 0.85
+            )
+          return()
+        }
+
+        pal <- colorNumeric(palette = "viridis", domain = val_rng)
 
         proxy |>
           addCircleMarkers(
