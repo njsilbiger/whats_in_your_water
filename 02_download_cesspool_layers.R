@@ -1,166 +1,263 @@
 # ============================================================
-# Download & cache Hawaiʻi Cesspool Prioritization Tool (HCPT) layers
+# Download & process Hawaiʻi HCPT Cesspool point data
 #
 # Source: Hawaiʻi Statewide GIS Program
 #   https://geodata.hawaii.gov/arcgis/rest/services/Infrastructure/MapServer
+#   Layer 32: HCPT Cesspools (individual point locations, n ≈ 82,141)
 #
-# Run this script once locally to cache the layers in data/.
-# The app loads the cached files directly — no live API calls at runtime.
+# Outputs saved to data/:
+#   cesspool_points.rds             — raw sf point layer (cached)
+#   sample_cesspool_distances.csv   — distance (m) to nearest cesspool per sample
+#   cesspool_by_ahupuaa.csv         — cesspool count per ahupuaʻa / moku / island
 #
-# Layers downloaded:
-#   - cesspool_priority_tracts.geojson    (census tracts,      ~300 features)
-#   - cesspool_priority_blockgroups.geojson (census block groups, ~800 features)
+# Run once locally; the app and analysis scripts load the cached CSVs.
 #
 # Author: Nyssa Silbiger
-# Date:   2026-04-06
+# Date:   2026-04-28
 # ============================================================
 
 library(httr)
 library(jsonlite)
 library(sf)
 library(dplyr)
+library(readr)
 
-BASE_URL <- "https://geodata.hawaii.gov/arcgis/rest/services/Infrastructure/MapServer"
-
-# ----------------------------------------------------------------
-# Helper: discover layer list from the MapServer
-# ----------------------------------------------------------------
-
-get_layer_list <- function(base_url) {
-  resp <- GET(paste0(base_url, "?f=json"), timeout(30))
-  stop_for_status(resp)
-  parsed <- fromJSON(rawToChar(resp$content))
-  parsed$layers[, c("id", "name")]
-}
+BASE_URL  <- "https://geodata.hawaii.gov/arcgis/rest/services/Infrastructure/MapServer"
+LAYER_ID  <- 32          # HCPT Cesspools (individual points)
+PAGE_SIZE <- 1000        # ArcGIS REST max per request
 
 # ----------------------------------------------------------------
-# Helper: query total feature count for a layer
+# Helper: fetch all features with automatic pagination
 # ----------------------------------------------------------------
 
-get_feature_count <- function(base_url, layer_id) {
-  url <- paste0(
-    base_url, "/", layer_id, "/query",
-    "?where=1%3D1&returnCountOnly=true&f=json"
+fetch_all_features <- function(base_url, layer_id, page_size = PAGE_SIZE) {
+  # Total count
+  count_url <- paste0(
+    base_url, "/", layer_id,
+    "/query?where=1%3D1&returnCountOnly=true&f=json"
   )
-  resp <- GET(url, timeout(30))
-  stop_for_status(resp)
-  fromJSON(rawToChar(resp$content))$count
-}
+  total <- fromJSON(rawToChar(GET(count_url, timeout(30))$content))$count
+  message("  Layer ", layer_id, " — total features: ", total)
 
-# ----------------------------------------------------------------
-# Helper: fetch all features for a layer, paging as needed.
-#
-# ArcGIS REST services cap results per request (often 1000).
-# This function pages through until all features are collected.
-# ----------------------------------------------------------------
-
-fetch_all_features <- function(base_url, layer_id, page_size = 1000) {
-
-  # 1. Get total count
-  total <- get_feature_count(base_url, layer_id)
-  message("  Total features: ", total)
-
-  all_features <- vector("list", ceiling(total / page_size))
-  offset <- 0
-  page   <- 1
+  pages   <- vector("list", ceiling(total / page_size))
+  offset  <- 0
+  page    <- 1
 
   repeat {
-    message("  Fetching records ", offset + 1, "–", min(offset + page_size, total), " ...")
+    end <- min(offset + page_size, total)
+    message("  Fetching records ", offset + 1, "\u2013", end, " ...")
 
     url <- paste0(
       base_url, "/", layer_id, "/query",
       "?where=1%3D1",
-      "&outFields=*",
+      "&outFields=objectid,uid,x,y,island",   # only fields we need
       "&returnGeometry=true",
       "&resultOffset=",      offset,
       "&resultRecordCount=", page_size,
       "&f=geojson"
     )
 
-    resp <- GET(url, timeout(60))
+    resp  <- GET(url, timeout(90))
     stop_for_status(resp)
-
     chunk <- tryCatch(
       read_sf(rawToChar(resp$content)),
-      error = function(e) stop("Failed to parse GeoJSON chunk at offset ", offset, ": ", e$message)
+      error = function(e) stop("GeoJSON parse failed at offset ", offset, ": ", e$message)
     )
 
     if (nrow(chunk) == 0) break
-
-    all_features[[page]] <- chunk
+    pages[[page]] <- chunk
     offset <- offset + nrow(chunk)
     page   <- page + 1
-
     if (offset >= total) break
   }
 
-  # Combine pages and ensure consistent CRS
-  combined <- bind_rows(Filter(Negate(is.null), all_features))
-  st_crs(combined) <- 4326
-  combined
+  out <- bind_rows(Filter(Negate(is.null), pages))
+  st_crs(out) <- 4326
+  out
 }
 
-# ----------------------------------------------------------------
-# Step 1: Discover available layers (run once to orient yourself)
-# ----------------------------------------------------------------
-
-message("Fetching MapServer layer list ...")
-layers <- get_layer_list(BASE_URL)
-print(layers)
-
-# Look for cesspool-related layers
-cesspool_layers <- layers[grepl("HCPT|[Cc]esspool", layers$name), ]
-message("\nCesspool-related layers found:")
-print(cesspool_layers)
-
-# ----------------------------------------------------------------
-# Step 2: Download the polygon aggregate layers
+# ================================================================
+# Step 1: Download (or load from cache) cesspool points
 #
-# Adjust layer IDs below if the service has changed.
-# Confirm IDs from the printed table above or browse:
-#   https://geodata.hawaii.gov/arcgis/rest/services/Infrastructure/MapServer
-# ----------------------------------------------------------------
+# NOTE: Layer 32 (HCPT Cesspools) covers BI, Kauaʻi, Maui, Oʻahu only.
+# Molokaʻi is supplemented from Layer 23 (OSDS Molokaʻi), filtered to
+# Class I systems (cesspools / direct-discharge pits).
+# Lānaʻi has no cesspool layer available in this GIS service.
+# ================================================================
 
-# Expected: something like "HCPT Priority Census Tracts"       → tracts
-#           something like "HCPT Priority Census Block Groups"  → block groups
-# Layer 34 confirmed as block groups from service metadata.
-# Adjust TRACT_ID if needed after checking the layer list above.
+cesspool_cache <- "data/cesspool_points.rds"
 
-BLOCKGROUP_ID <- 34   # HCPT Priority Census Block Groups
-TRACT_ID      <- 33   # HCPT Priority Census Tracts (adjust if needed)
+if (file.exists(cesspool_cache)) {
+  message("Loading cesspool points from cache: ", cesspool_cache)
+  cesspools <- readRDS(cesspool_cache)
+  message("  ", nrow(cesspools), " features loaded.")
+} else {
+  message("Downloading HCPT Cesspool points (layer ", LAYER_ID, ") ...")
+  cesspools <- fetch_all_features(BASE_URL, LAYER_ID)
+  saveRDS(cesspools, cesspool_cache)
+  message("Cached to: ", cesspool_cache)
+}
 
-# ---- Block groups ----
-message("\nDownloading census block group layer (ID: ", BLOCKGROUP_ID, ") ...")
-blockgroups <- fetch_all_features(BASE_URL, BLOCKGROUP_ID)
+# ── Supplement with Molokaʻi (layer 23, Class I OSDS = cesspools) ──────
+molokai_cache <- "data/molokai_cesspools.rds"
 
-message("Block group columns: ", paste(names(blockgroups), collapse = ", "))
-message("Block group preview:")
-print(head(as.data.frame(blockgroups)[, setdiff(names(blockgroups), "geometry")], 5))
+if (file.exists(molokai_cache)) {
+  message("Loading Molokaʻi cesspools from cache: ", molokai_cache)
+  molokai_cp <- readRDS(molokai_cache)
+} else {
+  message("Downloading Molokaʻi OSDS (layer 23) ...")
+  molokai_all <- fetch_all_features(BASE_URL, 23)
+  molokai_cp  <- molokai_all |>
+    filter(class_i > 0) |>
+    select(geometry)
+  saveRDS(molokai_cp, molokai_cache)
+  message("Molokaʻi Class-I cesspools: ", nrow(molokai_cp))
+}
 
-write_sf(blockgroups, "data/cesspool_priority_blockgroups.geojson", delete_dsn = TRUE)
-message("Saved → data/cesspool_priority_blockgroups.geojson")
+# Combined layer used for all distance and summary calculations
+all_cesspools <- bind_rows(
+  cesspools |> select(geometry),
+  molokai_cp
+)
+message("Combined cesspool points: ", nrow(all_cesspools),
+        "  (layer 32: ", nrow(cesspools), " + Molokaʻi: ", nrow(molokai_cp), ")")
 
-# ---- Census tracts ----
-message("\nDownloading census tract layer (ID: ", TRACT_ID, ") ...")
-tracts <- fetch_all_features(BASE_URL, TRACT_ID)
+# ================================================================
+# Step 2: Spatial join cesspools → ahupuaʻa
+#
+# We re-use the ahupuaʻa boundaries downloaded by 01_load_clean_data.R.
+# Each cesspool gets ahupuaa / moku / mokupuni (island) labels.
+# ================================================================
 
-message("Tract columns: ", paste(names(tracts), collapse = ", "))
-message("Tract preview:")
-print(head(as.data.frame(tracts)[, setdiff(names(tracts), "geometry")], 5))
+ahupuaa_bounds_path <- "data/ahupuaa_boundaries.geojson"
+if (!exists("ahupuaa_sf")) {
+  message("Loading ahupuaʻa boundaries ...")
+  ahupuaa_sf <- st_read(ahupuaa_bounds_path, quiet = TRUE) |>
+    st_transform(crs = 4326)
+}
 
-write_sf(tracts, "data/cesspool_priority_tracts.geojson", delete_dsn = TRUE)
-message("Saved → data/cesspool_priority_tracts.geojson")
+message("Joining cesspools to ahupuaʻa polygons ...")
+cesspools_4326 <- st_transform(all_cesspools, 4326)
+ahupuaa_simple <- ahupuaa_sf |> select(ahupuaa, moku, mokupuni)
 
-# ----------------------------------------------------------------
-# Step 3: Verify what was saved
-# ----------------------------------------------------------------
+# Pass 1: exact containment
+cesspool_ahupuaa <- st_join(
+  cesspools_4326,
+  ahupuaa_simple,
+  join = st_within
+) |>
+  st_drop_geometry() |>
+  # If a point falls in an overlap zone it may get two rows; keep non-NA
+  arrange(objectid, is.na(ahupuaa)) |>
+  distinct(objectid, .keep_all = TRUE)
 
-message("\n=== Download summary ===")
-message("Block groups: ", nrow(blockgroups), " features | ",
-        round(file.size("data/cesspool_priority_blockgroups.geojson") / 1024), " KB")
-message("Tracts:       ", nrow(tracts),      " features | ",
-        round(file.size("data/cesspool_priority_tracts.geojson")      / 1024), " KB")
+# Pass 2: nearest-feature fallback for any unmatched points
+unmatched_ids <- cesspool_ahupuaa |> filter(is.na(ahupuaa)) |> pull(objectid)
+message("  Unmatched cesspools (fallback to nearest ahupuaʻa): ", length(unmatched_ids))
 
-message("\nBlock group field names:\n  ", paste(names(blockgroups), collapse = "\n  "))
-message("\nPriority level distribution (block groups):")
-print(table(blockgroups$PRIORITY_LEVEL, useNA = "ifany"))
+if (length(unmatched_ids) > 0) {
+  unmatched_pts <- cesspools_4326 |> filter(objectid %in% unmatched_ids)
+  nearest_idx   <- st_nearest_feature(unmatched_pts, ahupuaa_sf)
+  nearest_vals  <- ahupuaa_sf |>
+    st_drop_geometry() |>
+    select(ahupuaa, moku, mokupuni) |>
+    slice(nearest_idx)
+
+  fallback <- bind_cols(
+    unmatched_pts |> st_drop_geometry() |> select(objectid, uid, island),
+    nearest_vals
+  )
+
+  cesspool_ahupuaa <- cesspool_ahupuaa |>
+    rows_update(fallback, by = "objectid")
+}
+
+# ================================================================
+# Step 3: Summary — cesspool count per ahupuaʻa
+# ================================================================
+
+message("Summarising cesspools by ahupuaʻa ...")
+
+ahupuaa_area <- ahupuaa_sf |>
+  st_transform(32604) |>   # UTM zone 4N for accurate m² areas
+  mutate(area_m2 = as.numeric(st_area(geometry))) |>
+  st_drop_geometry() |>
+  select(ahupuaa, moku, area_m2) |>
+  # Some ahupuaʻa have multiple polygon features (main body + tiny slivers).
+  # Sum all parts so the join doesn't fan out and inflate density values.
+  group_by(ahupuaa, moku) |>
+  summarise(area_m2 = sum(area_m2), .groups = "drop")
+
+cesspool_by_ahupuaa <- cesspool_ahupuaa |>
+  filter(!is.na(ahupuaa)) |>
+  group_by(ahupuaa, moku, island = mokupuni) |>
+  summarise(n_cesspools = n(), .groups = "drop") |>
+  left_join(ahupuaa_area, by = c("ahupuaa", "moku")) |>
+  mutate(cesspool_density_per_km2 = n_cesspools / (area_m2 / 1e6)) |>
+  arrange(desc(n_cesspools))
+
+write_csv(cesspool_by_ahupuaa, "data/cesspool_by_ahupuaa.csv")
+message("Saved → data/cesspool_by_ahupuaa.csv  (",
+        nrow(cesspool_by_ahupuaa), " ahupuaʻa)")
+print(head(cesspool_by_ahupuaa, 10))
+
+# ================================================================
+# Step 4: Distance to nearest cesspool for each sample bottle
+#
+# Uses UTM Zone 4N (EPSG:32604) for accurate metre distances.
+# Requires df_clean (from 01_load_clean_data.R) or loads it fresh.
+# ================================================================
+
+if (!exists("df_clean")) {
+  message("Loading sample data via 01_load_clean_data.R ...")
+  source("01_load_clean_data.R", local = TRUE)
+}
+
+samples_with_coords <- df_clean |>
+  filter(!is.na(latitude), !is.na(longitude))
+
+message("Computing distance to nearest cesspool for ",
+        nrow(samples_with_coords), " samples ...")
+
+# Project both layers to UTM Zone 4N (metres)
+UTM4N <- 32604
+
+samples_utm <- st_as_sf(
+  samples_with_coords,
+  coords = c("longitude", "latitude"),
+  crs    = 4326,
+  remove = FALSE
+) |>
+  st_transform(UTM4N)
+
+cesspools_utm <- st_transform(all_cesspools, UTM4N)
+
+# Find nearest cesspool index and compute the actual distance
+nearest_idx  <- st_nearest_feature(samples_utm, cesspools_utm)
+nearest_geom <- st_geometry(cesspools_utm)[nearest_idx]
+distances_m  <- as.numeric(st_distance(
+  st_geometry(samples_utm),
+  nearest_geom,
+  by_element = TRUE
+))
+
+sample_cesspool_distances <- tibble(
+  sample_id                  = samples_with_coords$sample_id,
+  dist_to_nearest_cesspool_m = round(distances_m, 1)
+)
+
+write_csv(sample_cesspool_distances, "data/sample_cesspool_distances.csv")
+message("Saved → data/sample_cesspool_distances.csv  (",
+        nrow(sample_cesspool_distances), " samples)")
+
+# ================================================================
+# Summary
+# ================================================================
+
+message("\n=== Processing complete ===")
+message("Cesspool points:              ", nrow(all_cesspools),
+        "  (layer 32: ", nrow(cesspools), " + Molokaʻi: ", nrow(molokai_cp), ")")
+message("Ahupuaʻa summary:             data/cesspool_by_ahupuaa.csv")
+message("Sample distances:             data/sample_cesspool_distances.csv")
+message("\nDistance summary (metres):")
+print(summary(sample_cesspool_distances$dist_to_nearest_cesspool_m))

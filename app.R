@@ -10,11 +10,14 @@
 
 library(shiny)
 library(bslib)
-library(tidyverse)
+library(tidyverse) 
 library(googlesheets4)
 library(lubridate)
 library(leaflet)
 library(fontawesome)
+library(ggforce)
+library(patchwork)
+library(ggridges)
 
 
 # ------------------------------------------------------------------
@@ -26,12 +29,21 @@ library(fontawesome)
 
 source("01_load_clean_data.R")
 
-# # Cesspool prioritization layers (pre-downloaded by 02_download_cesspool_layers.R)
-# cesspool_tracts <- sf::read_sf("data/cesspool_priority_tracts.geojson")
-# cesspool_pal    <- colorFactor(
-#   palette = c("red", "orange", "#FFD700"),
-#   levels  = c("High", "Medium", "Low")
-# )
+# Cesspool data (pre-computed by 02_download_cesspool_layers.R)
+cesspool_dist     <- read_csv("data/sample_cesspool_distances.csv",
+                               show_col_types = FALSE)
+cesspool_by_ahupuaa <- read_csv("data/cesspool_by_ahupuaa.csv",
+                                 show_col_types = FALSE)
+
+# Normalizes island name strings for joining across datasets with
+# inconsistent okina/macron encoding
+normalize_island <- function(x) {
+  x |>
+    stringr::str_replace_all("[\u02BB\u2018\u2019']", "") |>
+    stringr::str_replace_all("\u0101", "a") |>
+    stringr::str_to_lower() |>
+    stringr::str_trim()
+}
 
 # Read chemistry results and full join with sample metadata
 chem_data <- read_csv("data/ChemData.csv", show_col_types = FALSE) |>
@@ -42,7 +54,11 @@ chem_data <- read_csv("data/ChemData.csv", show_col_types = FALSE) |>
     SiO2      = `SiO2 (umol/L)`,
     NH3       = `NH3 (umol/L)`
   ) |>
-  mutate(sample_id = toupper(sample_id))
+  mutate(
+    sample_id = toupper(sample_id),
+    across(c(Salinity, NO3NO2, PO4, SiO2, NH3),
+           ~if (is.character(.)) readr::parse_number(.) else .)
+  )
 
 df_app <- df_clean |>
   mutate(
@@ -55,7 +71,8 @@ df_app <- df_clean |>
     ),
     date = as.Date(collected_hst, tz = "Pacific/Honolulu")
   ) |>
-  full_join(chem_data, by = "sample_id")
+  full_join(chem_data, by = "sample_id") |>
+  left_join(cesspool_dist, by = "sample_id")
 
 island_choices   <- sort(unique(df_app$island))
 tod_choices      <- c("Daytime", "Nighttime")
@@ -66,6 +83,12 @@ date_choices <- setNames(as.character(date_vals), format(date_vals, "%b %d, %Y")
 total_samples    <- nrow(df_app)
 
 marker_color <- "#f4a261"
+
+# Reef health thresholds (µmol/L) for Hawaiian nearshore waters
+thresholds <- c(NO3NO2 = 1, PO4 = 0.1, SiO2 = 5, NH3 = 1)
+
+# Fixed island color palette (matched to sorted island names at startup)
+island_palette <- c("#1565C0", "#2E7D32", "#E65100", "#6A1B9A")
 
 
 # ------------------------------------------------------------------
@@ -117,6 +140,61 @@ make_param_card <- function(icon_name, param_name, definition,
       tags$p(tags$strong("Terrestrial runoff signal: "), runoff_text)
     )
   )
+}
+
+
+# ------------------------------------------------------------------
+# Helper: speedometer gauge for one nutrient (used on Results tab)
+# ------------------------------------------------------------------
+
+make_gauge <- function(pct, nutrient_name, threshold_label,
+                       units = "\u00b5mol/L") {
+  grade_color <- case_when(
+    pct < 25 ~ "#43A047",
+    pct < 50 ~ "#FB8C00",
+    TRUE     ~ "#E53935"
+  )
+  fill_end <- (pct / 100) * pi
+
+  ggplot() +
+    geom_arc_bar(
+      data = tibble(x0=0, y0=0, r0=0.58, r=1, start=0, end=pi),
+      aes(x0=x0, y0=y0, r0=r0, r=r, start=start, end=end),
+      fill = "grey88", color = NA
+    ) +
+    geom_arc_bar(
+      data = tibble(x0=0, y0=0, r0=0.58, r=1, start=0, end=fill_end),
+      aes(x0=x0, y0=y0, r0=r0, r=r, start=start, end=end),
+      fill = grade_color, color = NA
+    ) +
+    annotate("segment",
+             x = 0, xend = 0, y = 0.58, yend = 1.08,
+             color = "white", linewidth = 0.8) +
+    annotate("text", x = 0, y = 0.22,
+             label = paste0(round(pct), "%"),
+             size = 9, fontface = "bold", color = grade_color, hjust = 0.5) +
+   # annotate("text", x = 0, y = -0.08,
+    #         label = "of samples\nexceeded threshold",
+     #        size = 3, color = "grey45", hjust = 0.5, lineheight = 1.1) +
+    annotate("text", x =  1.2, y = -0.02, label = "0%",
+             size = 3, color = "grey55", hjust = 0.5) +
+    annotate("text", x = -1.2, y = -0.02, label = "100%",
+             size = 3, color = "grey55", hjust = 0.5) +
+    coord_cartesian(xlim = c(-1.6, 1.6), ylim = c(-0.45, 1.25)) +
+    ggtitle(
+      nutrient_name,
+      subtitle = paste0("threshold: >", threshold_label, " ", units)
+    ) +
+    theme_void() +
+    theme(
+      # Keep arcs circular: panel height / panel width = data height / data width
+      aspect.ratio  = 1.7 / 3.2,
+      plot.title    = element_text(hjust=0.5, face="bold", size=13,
+                                   color="grey15", margin=margin(b=1)),
+      plot.subtitle = element_text(hjust=0.5, size=9,
+                                   color="grey55", margin=margin(b=2)),
+      plot.margin   = margin(8, 8, 8, 8)
+    )
 }
 
 
@@ -852,7 +930,287 @@ ui <- tagList(
 
 
   # ================================================================
-  # Page 2: What are we measuring?
+  # Page 2: Results
+  # ================================================================
+
+  nav_panel(
+    title    = "Results",
+    fillable = FALSE,
+
+    div(
+      class = "container-lg py-4",
+
+      h3(
+        class = "mb-1",
+        HTML(fa("chart-bar", fill = "#0077b6", height = "1em")),
+        " Water Quality Results"
+      ),
+      p(
+        class = "text-muted mb-4",
+        "Summary of chemistry results across all sampled sites.",
+        "This panel updates automatically as new lab data arrives."
+      ),
+
+      uiOutput("results_no_data_msg"),
+
+      # ---- Report card gauges ----------------------------------------
+      card(
+        class = "mb-4",
+        card_header(
+          tags$span(
+            class = "d-flex align-items-center gap-2",
+            HTML(fa("gauge-high", fill = "#0077b6", height = "1em")),
+            tags$strong("Reef Health Report Card")
+          )
+        ),
+        card_body(
+          tags$p(
+            class = "text-muted small mb-3",
+            "Percentage of water samples exceeding reef health thresholds",
+            "for Hawaiian nearshore waters."
+          ),
+          plotOutput("plot_report_card", height = "420px")
+        )
+      ),
+
+      # ---- Strip plot (full width) -----------------------------------
+      card(
+        class = "mb-4",
+        card_header(
+          tags$span(
+            class = "d-flex align-items-center gap-2",
+            HTML(fa("circle-dot", fill = "#0077b6", height = "1em")),
+            tags$strong("Nutrient Concentrations \u2014 All Samples")
+          )
+        ),
+        card_body(
+          tags$p(
+            class = "text-muted small mb-3",
+            "Each dot is one water sample. The dashed red line marks the reef health threshold.",
+            "Dots to the right of the line exceeded the threshold."
+          ),
+          layout_column_wrap(
+            width = "50%",
+            heights_equal = "row",
+            plotOutput("plot_strip_no3no2", height = "200px"),
+            plotOutput("plot_strip_po4",    height = "200px"),
+            plotOutput("plot_strip_sio2",   height = "200px"),
+            plotOutput("plot_strip_nh3",    height = "200px")
+          )
+        )
+      ),
+
+      # ---- Salinity ridgeline (full width) ---------------------------
+      card(
+        class = "mb-4",
+        card_header(
+          tags$span(
+            class = "d-flex align-items-center gap-2",
+            HTML(fa("water", fill = "#0077b6", height = "1em")),
+            tags$strong("Salinity Distribution by Island")
+          )
+        ),
+        card_body(
+          tags$p(
+            class = "text-muted small mb-3",
+            "Each curve shows the full spread of salinity readings across samples from that island.",
+            "The dotted green line marks normal seawater (34\u00a0psu) \u2014",
+            "values to the left indicate freshwater mixing from storm runoff."
+          ),
+          plotOutput("plot_ridgeline", height = "320px")
+        )
+      ),
+
+      # ---- Pollution burden by island (full width) ---------------
+      card(
+        class = "mb-4",
+        card_header(
+          tags$span(
+            class = "d-flex align-items-center gap-2",
+            HTML(fa("chart-bar", fill = "#0077b6", height = "1em")),
+            tags$strong("Pollution Burden by Island")
+          )
+        ),
+        card_body(
+          tags$p(
+            class = "text-muted small mb-3",
+            "Share of analyzed samples by how many nutrient thresholds were simultaneously exceeded.",
+            "Darker colors indicate more nutrients above threshold at the same site."
+          ),
+          plotOutput("plot_burden", height = "280px")
+        )
+      ),
+
+      # ---- Stoplight heatmap (full width) ---------------------------
+      card(
+        class = "mb-4",
+        card_header(
+          tags$span(
+            class = "d-flex align-items-center gap-2",
+            HTML(fa("table", fill = "#0077b6", height = "1em")),
+            tags$strong("Water Quality Stoplight by Moku")
+          )
+        ),
+        card_body(
+          tags$p(
+            class = "text-muted small mb-3",
+            "Percentage of samples exceeding reef health thresholds for each nutrient,",
+            "grouped by traditional Hawaiian land division (moku).",
+            "Moku with fewer than 3 analyzed samples are excluded."
+          ),
+          plotOutput("plot_stoplight", height = "500px")
+        )
+      ),
+
+      # ---- Ranked ahupuaʻa hotspot (full width) ------------------
+      # card(
+      #   class = "mb-4",
+      #   card_header(
+      #     tags$span(
+      #       class = "d-flex align-items-center gap-2",
+      #       HTML(fa("circle-exclamation", fill = "#0077b6", height = "1em")),
+      #       tags$strong("Top Ahupua\u02BBa by Pollution Burden")
+      #     )
+      #   ),
+      #   card_body(
+      #     tags$p(
+      #       class = "text-muted small mb-3",
+      #       "Average number of nutrient thresholds exceeded per sample (out of 4).",
+      #       "Higher scores indicate broader, more severe pollution.",
+      #       "Top 15 ahupua\u02BBa with \u22653 analyzed samples shown."
+      #     ),
+      #     plotOutput("plot_hotspot", height = "420px")
+      #   )
+      # ),
+
+      # ---- Cesspool proximity (full width) ---------------------------
+      card(
+        class = "mb-4",
+        card_header(
+          tags$span(
+            class = "d-flex align-items-center gap-2",
+            HTML(fa("house-crack", fill = "#0077b6", height = "1em")),
+            tags$strong("Nutrient Concentration vs. Distance to Nearest Cesspool")
+          )
+        ),
+        card_body(
+          tags$p(
+            class = "text-muted small mb-3",
+            "Each dot is one water sample. X-axis shows distance (m, log scale) to the",
+            "nearest cesspool; y-axis shows nutrient concentration (log\u2081p scale).",
+            "Lāna\u02BBi is excluded \u2014 no cesspool location data are publicly available",
+            "for that island. Open-ocean samples are excluded."
+          ),
+          plotOutput("plot_cesspool_proximity", height = "700px"),
+          tags$p(
+            class = "text-muted small mt-2",
+            style = "font-size: 0.78rem;",
+            tags$strong("Data source: "),
+            "Cesspool locations from the Hawaiʻi Statewide GIS Program, ",
+            tags$em("Hawaiʻi Cesspool Prioritization Tool (HCPT) Cesspools"),
+            " (layer 32) and ",
+            tags$em("Onsite Sewage Disposal Systems — Molokaʻi"),
+            " (layer 23). ",
+            tags$a(
+              "geodata.hawaii.gov",
+              href   = "https://geodata.hawaii.gov/arcgis/rest/services/Infrastructure/MapServer",
+              target = "_blank"
+            ),
+            ". Molokaʻi data filtered to Class\u00a0I (cesspool) systems.",
+            " Accessed April\u00a028, 2026."
+          )
+        )
+      ),
+
+      # ---- Cesspool count vs. mean nutrient concentration (full width) ---
+      # card(
+      #   class = "mb-4",
+      #   card_header(
+      #     tags$span(
+      #       class = "d-flex align-items-center gap-2",
+      #       HTML(fa("chart-line", fill = "#0077b6", height = "1em")),
+      #       tags$strong("Mean Nutrient Concentration by Cesspool Density")
+      #     )
+      #   ),
+      #   card_body(
+      #     tags$p(
+      #       class = "text-muted small mb-3",
+      #       "Each dot is one ahupua\u02BBa (traditional land division), sized by number of",
+      #       "water samples. X-axis shows the total number of cesspools within the",
+      #       "ahupua\u02BBa (log scale); y-axis shows the mean nutrient concentration",
+      #       "(log scale, labeled on normal scale). Error bars show \u00b11 SE.",
+      #       "Only ahupua\u02BBa with \u22653 analyzed samples are shown.",
+      #       "L\u0101na\u02BBi excluded \u2014 no cesspool location data are publicly available."
+      #     ),
+      #     plotOutput("plot_cesspool_burden", height = "750px"),
+      #     tags$p(
+      #       class = "text-muted small mt-2",
+      #       style = "font-size: 0.78rem;",
+      #       tags$strong("Data source: "),
+      #       "Cesspool locations from the Hawaiʻi Statewide GIS Program, ",
+      #       tags$em("Hawaiʻi Cesspool Prioritization Tool (HCPT) Cesspools"),
+      #       " (layer 32) and ",
+      #       tags$em("Onsite Sewage Disposal Systems — Molokaʻi"),
+      #       " (layer 23). ",
+      #       tags$a(
+      #         "geodata.hawaii.gov",
+      #         href   = "https://geodata.hawaii.gov/arcgis/rest/services/Infrastructure/MapServer",
+      #         target = "_blank"
+      #       ),
+      #       ". Molokaʻi data filtered to Class\u00a0I (cesspool) systems.",
+      #       " Accessed April\u00a028, 2026."
+      #     )
+      #   )
+      # ),
+
+      # ---- Cesspool density vs. mean nutrient concentration (full width) -
+      card(
+        class = "mb-4",
+        card_header(
+          tags$span(
+            class = "d-flex align-items-center gap-2",
+            HTML(fa("chart-line", fill = "#0077b6", height = "1em")),
+            tags$strong("Mean Nutrient Concentration by Cesspool Density (per km\u00b2)")
+          )
+        ),
+        card_body(
+          tags$p(
+            class = "text-muted small mb-3",
+            "Each dot is one ahupua\u02BBa, sized by number of water samples.",
+            "X-axis shows cesspool density (cesspools per km\u00b2, log scale);",
+            "y-axis shows mean nutrient concentration (log scale, labeled on normal scale).",
+            "Error bars show \u00b11 SE.",
+            "Only ahupua\u02BBa with \u22653 analyzed samples are shown.",
+            "L\u0101na\u02BBi excluded \u2014 no cesspool location data are publicly available."
+          ),
+          plotOutput("plot_cesspool_density", height = "750px"),
+          tags$p(
+            class = "text-muted small mt-2",
+            style = "font-size: 0.78rem;",
+            tags$strong("Data source: "),
+            "Cesspool locations from the Hawaiʻi Statewide GIS Program, ",
+            tags$em("Hawaiʻi Cesspool Prioritization Tool (HCPT) Cesspools"),
+            " (layer 32) and ",
+            tags$em("Onsite Sewage Disposal Systems — Molokaʻi"),
+            " (layer 23). ",
+            tags$a(
+              "geodata.hawaii.gov",
+              href   = "https://geodata.hawaii.gov/arcgis/rest/services/Infrastructure/MapServer",
+              target = "_blank"
+            ),
+            ". Molokaʻi data filtered to Class\u00a0I (cesspool) systems.",
+            " Accessed April\u00a028, 2026."
+          )
+        )
+      ),
+
+      funding_banner
+    )
+  ),
+
+
+  # ================================================================
+  # Page 3: What are we measuring?
   # ================================================================
 
   nav_panel(
@@ -1550,7 +1908,8 @@ server <- function(input, output, session) {
           ),
           date = as.Date(collected_hst, tz = "Pacific/Honolulu")
         ) |>
-        full_join(chem_data, by = "sample_id")
+        full_join(chem_data, by = "sample_id") |>
+        left_join(cesspool_dist, by = "sample_id")
       list(
         df                 = df_joined,
         samples_analyzed   = samples_analyzed,
@@ -1882,6 +2241,93 @@ server <- function(input, output, session) {
     )
   })
 
+  # ------------------------------------------------------------------
+  # Popup builder — defined at server scope so the map observer and
+  # the strip plot click handler can both use it.
+  # ------------------------------------------------------------------
+  sal_tooltip    <- paste0(
+    "Normal seawater is \u223434\u201336\u00a0psu. ",
+    "Lower values may indicate freshwater input ",
+    "from runoff, streams, or submarine groundwater discharge (SGD)."
+  )
+  no3no2_tooltip <- "Normal range for Hawaiian nearshore reefs: <1\u00a0\u00b5mol/L"
+  po4_tooltip    <- "Normal range for Hawaiian nearshore reefs: <0.1\u00a0\u00b5mol/L"
+  sio2_tooltip   <- "Normal range for Hawaiian nearshore waters: <5\u00a0\u00b5mol/L"
+  nh3_tooltip    <- "Normal range for Hawaiian nearshore reefs: <1\u00a0\u00b5mol/L"
+
+  make_popup <- function(d) {
+    salinity_line <- if_else(
+      !is.na(d$Salinity),
+      paste0(
+        "<br>Salinity: ", round(d$Salinity, 2), " psu ",
+        "<span title='", sal_tooltip, "' ",
+        "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
+      ),
+      "<br>Salinity: <i>Not yet processed</i>"
+    )
+    no3no2_line <- if_else(
+      !is.na(d$NO3NO2),
+      paste0(
+        "<br>Nitrate+Nitrite: ", round(d$NO3NO2, 2), " \u00b5mol/L",
+        if_else(d$NO3NO2 < 0.07, " <small style='color:#6c757d;'>(below detection limit)</small>", ""),
+        " <span title='", no3no2_tooltip, "' ",
+        "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
+      ),
+      ""
+    )
+    po4_line <- if_else(
+      !is.na(d$PO4),
+      paste0(
+        "<br>Phosphate: ", round(d$PO4, 2), " \u00b5mol/L",
+        if_else(d$PO4 < 0.07, " <small style='color:#6c757d;'>(below detection limit)</small>", ""),
+        " <span title='", po4_tooltip, "' ",
+        "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
+      ),
+      ""
+    )
+    sio2_line <- if_else(
+      !is.na(d$SiO2),
+      paste0(
+        "<br>Silicate: ", round(d$SiO2, 2), " \u00b5mol/L",
+        if_else(d$SiO2 < 0.01, " <small style='color:#6c757d;'>(below detection limit)</small>", ""),
+        " <span title='", sio2_tooltip, "' ",
+        "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
+      ),
+      ""
+    )
+    nh3_line <- if_else(
+      !is.na(d$NH3),
+      paste0(
+        "<br>Ammonium: ", round(d$NH3, 2), " \u00b5mol/L",
+        if_else(d$NH3 < 0.08, " <small style='color:#6c757d;'>(below detection limit)</small>", ""),
+        " <span title='", nh3_tooltip, "' ",
+        "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
+      ),
+      ""
+    )
+    ahupuaa_line <- if_else(
+      !is.na(d$ahupuaa),
+      paste0("<br>Ahupua\u02BBa: ", d$ahupuaa, " (", d$moku, ")"),
+      ""
+    )
+    paste0(
+      "<b>Sample: ", d$sample_id, "</b><br>",
+      "Mokupuni: ", d$island, "<br>",
+      "Collected: ", format(d$collected_hst, "%b %d, %Y %I:%M %p HST"),
+      ahupuaa_line,
+      salinity_line,
+      no3no2_line,
+      po4_line,
+      sio2_line,
+      nh3_line,
+      if_else(
+        !is.na(d$notes) & nchar(trimws(d$notes)) > 0,
+        paste0("<br><i>", d$notes, "</i>"),
+        ""
+      )
+    )
+  }
+
   # Update markers when filters change
   observe({
     df <- df_filtered()
@@ -1891,89 +2337,6 @@ server <- function(input, output, session) {
       clearControls()
 
     if (nrow(df) == 0) return()
-
-    sal_tooltip <- paste0(
-      "Normal seawater is \u223434\u201336\u00a0psu. ",
-      "Lower values may indicate freshwater input ",
-      "from runoff, streams, or submarine groundwater discharge (SGD)."
-    )
-    no3no2_tooltip <- "Normal range for Hawaiian nearshore reefs: <1\u00a0\u00b5mol/L"
-    po4_tooltip    <- "Normal range for Hawaiian nearshore reefs: <0.1\u00a0\u00b5mol/L"
-    sio2_tooltip   <- "Normal range for Hawaiian nearshore waters: <5\u00a0\u00b5mol/L"
-    nh3_tooltip    <- "Normal range for Hawaiian nearshore reefs: <1\u00a0\u00b5mol/L"
-
-    make_popup <- function(d) {
-      salinity_line <- if_else(
-        !is.na(d$Salinity),
-        paste0(
-          "<br>Salinity: ", round(d$Salinity, 2), " psu ",
-          "<span title='", sal_tooltip, "' ",
-          "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
-        ),
-        "<br>Salinity: <i>Not yet processed</i>"
-      )
-      no3no2_line <- if_else(
-        !is.na(d$NO3NO2),
-        paste0(
-          "<br>Nitrate+Nitrite: ", round(d$NO3NO2, 2), " \u00b5mol/L",
-          if_else(d$NO3NO2 < 0.07, " <small style='color:#6c757d;'>(below detection limit)</small>", ""),
-          " <span title='", no3no2_tooltip, "' ",
-          "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
-        ),
-        ""
-      )
-      po4_line <- if_else(
-        !is.na(d$PO4),
-        paste0(
-          "<br>Phosphate: ", round(d$PO4, 2), " \u00b5mol/L",
-          if_else(d$PO4 < 0.07, " <small style='color:#6c757d;'>(below detection limit)</small>", ""),
-          " <span title='", po4_tooltip, "' ",
-          "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
-        ),
-        ""
-      )
-      sio2_line <- if_else(
-        !is.na(d$SiO2),
-        paste0(
-          "<br>Silicate: ", round(d$SiO2, 2), " \u00b5mol/L",
-          if_else(d$SiO2 < 0.01, " <small style='color:#6c757d;'>(below detection limit)</small>", ""),
-          " <span title='", sio2_tooltip, "' ",
-          "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
-        ),
-        ""
-      )
-      nh3_line <- if_else(
-        !is.na(d$NH3),
-        paste0(
-          "<br>Ammonium: ", round(d$NH3, 2), " \u00b5mol/L",
-          if_else(d$NH3 < 0.08, " <small style='color:#6c757d;'>(below detection limit)</small>", ""),
-          " <span title='", nh3_tooltip, "' ",
-          "style='cursor:help; color:#0077b6; font-size:0.9em;'>\u24d8</span>"
-        ),
-        ""
-      )
-      ahupuaa_line <- if_else(
-        !is.na(d$ahupuaa),
-        paste0("<br>Ahupuaʻa: ", d$ahupuaa, " (", d$moku, ")"),
-        ""
-      )
-      paste0(
-        "<b>Sample: ", d$sample_id, "</b><br>",
-        "Mokupuni: ", d$island, "<br>",
-        "Collected: ", format(d$collected_hst, "%b %d, %Y %I:%M %p HST"),
-        ahupuaa_line,
-        salinity_line,
-        no3no2_line,
-        po4_line,
-        sio2_line,
-        nh3_line,
-        if_else(
-          !is.na(d$notes) & nchar(trimws(d$notes)) > 0,
-          paste0("<br><i>", d$notes, "</i>"),
-          ""
-        )
-      )
-    }
 
     if (input$color_by == "moku") {
       all_moku <- sort(unique(na.omit(live_data()$df$moku)))
@@ -2060,6 +2423,41 @@ server <- function(input, output, session) {
           return()
         }
 
+        nutrient_cols <- c("nitrate", "phosphate", "silicate", "ammonium")
+        if (input$color_by %in% nutrient_cols) {
+          nut_vals <- all_vals[!is.na(all_vals)]
+          log_vals <- log1p(nut_vals)
+          min_log  <- min(log_vals)
+          max_log  <- max(log_vals)
+
+          t_fwd <- function(x) (log1p(x) - min_log) / (max_log - min_log)
+          t_inv <- function(t) expm1(min_log + t * (max_log - min_log))
+
+          pal <- colorNumeric(palette = "viridis", domain = c(0, 1))
+
+          proxy |>
+            addCircleMarkers(
+              data        = df_sub,
+              lng         = ~longitude,
+              lat         = ~latitude,
+              radius      = 7,
+              color       = "white",
+              fillColor   = pal(t_fwd(df_sub[[info$col]])),
+              fillOpacity = 0.85,
+              weight      = 1.5,
+              popup       = make_popup(df_sub)
+            ) |>
+            addLegend(
+              position  = "topright",
+              pal       = pal,
+              values    = t_fwd(nut_vals),
+              title     = info$title,
+              labFormat = labelFormat(transform = t_inv, digits = 2),
+              opacity   = 0.85
+            )
+          return()
+        }
+
         pal <- colorNumeric(palette = "viridis", domain = val_rng)
 
         proxy |>
@@ -2098,6 +2496,542 @@ server <- function(input, output, session) {
         popup       = make_popup(df)
       )
   })
+
+  # ---- Results tab: chemistry summary plots ----------------------------
+
+  # Shared reactive: compute island colors and check data availability
+  chem_summary <- reactive({
+    df      <- live_data()$df |>
+      filter(
+        ahupuaa != "Open Ocean" | is.na(ahupuaa),
+        sample_id != "M226"   # extreme Moloka'i outlier (Kaluako'i)
+      )
+    islands <- sort(unique(na.omit(df$island)))
+    list(
+      df           = df,
+      has_chem     = any(!is.na(df$NO3NO2)) || any(!is.na(df$PO4)) ||
+                       any(!is.na(df$SiO2)) || any(!is.na(df$NH3)),
+      island_colors = setNames(island_palette[seq_along(islands)], islands)
+    )
+  })
+
+  output$results_no_data_msg <- renderUI({
+    if (!chem_summary()$has_chem) {
+      div(
+        class = "alert alert-info d-flex align-items-start gap-3 mb-4",
+        HTML(fa("circle-info", fill = "#0c5460", height = "1.2em")),
+        tags$div(
+          tags$strong("Chemistry results are still being processed. "),
+          "Check back soon \u2014 this page updates automatically as",
+          "lab data arrives."
+        )
+      )
+    }
+  })
+
+  output$plot_report_card <- renderPlot({
+    cs <- chem_summary()
+    req(cs$has_chem)
+    df <- cs$df
+
+    exceed_pcts <- df |>
+      select(NO3NO2, PO4, SiO2, NH3) |>
+      summarise(across(
+        everything(),
+        ~round(mean(. > thresholds[cur_column()], na.rm = TRUE) * 100)
+      )) |>
+      unlist()
+
+    (make_gauge(exceed_pcts["NO3NO2"], "Nitrate + Nitrite", 1) +
+     make_gauge(exceed_pcts["PO4"],    "Phosphate",         0.1) +
+     make_gauge(exceed_pcts["SiO2"],   "Silicate",          5) +
+     make_gauge(exceed_pcts["NH3"],    "Ammonium",          1)) +
+      plot_layout(ncol = 4, nrow = 1) +
+      plot_annotation(
+        title    = "Hawaiian Nearshore Water Quality Report",
+        subtitle = "Percentage of water samples exceeding reef health thresholds",
+        caption  = "Thresholds based on normal ranges for Hawaiian nearshore reefs",
+        theme    = theme(
+          plot.title    = element_text(face="bold", size=17, hjust=0.5,
+                                       margin=margin(b=4)),
+          plot.subtitle = element_text(size=12, hjust=0.5, color="grey40",
+                                       margin=margin(b=8)),
+          plot.caption  = element_text(size=9, color="grey55", hjust=0.5)
+        )
+      )
+  }, res = 120)
+
+  # ---- Strip plots: one per nutrient so click handlers know which column ----
+  # (Shiny does not return panelvar1 for facet_wrap clicks, so a single
+  #  faceted plot with a shared click handler cannot determine the nutrient.)
+
+  strip_params <- list(
+    list(id = "no3no2", col = "NO3NO2", label = "Nitrate+Nitrite (\u00b5mol/L)", thresh = 1),
+    list(id = "po4",    col = "PO4",    label = "Phosphate (\u00b5mol/L)",       thresh = 0.1),
+    list(id = "sio2",   col = "SiO2",   label = "Silicate (\u00b5mol/L)",        thresh = 5),
+    list(id = "nh3",    col = "NH3",    label = "Ammonium (\u00b5mol/L)",         thresh = 1)
+  )
+
+  # Wide-format data shared across all four strip plots
+  strip_data <- reactive({
+    chem_summary()$df |>
+      filter(!is.na(island)) |>
+      select(sample_id, island, NO3NO2, PO4, SiO2, NH3) |>
+      mutate(island = factor(island, levels = sort(unique(island))))
+  })
+
+  # Helper: build one nutrient strip plot
+  make_one_strip <- function(sd_col, icolors, display_label, thresh) {
+    if (nrow(sd_col) == 0) return(ggplot() + theme_void())
+    ggplot(sd_col, aes(x = value, y = island, color = island)) +
+      geom_jitter(height = 0.2, width = 0, alpha = 0.55, size = 1.8) +
+      geom_vline(xintercept = thresh, color = "firebrick",
+                 linetype = "dashed", linewidth = 0.8) +
+      scale_color_manual(values = icolors, guide = "none") +
+      scale_x_continuous(trans  = "log1p",
+                         labels = scales::label_number(drop0trailing = TRUE)) +
+      labs(title = display_label, x = NULL, y = NULL) +
+      theme_minimal(base_size = 12) +
+      theme(
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor   = element_blank(),
+        plot.title         = element_text(face = "bold", size = 11)
+      )
+  }
+
+  # Render + click handler for each nutrient (lapply captures sp correctly)
+  lapply(strip_params, function(sp) {
+    output[[paste0("plot_strip_", sp$id)]] <- renderPlot({
+      req(chem_summary()$has_chem)
+      sd      <- strip_data()
+      icolors <- chem_summary()$island_colors
+      sd_col  <- sd |>
+        filter(!is.na(.data[[sp$col]])) |>
+        mutate(value = .data[[sp$col]])
+      make_one_strip(sd_col, icolors, sp$label, sp$thresh)
+    }, res = 120)
+  })
+
+  output$plot_ridgeline <- renderPlot({
+    cs  <- chem_summary()
+    df  <- cs$df
+    icolors <- cs$island_colors
+
+    sal_df <- df |> filter(!is.na(Salinity), !is.na(island))
+    req(nrow(sal_df) >= 2)
+
+    ggplot(sal_df, aes(x = Salinity, y = island, fill = island)) +
+      geom_density_ridges(
+        alpha          = 0.75,
+        scale          = 0.9,
+        quantile_lines = TRUE,
+        quantiles      = 2,
+        color          = "white"
+      ) +
+      geom_vline(xintercept = 34, color = "#2E7D32",
+                 linetype = "dotted", linewidth = 1.1) +
+      geom_vline(xintercept = 36, color = "#2E7D32",
+                 linetype = "dotted", linewidth = 1.1) +
+      
+      scale_fill_manual(values = icolors, guide = "none") +
+      labs(
+        title    = "Salinity distribution by island",
+        subtitle = "Median shown as white line. Dotted green line = normal seawater (34\u00a0psu - 36\u00a0psu). Lower values = more freshwater.",
+        x        = "Salinity (psu)",
+        y        = NULL
+      ) +
+      theme_minimal(base_size = 13) +
+      theme(
+        panel.grid.minor = element_blank(),
+        plot.title       = element_text(face = "bold")
+      )
+  }, res = 120)
+
+  output$plot_stoplight <- renderPlot({
+    cs <- chem_summary()
+    req(cs$has_chem)
+    df <- cs$df
+
+    heatmap_df <- df |>
+      filter(!is.na(moku)) |>
+      group_by(island, moku) |>
+      summarise(
+        n                 = n(),
+        `Nitrate+Nitrite` = mean(NO3NO2 > thresholds["NO3NO2"], na.rm = TRUE) * 100,
+        `Phosphate`       = mean(PO4    > thresholds["PO4"],    na.rm = TRUE) * 100,
+        `Silicate`        = mean(SiO2   > thresholds["SiO2"],   na.rm = TRUE) * 100,
+        `Ammonium`        = mean(NH3    > thresholds["NH3"],     na.rm = TRUE) * 100,
+        .groups = "drop"
+      ) |>
+      filter(n >= 3) |>
+      pivot_longer(
+        c(`Nitrate+Nitrite`, Phosphate, Silicate, Ammonium),
+        names_to = "nutrient", values_to = "pct"
+      ) |>
+      filter(!is.nan(pct)) |>
+      mutate(
+        label = if_else(
+          moku %in% c("L\u0101hain\u0101", "Kona"),
+          paste0(moku, " (", island, ")"),
+          moku
+        ),
+        label    = fct_reorder(label, pct, mean, .na_rm = TRUE),
+        nutrient = factor(nutrient,
+                          levels = c("Nitrate+Nitrite", "Phosphate",
+                                     "Silicate", "Ammonium")),
+        grade = case_when(
+          pct < 25 ~ "Low",
+          pct < 50 ~ "Moderate",
+          TRUE     ~ "High"
+        ),
+        grade = factor(grade, levels = c("Low", "Moderate", "High"))
+      )
+
+    req(nrow(heatmap_df) > 0)
+
+    ggplot(heatmap_df, aes(x = nutrient, y = label, fill = grade)) +
+      geom_tile(color = "white", linewidth = 0.8) +
+      geom_text(
+        aes(label = paste0(round(pct), "%"),
+            color = grade == "Moderate"),
+        size = 3.5, fontface = "bold"
+      ) +
+      scale_fill_manual(
+        values = c("Low" = "#43A047", "Moderate" = "#FB8C00", "High" = "#E53935"),
+        name   = NULL,
+        labels = c("Low (<25%)", "Moderate (25\u201350%)", "High (>50%)")
+      ) +
+      scale_color_manual(
+        values = c("TRUE" = "grey15", "FALSE" = "white"),
+        guide  = "none"
+      ) +
+      labs(
+        title    = "Water quality stoplight by moku",
+        subtitle = "% of samples exceeding reef health threshold. Moku with \u22653 analyzed samples shown.",
+        x = NULL, y = NULL
+      ) +
+      theme_minimal(base_size = 13) +
+      theme(
+        panel.grid      = element_blank(),
+        plot.title      = element_text(face = "bold"),
+        axis.text.x     = element_text(face = "bold", size = 11),
+        legend.position = "bottom",
+        legend.key.size = unit(1, "lines")
+      )
+  }, res = 120)
+
+  # output$plot_hotspot <- renderPlot({
+  #   cs <- chem_summary()
+  #   req(cs$has_chem)
+  #   df      <- cs$df
+  #   icolors <- cs$island_colors
+  #
+  #   hotspot_df <- df |>
+  #     filter(!is.na(ahupuaa)) |>
+  #     filter(!is.na(NO3NO2) | !is.na(PO4) | !is.na(SiO2) | !is.na(NH3)) |>
+  #     mutate(
+  #       n_exceeded =
+  #         (!is.na(NO3NO2) & NO3NO2 > thresholds["NO3NO2"]) +
+  #         (!is.na(PO4)    & PO4    > thresholds["PO4"])    +
+  #         (!is.na(SiO2)   & SiO2   > thresholds["SiO2"])   +
+  #         (!is.na(NH3)    & NH3    > thresholds["NH3"])
+  #     ) |>
+  #     group_by(island, ahupuaa) |>
+  #     summarise(
+  #       n     = n(),
+  #       score = mean(n_exceeded, na.rm = TRUE),
+  #       .groups = "drop"
+  #     ) |>
+  #     filter(n >= 3, !is.na(score)) |>
+  #     arrange(desc(score)) |>
+  #     slice_head(n = 15) |>
+  #     mutate(ahupuaa = fct_reorder(ahupuaa, score))
+  #
+  #   req(nrow(hotspot_df) > 0)
+  #
+  #   ggplot(hotspot_df, aes(x = score, y = ahupuaa, fill = island)) +
+  #     geom_col() +
+  #     scale_fill_manual(values = icolors, name = "Island") +
+  #     scale_x_continuous(
+  #       limits = c(0, 4),
+  #       breaks = 0:4,
+  #       labels = c("0\n(none)", "1", "2", "3", "4\n(all)")
+  #     ) +
+  #     labs(
+  #       title    = "Top ahupua\u02BBa by pollution burden",
+  #       subtitle = "Average number of nutrient thresholds exceeded per sample (max\u00a0=\u00a04). Top 15 shown.",
+  #       x        = "Avg. nutrients above threshold",
+  #       y        = NULL
+  #     ) +
+  #     theme_minimal(base_size = 13) +
+  #     theme(
+  #       panel.grid.major.y = element_blank(),
+  #       panel.grid.minor   = element_blank(),
+  #       plot.title         = element_text(face = "bold")
+  #     )
+  # }, res = 120)
+
+  output$plot_burden <- renderPlot({
+    cs <- chem_summary()
+    req(cs$has_chem)
+    df      <- cs$df
+
+    burden_df <- df |>
+      filter(!is.na(island)) |>
+      filter(!is.na(NO3NO2) | !is.na(PO4) | !is.na(SiO2) | !is.na(NH3)) |>
+      mutate(
+        n_exceeded =
+          (!is.na(NO3NO2) & NO3NO2 > thresholds["NO3NO2"]) +
+          (!is.na(PO4)    & PO4    > thresholds["PO4"])    +
+          (!is.na(SiO2)   & SiO2   > thresholds["SiO2"])   +
+          (!is.na(NH3)    & NH3    > thresholds["NH3"]),
+        n_exceeded = factor(
+          n_exceeded,
+          levels = 0:4,
+          labels = c("0 \u2014 None", "1", "2", "3", "4 \u2014 All")
+        )
+      ) |>
+      count(island, n_exceeded) |>
+      group_by(island) |>
+      mutate(prop = n / sum(n)) |>
+      ungroup()
+
+    req(nrow(burden_df) > 0)
+
+    ggplot(burden_df, aes(x = prop, y = island, fill = n_exceeded)) +
+      geom_col(position = "stack", width = 0.55) +
+      scale_fill_manual(
+        values = c(
+          "0 \u2014 None" = "#43A047",
+          "1"            = "#A5D6A7",
+          "2"            = "#FB8C00",
+          "3"            = "#E53935",
+          "4 \u2014 All"  = "#7B1FA2"
+        ),
+        name = "Nutrients above\nthreshold"
+      ) +
+      scale_x_continuous(
+        labels = scales::percent,
+        expand = expansion(mult = c(0, 0.03))
+      ) +
+      labs(
+        title    = "Pollution burden by island",
+        subtitle = "Share of analyzed samples by number of nutrient thresholds simultaneously exceeded",
+        x        = NULL,
+        y        = NULL
+      ) +
+      theme_minimal(base_size = 13) +
+      theme(
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor   = element_blank(),
+        plot.title         = element_text(face = "bold"),
+        legend.position    = "right"
+      )
+  }, res = 120)
+
+  # ---- Cesspool proximity scatter plot ----------------------------------
+  output$plot_cesspool_proximity <- renderPlot({
+    df <- live_data()$df
+
+    nutrient_labels <- c(
+      NO3NO2 = "Nitrate+Nitrite (\u00b5mol/L)",
+      PO4    = "Phosphate (\u00b5mol/L)",
+      SiO2   = "Silicate (\u00b5mol/L)",
+      NH3    = "Ammonium (\u00b5mol/L)"
+    )
+
+    plot_df <- df |>
+      filter(
+        !is.na(dist_to_nearest_cesspool_m),
+        !is.na(island),
+        !grepl("L\u0101na", island)    # exclude Lāna'i — no cesspool data
+      ) |>
+      pivot_longer(c(NO3NO2, PO4, SiO2, NH3),
+                   names_to  = "nutrient",
+                   values_to = "concentration") |>
+      filter(!is.na(concentration)) |>
+      mutate(nutrient = factor(nutrient,
+               levels = names(nutrient_labels),
+               labels = unname(nutrient_labels)))
+
+    req(nrow(plot_df) > 0)
+
+    ggplot(plot_df, aes(x = dist_to_nearest_cesspool_m, y = concentration)) +
+      geom_point(alpha = 0.45, size = 1.4) +
+      scale_x_log10(labels = scales::label_comma()) +
+      scale_y_continuous(
+        trans  = "log1p",
+        labels = scales::label_number(drop0trailing = TRUE)
+      ) +
+      facet_wrap(island ~ nutrient, scales = "free", ncol = 4) +
+      labs(
+        x = "Distance to nearest cesspool (m, log\u2081\u2080 scale)",
+        y = "Concentration (\u00b5mol/L, log\u2081p scale)"
+      ) +
+      theme_minimal(base_size = 11) +
+      theme(
+        strip.text    = element_text(face = "bold"),
+        panel.spacing = unit(0.6, "lines")
+      )
+  }, res = 120)
+
+  # output$plot_cesspool_burden <- renderPlot({
+  #   df <- chem_summary()$df
+  #   req(chem_summary()$has_chem)
+  #
+  #   nutrient_labels <- c(
+  #     NO3NO2 = "Nitrate+Nitrite (\u00b5mol/L)",
+  #     PO4    = "Phosphate (\u00b5mol/L)",
+  #     SiO2   = "Silicate (\u00b5mol/L)",
+  #     NH3    = "Ammonium (\u00b5mol/L)"
+  #   )
+  #
+  #   cp_join <- cesspool_by_ahupuaa |>
+  #     mutate(island_key = normalize_island(island)) |>
+  #     select(ahupuaa, island_key, n_cesspools)
+  #
+  #   summary_df <- df |>
+  #     filter(!grepl("L\u0101na", island)) |>
+  #     mutate(island_key = normalize_island(island)) |>
+  #     inner_join(cp_join, by = c("ahupuaa", "island_key")) |>
+  #     pivot_longer(c(NO3NO2, PO4, SiO2, NH3),
+  #                  names_to  = "nutrient",
+  #                  values_to = "concentration") |>
+  #     filter(!is.na(concentration)) |>
+  #     group_by(ahupuaa, island, n_cesspools, nutrient) |>
+  #     summarise(
+  #       mean_conc = mean(concentration),
+  #       se_conc   = sd(concentration) / sqrt(n()),
+  #       n         = n(),
+  #       .groups   = "drop"
+  #     ) |>
+  #     filter(n >= 3) |>
+  #     mutate(nutrient = factor(nutrient,
+  #              levels = names(nutrient_labels),
+  #              labels = unname(nutrient_labels)))
+  #
+  #   req(nrow(summary_df) > 0)
+  #
+  #   label_df <- summary_df |>
+  #     group_by(island, nutrient) |>
+  #     slice_max(mean_conc, n = 2) |>
+  #     ungroup()
+  #
+  #   ggplot(summary_df, aes(x = n_cesspools, color = island)) +
+  #     geom_errorbar(
+  #       aes(y = mean_conc, ymin = mean_conc - se_conc, ymax = mean_conc + se_conc),
+  #       width = 0, linewidth = 0.8
+  #     ) +
+  #     geom_point(aes(y = mean_conc, size = n)) +
+  #     ggrepel::geom_text_repel(
+  #       data = label_df,
+  #       aes(y = mean_conc, label = ahupuaa),
+  #       size = 3, show.legend = FALSE,
+  #       min.segment.length = 0.2, box.padding = 0.4, max.overlaps = 20
+  #     ) +
+  #     scale_x_log10(labels = scales::label_comma()) +
+  #     scale_y_continuous(
+  #       trans  = "log1p",
+  #       labels = scales::label_number(drop0trailing = TRUE)
+  #     ) +
+  #     scale_size_continuous(
+  #       name   = "Samples\nin ahupua\u02BBa",
+  #       range  = c(2, 6),
+  #       breaks = c(3, 5, 10, 20)
+  #     ) +
+  #     ggh4x::facet_grid2(island ~ nutrient, scales = "free", independent = "y") +
+  #     labs(
+  #       x     = "Total cesspools in ahupua\u02BBa (log10 scale)",
+  #       y     = "Mean concentration (\u00b5mol/L, log scale)",
+  #       color = "Island"
+  #     ) +
+  #     theme_minimal(base_size = 12) +
+  #     theme(
+  #       panel.grid.minor = element_blank(),
+  #       strip.text       = element_text(face = "bold"),
+  #       legend.position  = "bottom"
+  #     )
+  # }, res = 120)
+
+  output$plot_cesspool_density <- renderPlot({
+    df <- chem_summary()$df
+    req(chem_summary()$has_chem)
+
+    nutrient_labels <- c(
+      NO3NO2 = "Nitrate+Nitrite (\u00b5mol/L)",
+      PO4    = "Phosphate (\u00b5mol/L)",
+      SiO2   = "Silicate (\u00b5mol/L)",
+      NH3    = "Ammonium (\u00b5mol/L)"
+    )
+
+    cp_join <- cesspool_by_ahupuaa |>
+      mutate(island_key = normalize_island(island)) |>
+      select(ahupuaa, island_key, cesspool_density_per_km2)
+
+    summary_df <- df |>
+      filter(!grepl("L\u0101na", island)) |>
+      mutate(island_key = normalize_island(island)) |>
+      inner_join(cp_join, by = c("ahupuaa", "island_key")) |>
+      filter(!is.na(cesspool_density_per_km2)) |>
+      pivot_longer(c(NO3NO2, PO4, SiO2, NH3),
+                   names_to  = "nutrient",
+                   values_to = "concentration") |>
+      filter(!is.na(concentration)) |>
+      group_by(ahupuaa, island, cesspool_density_per_km2, nutrient) |>
+      summarise(
+        mean_conc = mean(concentration),
+        se_conc   = sd(concentration) / sqrt(n()),
+        n         = n(),
+        .groups   = "drop"
+      ) |>
+      filter(n >= 3) |>
+      mutate(nutrient = factor(nutrient,
+               levels = names(nutrient_labels),
+               labels = unname(nutrient_labels)))
+
+    req(nrow(summary_df) > 0)
+
+    label_df <- summary_df |>
+      group_by(island, nutrient) |>
+      slice_max(mean_conc, n = 2) |>
+      ungroup()
+
+    ggplot(summary_df, aes(x = cesspool_density_per_km2, color = island)) +
+      geom_errorbar(
+        aes(y = mean_conc, ymin = mean_conc - se_conc, ymax = mean_conc + se_conc),
+        width = 0, linewidth = 0.8
+      ) +
+      geom_point(aes(y = mean_conc, size = n)) +
+      ggrepel::geom_text_repel(
+        data = label_df,
+        aes(y = mean_conc, label = ahupuaa),
+        size = 3, show.legend = FALSE,
+        min.segment.length = 0.2, box.padding = 0.4, max.overlaps = 20
+      ) +
+      scale_x_log10(labels = scales::label_comma()) +
+      scale_y_continuous(
+        trans  = "log1p",
+        labels = scales::label_number(drop0trailing = TRUE)
+      ) +
+      scale_size_continuous(
+        name   = "Samples\nin ahupua\u02BBa",
+        range  = c(2, 6),
+        breaks = c(3, 5, 10, 20)
+      ) +
+      ggh4x::facet_grid2(island ~ nutrient, scales = "free", independent = "y") +
+      labs(
+        x     = "Cesspool density (per km\u00b2, log10 scale)",
+        y     = "Mean concentration (\u00b5mol/L, log scale)",
+        color = "Island"
+      ) +
+      theme_minimal(base_size = 12) +
+      theme(
+        panel.grid.minor = element_blank(),
+        strip.text       = element_text(face = "bold"),
+        legend.position  = "bottom"
+      )
+  }, res = 120)
+
 }
 
 
