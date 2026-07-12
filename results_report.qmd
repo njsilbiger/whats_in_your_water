@@ -546,6 +546,90 @@ ggplot(density_df, aes(x = cesspool_density_per_km2, color = island)) +
 No strong or consistent relationship is apparent between ahupuaʻa-level cesspool density and mean nutrient concentrations. This likely reflects the influence of other nutrient sources (agricultural runoff, stormwater, stream discharge) that the storm mobilized alongside cesspool leachate, making it difficult to isolate the cesspool signal at this spatial scale with the current sample sizes.
 :::
 
+Each dot is one ahupuaʻa, sized by number of water samples. X-axis shows cesspool density (cesspools per km², log scale); y-axis shows mean molar ratio (log scale). DIN = NO₃+NO₂ + NH₃; DIP = PO₄. Error bars show ±1 SE. Only ahupuaʻa with ≥3 valid ratio values shown; samples with a zero-valued denominator (PO₄ = 0 or DIN = 0) are excluded from each ratio's mean. Lānaʻi excluded — no cesspool location data are publicly available.
+
+```{r}
+#| label: plot-cesspool-density-ratios
+#| fig-width: 10
+#| fig-height: 9
+ratio_labels <- c(
+  DIN_DIP = "DIN:DIP (molar)",
+  Si_DIN  = "Si:DIN (molar)",
+  Si_P    = "Si:P (molar)"
+)
+
+ratio_df <- df_chem |>
+  filter(!grepl("L\u0101na", island)) |>
+  mutate(island_key = normalize_island(island)) |>
+  inner_join(cp_join, by = c("ahupuaa", "island_key")) |>
+  filter(!is.na(cesspool_density_per_km2)) |>
+  mutate(
+    DIN     = NO3NO2 + NH3,
+    DIN_DIP = DIN / PO4,
+    Si_DIN  = SiO2 / DIN,
+    Si_P    = SiO2 / PO4
+  ) |>
+  pivot_longer(c(DIN_DIP, Si_DIN, Si_P),
+               names_to  = "ratio",
+               values_to = "value") |>
+  filter(!is.na(value), is.finite(value)) |>
+  group_by(ahupuaa, island, cesspool_density_per_km2, ratio) |>
+  summarise(
+    mean_val = mean(value),
+    se_val   = sd(value) / sqrt(n()),
+    n        = n(),
+    .groups  = "drop"
+  ) |>
+  filter(n >= 3) |>
+  mutate(ratio = factor(ratio,
+           levels = names(ratio_labels),
+           labels = unname(ratio_labels)))
+
+ratio_label_df <- ratio_df |>
+  group_by(island, ratio) |>
+  slice_max(mean_val, n = 2) |>
+  ungroup()
+
+ggplot(ratio_df, aes(x = cesspool_density_per_km2, color = island)) +
+  geom_errorbar(
+    aes(y = mean_val, ymin = mean_val - se_val, ymax = mean_val + se_val),
+    width = 0, linewidth = 0.8
+  ) +
+  geom_point(aes(y = mean_val, size = n)) +
+  geom_text_repel(
+    data = ratio_label_df,
+    aes(y = mean_val, label = ahupuaa),
+    size = 3, show.legend = FALSE,
+    min.segment.length = 0.2, box.padding = 0.4, max.overlaps = 20
+  ) +
+  scale_x_log10(labels = label_comma()) +
+  scale_y_continuous(
+    trans  = "log1p",
+    labels = label_number(drop0trailing = TRUE)
+  ) +
+  scale_color_manual(values = island_colors, name = "Island") +
+  scale_size_continuous(
+    name   = "Samples\nin ahupua\u02BBa",
+    range  = c(2, 6),
+    breaks = c(3, 5, 10, 20)
+  ) +
+  facet_grid2(island ~ ratio, scales = "free", independent = "y") +
+  labs(
+    x = "Cesspool density (per km\u00b2, log10 scale)",
+    y = "Mean molar ratio (log scale)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    strip.text       = element_text(face = "bold"),
+    legend.position  = "bottom"
+  )
+```
+
+::: {.callout-tip title="Interpretation"}
+No strong or consistent relationship is apparent between ahupuaʻa-level cesspool density and nutrient stoichiometry (DIN:DIP, Si:DIN, Si:P). Cesspools are a primarily nitrogen-enriched source, so high cesspool density would be expected to suppress DIN:DIP (via DIN enrichment driving the ratio up relative to DIP) or alter Si:DIN ratios, but no consistent pattern emerges here — likely reflecting the mixing of multiple nutrient sources at this spatial scale.
+:::
+
 **Data source:** Cesspool locations from the Hawaiʻi Statewide GIS Program, *Hawaiʻi Cesspool Prioritization Tool (HCPT) Cesspools* (layer 32) and *Onsite Sewage Disposal Systems — Molokaʻi* (layer 23). [geodata.hawaii.gov](https://geodata.hawaii.gov/arcgis/rest/services/Infrastructure/MapServer). Molokaʻi data filtered to Class I (cesspool) systems. Accessed April 28, 2026.
 
 ---
