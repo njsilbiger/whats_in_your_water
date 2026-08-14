@@ -1,0 +1,967 @@
+---
+title: "Coastal ocean chlorophyll — Main Hawaiian Islands"
+subtitle: "February 15 – June 15, 2026"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    self-contained: true
+execute:
+  warning: false
+  message: false
+---
+
+::: {.callout-note}
+This report was generated using AI under general human direction. At the time of generation, the contents have not been comprehensively reviewed by a human analyst.
+
+<!--
+To indicate human review: Delete the line above about contents not being reviewed, and replace this comment with:
+The contents have been reviewed and validated by [Your Name], [Your Role] on [Date].
+-->
+:::
+
+## Introduction
+
+This report summarizes daily coastal ocean chlorophyll-*a* concentrations around the eight main Hawaiian Islands from February 15 through June 15, 2026. Chlorophyll-*a* is a proxy for phytoplankton biomass and can indicate nutrient enrichment from terrestrial runoff. Elevated near-shore values in the weeks following significant rainfall events — such as the March 2026 Kona Low storm — may reflect storm-driven nutrient pulses reaching coastal reefs.
+
+## Data and methods
+
+Chlorophyll-*a* data were obtained from the VIIRS NOAA-20 daily product (`nesdisVHNSQchlaDaily`, ~4.6 km resolution) via the NOAA CoastWatch West Coast Node ERDDAP server, accessed using the `rerddap` R package. Coastal waters for each island are defined by a tight bounding box surrounding the island's shoreline (approximately 20–30 km offshore). For each island and each day, the mean chlorophyll-*a* concentration (mg m⁻³) is computed across all valid (non-`NA`) pixels within that bounding box. Days with complete cloud cover yield no valid pixels and are retained as `NA` rather than interpolated.
+
+The approximate Kona Low storm window (March 18–26, 2026) is annotated on all time-series plots. **Verify exact storm dates before publication.**
+
+```{r}
+#| label: load-packages
+library(rerddap)
+library(tidyverse)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(scales)
+library(patchwork)
+```
+
+```{r}
+#| label: define-parameters
+# ERDDAP server and dataset
+erddap_url  <- "https://coastwatch.pfeg.noaa.gov/erddap/"
+dataset_id  <- "nesdisVHNSQchlaDaily"
+
+# Date range
+date_start <- "2026-02-15"
+date_end   <- "2026-06-15"
+
+# Kona Low storm window (verify before publication)
+storm_start <- as.Date("2026-03-18")
+storm_end   <- as.Date("2026-03-26")
+
+# Island bounding boxes (lat/lon in decimal degrees, WGS84)
+islands <- tribble(
+  ~island,       ~lat_min, ~lat_max, ~lon_min, ~lon_max,
+  "Niihau",       21.80,    22.10,   -160.30,  -159.90,
+  "Kauai",        21.85,    22.25,   -159.90,  -159.20,
+  "Oahu",         21.20,    21.75,   -158.40,  -157.60,
+  "Molokai",      21.00,    21.30,   -157.40,  -156.65,
+  "Lanai",        20.70,    21.00,   -157.10,  -156.75,
+  "Maui",         20.50,    21.05,   -156.75,  -155.90,
+  "Kahoolawe",    20.45,    20.78,   -156.75,  -156.40,
+  "Hawaii",       18.85,    20.40,   -156.15,  -154.70
+)
+```
+
+## Data extraction
+
+```{r}
+#| label: load-data
+cache_file <- "hawaii_chlorophyll_cache.rds"
+
+if (file.exists(cache_file)) {
+  chl_all <- readRDS(cache_file)
+} else {
+  pull_island_chl <- function(island, lat_min, lat_max, lon_min, lon_max) {
+    message("Pulling: ", island)
+    tryCatch({
+      raw <- griddap(
+        dataset_id,
+        url       = erddap_url,
+        time      = c(date_start, date_end),
+        latitude  = c(lat_min, lat_max),
+        longitude = c(lon_min, lon_max),
+        fields    = "chlor_a"
+      )
+      raw$data |>
+        as_tibble() |>
+        mutate(
+          island = island,
+          date   = as.Date(time)
+        ) |>
+        select(island, date, latitude, longitude, chlor_a)
+    }, error = function(e) {
+      warning("Failed for ", island, ": ", conditionMessage(e))
+      tibble(island = island, date = as.Date(NA), latitude = NA_real_,
+             longitude = NA_real_, chlor_a = NA_real_)
+    })
+  }
+
+  chl_all <- pmap(islands, pull_island_chl) |> list_rbind()
+  saveRDS(chl_all, cache_file)
+}
+```
+
+```{r}
+#| label: compute-daily-means
+# Daily mean chlorophyll per island (NA days preserved as NA)
+daily_chl <- chl_all |>
+  filter(!is.na(date)) |>
+  group_by(island, date) |>
+  summarise(
+    mean_chl  = mean(chlor_a, na.rm = TRUE),
+    n_pixels  = sum(!is.na(chlor_a)),
+    .groups = "drop"
+  ) |>
+  mutate(
+    # Days with zero valid pixels → NA (complete cloud cover)
+    mean_chl = if_else(n_pixels == 0, NA_real_, mean_chl),
+    island = factor(island, levels = islands$island)
+  )
+```
+
+## Data overview
+
+```{r}
+#| label: coverage-summary
+coverage_summary <- daily_chl |>
+  group_by(island) |>
+  summarise(
+    total_days   = n(),
+    days_with_data = sum(!is.na(mean_chl)),
+    pct_coverage = round(100 * days_with_data / total_days, 1),
+    mean_chl_mgm3 = round(mean(mean_chl, na.rm = TRUE), 3),
+    max_chl_mgm3  = round(max(mean_chl,  na.rm = TRUE), 3),
+    .groups = "drop"
+  )
+
+coverage_summary |>
+  rename(
+    Island              = island,
+    `Total days`        = total_days,
+    `Days with data`    = days_with_data,
+    `Coverage (%)`      = pct_coverage,
+    `Mean Chl (mg/m³)`  = mean_chl_mgm3,
+    `Max Chl (mg/m³)`   = max_chl_mgm3
+  ) |>
+  knitr::kable(caption = "Coverage and summary statistics by island, Feb 15 – Jun 15, 2026.")
+```
+
+Cloud cover is common in Hawaiian coastal waters; islands with lower coverage percentages should be interpreted with caution. High `NA` rates during the storm window are expected.
+
+## Temporal patterns
+
+The shaded band marks the approximate Kona Low storm window (March 18–26, 2026). Select an island tab to view its daily chlorophyll time series.
+
+```{r}
+#| label: ts-plot-function
+plot_island_ts <- function(isl) {
+  df <- daily_chl |> filter(island == isl)
+
+  ggplot(df, aes(x = date, y = mean_chl)) +
+    # Storm window shading
+    annotate(
+      "rect",
+      xmin = storm_start, xmax = storm_end,
+      ymin = -Inf, ymax = Inf,
+      fill = "#d95f02", alpha = 0.12
+    ) +
+    annotate(
+      "text",
+      x     = storm_start + (storm_end - storm_start) / 2,
+      y     = Inf,
+      label = "Kona Low",
+      vjust = 1.4, size = 3, color = "#d95f02"
+    ) +
+    geom_point(size = 1.2, na.rm = TRUE) +
+    geom_line(linewidth = 0.4, na.rm = TRUE) +
+    scale_x_date(date_breaks = "2 weeks", date_labels = "%b %d") +
+    scale_y_continuous(labels = label_number(accuracy = 0.01)) +
+    labs(
+      title = isl,
+      x = NULL,
+      y = "Mean chlorophyll-a (mg m⁻³)"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title   = element_text(face = "bold"),
+      panel.grid.minor = element_blank(),
+      axis.text.x  = element_text(angle = 30, hjust = 1)
+    )
+}
+```
+
+::: {.panel-tabset}
+
+## Niihau
+
+```{r}
+#| label: ts-niihau
+plot_island_ts("Niihau")
+```
+
+## Kauai
+
+```{r}
+#| label: ts-kauai
+plot_island_ts("Kauai")
+```
+
+## Oahu
+
+```{r}
+#| label: ts-oahu
+plot_island_ts("Oahu")
+```
+
+## Molokai
+
+```{r}
+#| label: ts-molokai
+plot_island_ts("Molokai")
+```
+
+## Lanai
+
+```{r}
+#| label: ts-lanai
+plot_island_ts("Lanai")
+```
+
+## Maui
+
+```{r}
+#| label: ts-maui
+plot_island_ts("Maui")
+```
+
+## Kahoolawe
+
+```{r}
+#| label: ts-kahoolawe
+plot_island_ts("Kahoolawe")
+```
+
+## Hawaii (Big Island)
+
+```{r}
+#| label: ts-hawaii
+plot_island_ts("Hawaii")
+```
+
+:::
+
+## Windward vs leeward coast comparison
+
+A Kona Low delivers southerly and southwesterly winds, the reverse of normal NE trade winds. If the March 2026 chlorophyll spike was driven by storm-associated terrestrial runoff, it should be larger on the **leeward** (normally dry, SW-facing) coasts — where Kona Low rain is heaviest — rather than on windward coasts, which is the signature expected from upwelling or typical trade-wind rainfall.
+
+Pixels are classified as windward or leeward using geographic position:
+
+- **Oahu** — Windward (NE): longitude > −157.85° (Kāneʻohe / Kailua side); Leeward (S): latitude < 21.42° (Honolulu / Pearl Harbor side)
+- **Maui** — Windward (E): longitude > −156.25° (Hāna coast); Leeward (W): longitude < −156.55° (Lāhainā / Kaʻanapali side)
+
+```{r}
+#| label: classify-windward-leeward
+if (!exists("monthly_all")) {
+  monthly_all <- readRDS("hawaii_chlorophyll_monthly_cache.rds")
+}
+
+coast_monthly_hist <- monthly_all |>
+  filter(island %in% c("Oahu", "Maui"), !is.na(chlor_a)) |>
+  mutate(
+    coast = case_when(
+      island == "Oahu" & longitude > -157.85 ~ "Windward (NE)",
+      island == "Oahu" & latitude  < 21.42   ~ "Leeward (S)",
+      island == "Maui" & longitude > -156.25 ~ "Windward (E)",
+      island == "Maui" & longitude < -156.55 ~ "Leeward (W)",
+      TRUE ~ NA_character_
+    )
+  ) |>
+  filter(!is.na(coast)) |>
+  mutate(
+    year  = year(date),
+    month = month(date),
+    side  = if_else(str_starts(coast, "Wind"), "Windward", "Leeward")
+  ) |>
+  group_by(island, side, year, month) |>
+  summarise(mean_chl = mean(chlor_a, na.rm = TRUE), .groups = "drop")
+```
+
+```{r}
+#| label: windward-leeward-table
+coast_monthly_hist |>
+  filter(month == 3) |>
+  group_by(island, side) |>
+  summarise(
+    `Hist. March mean (mg/m³)` = round(mean(mean_chl[year != 2026], na.rm = TRUE), 3),
+    `2026 March (mg/m³)`       = round(mean_chl[year == 2026], 3),
+    `Fold increase`            = round(mean_chl[year == 2026] /
+                                       mean(mean_chl[year != 2026], na.rm = TRUE), 2),
+    .groups = "drop"
+  ) |>
+  rename(Island = island, Coast = side) |>
+  knitr::kable(caption = "March 2026 chlorophyll-a relative to historical March mean (2013–2025), by coast exposure.")
+```
+
+```{r}
+#| label: windward-leeward-plot
+#| fig-height: 5
+coast_monthly_hist |>
+  filter(month == 3) |>
+  mutate(
+    is_2026 = year == 2026,
+    side    = factor(side, levels = c("Windward", "Leeward"))
+  ) |>
+  ggplot(aes(x = factor(year), y = mean_chl, fill = is_2026)) +
+  geom_col() +
+  scale_fill_manual(values = c("FALSE" = "grey70", "TRUE" = "#e6550d"),
+                    guide = "none") +
+  facet_grid(side ~ island, scales = "free_y") +
+  labs(
+    title    = "March chlorophyll-a by year — windward vs leeward",
+    subtitle = "Oahu and Maui, 2013–2026",
+    x = NULL, y = "Mean chlorophyll-a (mg m⁻³)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1, size = 8),
+    panel.grid.minor = element_blank(),
+    strip.text       = element_text(face = "bold")
+  )
+```
+
+The leeward spike is substantially larger in both magnitude and relative increase, consistent with Kona Low-pattern runoff driving chlorophyll elevation on the normally dry SW-facing coasts rather than upwelling or typical trade-wind rainfall.
+
+### Pre-storm context: elevated January–February chlorophyll
+
+The monthly time series (see [Historical monthly patterns]) shows that 2026 chlorophyll was already above the 90th percentile of prior years in January and February — before the Kona Low arrived in March. Two candidate explanations are examined here: ENSO forcing and anomalous winter rainfall.
+
+#### ENSO
+
+```{r}
+#| label: load-oni
+if (!exists("monthly_means")) {
+  if (!exists("monthly_all")) monthly_all <- readRDS("hawaii_chlorophyll_monthly_cache.rds")
+  monthly_means <- monthly_all |>
+    filter(!is.na(chlor_a), !is.na(date)) |>
+    mutate(year = year(date), month = month(date)) |>
+    group_by(island, year, month) |>
+    summarise(mean_chl = mean(chlor_a, na.rm = TRUE), .groups = "drop") |>
+    mutate(island = factor(island, levels = islands$island))
+}
+
+oni_raw <- read.table(
+  "https://www.cpc.ncep.noaa.gov/data/indices/oni.ascii.txt",
+  header = TRUE, fill = TRUE
+)
+
+oni_wide <- oni_raw |>
+  as_tibble() |>
+  rename(seas = SEAS, year = YR, anom = ANOM) |>
+  filter(seas %in% c("DJF", "JFM"), year >= 2013) |>
+  pivot_wider(names_from = seas, values_from = anom) |>
+  rename(oni_djf = DJF, oni_jfm = JFM)
+
+jan_feb_annual <- monthly_means |>
+  filter(month %in% 1:2) |>
+  group_by(year) |>
+  summarise(mean_jan_feb_chl = mean(mean_chl), .groups = "drop")
+
+jan_feb_enso <- jan_feb_annual |>
+  left_join(oni_wide, by = "year")
+```
+
+```{r}
+#| label: enso-scatter
+#| fig-cap: "Each point is one year (2013–2026). Dashed lines mark the La Niña (−0.5°C) and El Niño (+0.5°C) thresholds. No systematic relationship between ENSO phase and early-year chlorophyll is apparent; 2026 sits well above all other years at a near-neutral ONI of −0.37."
+ggplot(jan_feb_enso, aes(x = oni_djf, y = mean_jan_feb_chl)) +
+  geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed",
+             color = "grey70", linewidth = 0.4) +
+  annotate("text", x = -1.5, y = max(jan_feb_enso$mean_jan_feb_chl) * 0.97,
+           label = "La Niña", color = "grey50", size = 3) +
+  annotate("text", x =  1.5, y = max(jan_feb_enso$mean_jan_feb_chl) * 0.97,
+           label = "El Niño", color = "grey50", size = 3) +
+  geom_point(data = \(d) filter(d, year != 2026), size = 2.5, color = "grey50") +
+  geom_text(data  = \(d) filter(d, year != 2026),
+            aes(label = year), vjust = -0.7, size = 2.8, color = "grey40") +
+  geom_point(data = \(d) filter(d, year == 2026), size = 3.5, color = "#e6550d") +
+  geom_text(data  = \(d) filter(d, year == 2026),
+            aes(label = "2026"), vjust = -0.9, fontface = "bold",
+            size = 3.2, color = "#e6550d") +
+  labs(
+    x = "DJF Oceanic Niño Index (°C anomaly)",
+    y = "Mean Jan–Feb chlorophyll-a (mg m⁻³)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+```
+
+The La Niña hypothesis is not supported. The 2026 DJF ONI was −0.37°C (ENSO-neutral), and historically strong La Niña years (2021: −0.91°C, 2022: −0.82°C) show no elevation in early-year chlorophyll. 2026 is an outlier regardless of ENSO phase.
+
+#### Spatial pattern of the January anomaly
+
+```{r}
+#| label: jan-anomaly-table
+if (!exists("monthly_means")) {
+  if (!exists("monthly_all")) monthly_all <- readRDS("hawaii_chlorophyll_monthly_cache.rds")
+  monthly_means <- monthly_all |>
+    filter(!is.na(chlor_a), !is.na(date)) |>
+    mutate(year = year(date), month = month(date)) |>
+    group_by(island, year, month) |>
+    summarise(mean_chl = mean(chlor_a, na.rm = TRUE), .groups = "drop") |>
+    mutate(island = factor(island, levels = islands$island))
+}
+
+monthly_means |>
+  filter(month == 1) |>
+  group_by(island) |>
+  summarise(
+    hist_med  = round(median(mean_chl[year != 2026], na.rm = TRUE), 3),
+    p90       = round(quantile(mean_chl[year != 2026], 0.90, na.rm = TRUE), 3),
+    chl_2026  = round(mean_chl[year == 2026], 3),
+    anomaly   = round(mean_chl[year == 2026] - median(mean_chl[year != 2026], na.rm = TRUE), 3),
+    .groups   = "drop"
+  ) |>
+  rename(Island = island,
+         `Hist. median` = hist_med,
+         `Hist. p90`    = p90,
+         `Jan 2026`     = chl_2026,
+         `Anomaly`      = anomaly) |>
+  arrange(desc(Anomaly)) |>
+  knitr::kable(caption = "January 2026 mean chlorophyll-a vs historical January distribution (mg m⁻³). Kauaʻi shows by far the largest absolute anomaly.")
+```
+
+The January 2026 elevation is dominated by **Kauaʻi**, with a chlorophyll value (`{r} round(monthly_means |> filter(month == 1, year == 2026, island == "Kauai") |> pull(mean_chl), 2)` mg m⁻³) more than double its historical 90th percentile. The Big Island shows virtually no anomaly. This northwest-to-southeast gradient is inconsistent with a basin-scale forcing such as ENSO and points instead to a localized event affecting the northern islands.
+
+#### Rainfall context
+
+```{r}
+#| label: load-ncep-rainfall
+ncep_chain_cache <- "hawaii_ncep_janfeb_cache.rds"
+
+if (file.exists(ncep_chain_cache)) {
+  ncep_chain <- readRDS(ncep_chain_cache)
+} else {
+  pull_ncep_year <- function(yr) {
+    tryCatch({
+      raw <- griddap("NCEP_Global_Best", url = erddap_url,
+                     time      = c(paste0(yr, "-01-01"), paste0(yr, "-02-28")),
+                     latitude  = c(18.8, 22.4),
+                     longitude = c(199.5, 205.4),
+                     fields    = "pratesfc")
+      raw$data |> as_tibble() |>
+        mutate(year = yr, date = as.Date(time), month = month(date),
+               precip_mmday = pratesfc * 86400) |>
+        group_by(year, date, month, latitude, longitude) |>
+        summarise(precip_mmday = mean(precip_mmday, na.rm = TRUE), .groups = "drop")
+    }, error = function(e) NULL)
+  }
+  ncep_chain <- map(2023:2026, pull_ncep_year) |> list_rbind()
+  saveRDS(ncep_chain, ncep_chain_cache)
+}
+
+ncep_monthly_rain <- ncep_chain |>
+  group_by(year, month, latitude, longitude) |>
+  summarise(monthly_mm = sum(precip_mmday, na.rm = TRUE), .groups = "drop") |>
+  group_by(year, month) |>
+  summarise(chain_mm = mean(monthly_mm, na.rm = TRUE), .groups = "drop")
+```
+
+```{r}
+#| label: rainfall-bars
+#| fig-cap: "NCEP GDAS/FNL 0.5° reanalysis, spatially averaged across the Hawaiian island chain (18.8–22.4°N). January 2026 was the wettest January in this four-year record and ~48% above the 2024–2025 January mean, consistent with above-normal pre-storm winter rainfall. Note: NCEP's 0.5° resolution cannot resolve island-scale orographic rainfall; fine-scale patterns on individual islands (especially Kauaʻi) are likely underrepresented."
+ncep_monthly_rain |>
+  mutate(month_lbl = if_else(month == 1, "January", "February"),
+         is_2026   = year == 2026) |>
+  ggplot(aes(x = factor(year), y = chain_mm, fill = is_2026)) +
+  geom_col() +
+  scale_fill_manual(values = c("FALSE" = "grey70", "TRUE" = "#e6550d"),
+                    guide = "none") +
+  facet_wrap(~month_lbl) +
+  labs(x = NULL, y = "Mean monthly precipitation (mm)") +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank(), strip.text = element_text(face = "bold"))
+```
+
+```{r}
+#| label: rainfall-anomaly-map
+if (!exists("hi_base")) {
+  hi_base <- ne_states(country = "United States of America", returnclass = "sf") |>
+    filter(name == "Hawaii")
+}
+#| fig-cap: "January 2026 rainfall anomaly relative to the 2023–2025 January mean (NCEP GDAS/FNL). Positive values (teal) indicate wetter-than-average conditions. At 0.5° resolution the map cannot distinguish windward from leeward rainfall on individual islands, and island-scale orographic patterns are not captured."
+jan_anomaly <- ncep_chain |>
+  filter(month == 1) |>
+  group_by(year, latitude, longitude) |>
+  summarise(monthly_mm = sum(precip_mmday), .groups = "drop") |>
+  group_by(latitude, longitude) |>
+  summarise(
+    baseline_mm = mean(monthly_mm[year != 2026], na.rm = TRUE),
+    yr2026_mm   = monthly_mm[year == 2026],
+    anomaly_mm  = yr2026_mm - baseline_mm,
+    .groups     = "drop"
+  )
+
+ggplot() +
+  geom_tile(data = jan_anomaly,
+            aes(x = longitude - 360, y = latitude, fill = anomaly_mm)) +
+  geom_sf(data = hi_base, fill = "grey40", color = "white", linewidth = 0.3) +
+  scale_fill_distiller(palette = "BrBG", direction = 1,
+                       name = "Anomaly\n(mm)",
+                       limits = c(-200, 200), oob = scales::squish) +
+  coord_sf(xlim = c(-160.5, -154.6), ylim = c(18.8, 22.4), expand = FALSE) +
+  labs(x = "Longitude", y = "Latitude") +
+  theme_minimal(base_size = 11) +
+  theme(panel.background = element_rect(fill = "#cce5f0", color = NA))
+```
+
+January 2026 was anomalously wet chain-wide — roughly 48% above the 2024–2025 January mean. However, January 2023 was wetter still (325 mm vs 312 mm in 2026) without producing a comparable chlorophyll anomaly. This suggests that rainfall volume alone is insufficient to explain the January 2026 chlorophyll spike. The scatter below quantifies this directly.
+
+```{r}
+#| label: load-ncep-island-rain
+ncep_island_cache <- "hawaii_ncep_janjun_cache.rds"
+
+if (file.exists(ncep_island_cache)) {
+  ncep_island <- readRDS(ncep_island_cache)
+} else {
+  pull_ncep_island_year <- function(island, lat_min, lat_max, lon_min, lon_max, yr) {
+    tryCatch({
+      raw <- griddap(
+        "NCEP_Global_Best", url = erddap_url,
+        time      = c(paste0(yr, "-01-01"), paste0(yr, "-06-30")),
+        latitude  = c(lat_min, lat_max),
+        longitude = c(lon_min + 360, lon_max + 360),
+        fields    = "pratesfc"
+      )
+      raw$data |> as_tibble() |>
+        mutate(island = island, year = yr,
+               date = as.Date(time), month = month(date),
+               precip_mmday = pratesfc * 86400) |>
+        group_by(island, year, date, month, latitude, longitude) |>
+        summarise(precip_mmday = mean(precip_mmday, na.rm = TRUE), .groups = "drop")
+    }, error = function(e) NULL)
+  }
+
+  ncep_island <- cross2(
+    split(islands, seq_len(nrow(islands))),
+    2023:2026
+  ) |>
+    map(\(x) pull_ncep_island_year(
+      x[[1]]$island, x[[1]]$lat_min, x[[1]]$lat_max,
+      x[[1]]$lon_min, x[[1]]$lon_max, x[[2]]
+    )) |>
+    list_rbind()
+
+  saveRDS(ncep_island, ncep_island_cache)
+}
+
+if (!exists("monthly_means")) {
+  if (!exists("monthly_all")) monthly_all <- readRDS("hawaii_chlorophyll_monthly_cache.rds")
+  monthly_means <- monthly_all |>
+    filter(!is.na(chlor_a), !is.na(date)) |>
+    mutate(year = year(date), month = month(date)) |>
+    group_by(island, year, month) |>
+    summarise(mean_chl = mean(chlor_a, na.rm = TRUE), .groups = "drop") |>
+    mutate(island = factor(island, levels = islands$island))
+}
+
+ncep_rain_monthly <- ncep_island |>
+  group_by(island, year, month, latitude, longitude) |>
+  summarise(monthly_mm = sum(precip_mmday, na.rm = TRUE), .groups = "drop") |>
+  group_by(island, year, month) |>
+  summarise(monthly_mm = mean(monthly_mm, na.rm = TRUE), .groups = "drop") |>
+  mutate(island = factor(island, levels = islands$island))
+
+rain_chl_ncep <- ncep_rain_monthly |>
+  inner_join(monthly_means, by = c("island", "year", "month")) |>
+  mutate(is_2026 = year == 2026)
+```
+
+```{r}
+#| label: rainfall-chl-scatter
+#| fig-height: 6
+#| fig-cap: "Monthly precipitation (NCEP GDAS/FNL 0.5°) vs coastal chlorophyll-a (VIIRS NOAA-20), January–June 2023–2026. Grey circles show the 2023–2025 baseline with a per-island OLS trend. Orange diamonds are 2026 months. For 7 of 8 islands, 2026 points sit consistently above the historical trend, indicating elevated runoff efficiency — more coastal chlorophyll per unit rainfall than prior years predicted. The Big Island is the exception, likely due to its porous volcanic substrate."
+ggplot(rain_chl_ncep, aes(x = monthly_mm, y = mean_chl)) +
+  geom_smooth(
+    data   = \(d) filter(d, !is_2026),
+    method = "lm", se = TRUE,
+    color  = "grey40", fill = "grey85", linewidth = 0.6
+  ) +
+  geom_point(
+    data  = \(d) filter(d, !is_2026),
+    color = "grey55", size = 1.6, alpha = 0.7
+  ) +
+  geom_point(
+    data  = \(d) filter(d, is_2026),
+    color = "#e6550d", size = 3, shape = 18
+  ) +
+  facet_wrap(~ island, scales = "free", nrow = 2) +
+  labs(
+    x = "Monthly precipitation (mm)",
+    y = "Mean chlorophyll-a (mg m⁻³)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    strip.text       = element_text(face = "bold")
+  )
+```
+
+Watershed conditions — including soil saturation from preceding storms, reduced dry-season flushing, or higher antecedent organic loads — may have amplified runoff efficiency in 2026 relative to prior years. This pattern holds for every island except Hawaiʻi, consistent with that island's porous volcanic lava substrate buffering coastal nutrient delivery even during wet periods.
+
+## 2026 chlorophyll anomaly by island
+
+The maps below show mean chlorophyll-*a* for January–May 2026 minus the 2013–2025 historical mean for the same months, computed at the pixel level. Red indicates waters that were more productive than the historical average; blue indicates below-average values.
+
+```{r}
+#| label: build-island-outlines
+hi_coords <- hi_base |>
+  st_cast("MULTILINESTRING") |>
+  st_coordinates() |>
+  as_tibble() |>
+  rename(longitude = X, latitude = Y) |>
+  (\(d) {
+    l_cols <- names(d)[startsWith(names(d), "L")]
+    mutate(d, group = do.call(paste, c(select(d, all_of(l_cols)), sep = "_")))
+  })()
+
+island_outlines <- pmap(islands, function(island, lat_min, lat_max, lon_min, lon_max) {
+  hi_coords |>
+    filter(longitude >= lon_min, longitude <= lon_max,
+           latitude  >= lat_min, latitude  <= lat_max) |>
+    mutate(island = island, group = paste(island, group, sep = "_"))
+}) |>
+  list_rbind() |>
+  mutate(island = factor(island, levels = islands$island))
+```
+
+```{r}
+#| label: anomaly-map
+#| fig-height: 7
+#| fig-cap: "Per-pixel chlorophyll-a anomaly (2026 Jan–May minus 2013–2025 Jan–May mean). Colour scale is clipped at the 95th percentile of absolute anomalies. White interior areas are over land (no satellite ocean retrievals). Pixel size reflects the ~4.6 km VIIRS monthly product resolution."
+if (!exists("monthly_means")) {
+  if (!exists("monthly_all")) monthly_all <- readRDS("hawaii_chlorophyll_monthly_cache.rds")
+  monthly_means <- monthly_all |>
+    filter(!is.na(chlor_a), !is.na(date)) |>
+    mutate(year = year(date), month = month(date)) |>
+    group_by(island, year, month) |>
+    summarise(mean_chl = mean(chlor_a, na.rm = TRUE), .groups = "drop") |>
+    mutate(island = factor(island, levels = islands$island))
+}
+
+pixel_anomaly <- monthly_all |>
+  filter(!is.na(chlor_a), month(date) %in% 1:5) |>
+  mutate(year = year(date)) |>
+  group_by(island, latitude, longitude) |>
+  summarise(
+    hist_mean = mean(chlor_a[year %in% 2013:2025], na.rm = TRUE),
+    mean_2026 = mean(chlor_a[year == 2026],         na.rm = TRUE),
+    anomaly   = mean_2026 - hist_mean,
+    .groups   = "drop"
+  ) |>
+  filter(!is.na(anomaly)) |>
+  mutate(island = factor(island, levels = islands$island))
+
+clim <- quantile(abs(pixel_anomaly$anomaly), 0.95, na.rm = TRUE)
+
+ggplot(pixel_anomaly, aes(x = longitude, y = latitude, fill = anomaly)) +
+  geom_tile() +
+  geom_path(
+    data        = island_outlines,
+    aes(x = longitude, y = latitude, group = group),
+    inherit.aes = FALSE,
+    color = "grey15", linewidth = 0.4
+  ) +
+  scale_fill_distiller(
+    palette  = "RdBu", direction = -1,
+    name     = "Anomaly\n(mg m⁻³)",
+    limits   = c(-clim, clim),
+    oob      = scales::squish
+  ) +
+  facet_wrap(~ island, scales = "free", nrow = 2) +
+  labs(
+    title    = "Chlorophyll-a anomaly, 2026 vs 2013–2025 mean",
+    subtitle = "January–May mean per pixel. Red = above historical average; blue = below.",
+    x = NULL, y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    strip.text        = element_text(face = "bold"),
+    panel.background  = element_rect(fill = "#d4eaf5", color = NA),
+    panel.grid        = element_blank(),
+    axis.text         = element_blank(),
+    legend.key.height = unit(1.4, "cm")
+  )
+```
+
+The northern coast anomalies (Kauaʻi north, Oʻahu north shore, Molokaʻi north face) reflect elevated chlorophyll from winter storm runoff in January–February. Lānaʻi's western coast shows strong red consistent with Kona Low leeward runoff in March. The Big Island's southeastern coast shows patches of blue (below historical mean), consistent with its buffered watershed response documented in the rainfall analysis.
+
+## Spatial overview
+
+The map below shows mean chlorophyll-*a* (mg m⁻³) across all valid daily observations for the full Feb 15 – Jun 15, 2026 period. Pixel values are log₁₀-transformed for display clarity.
+
+```{r}
+#| label: spatial-map
+#| fig-height: 6
+
+# Mean chlorophyll per pixel across all days
+mean_pixel_chl <- chl_all |>
+  filter(!is.na(chlor_a)) |>
+  group_by(longitude, latitude) |>
+  summarise(mean_chl = mean(chlor_a, na.rm = TRUE), .groups = "drop")
+
+# Basemap
+hawaii_base <- ne_states(country = "United States of America", returnclass = "sf") |>
+  filter(name %in% c("Hawaii"))
+
+ggplot() +
+  geom_tile(
+    data = mean_pixel_chl,
+    aes(x = longitude, y = latitude, fill = log10(mean_chl))
+  ) +
+  geom_sf(data = hawaii_base, fill = "grey40", color = "white", linewidth = 0.3) +
+  scale_fill_viridis_c(
+    name   = "log₁₀ Chl-a\n(mg m⁻³)",
+    option = "viridis",
+    na.value = "transparent"
+  ) +
+  coord_sf(xlim = c(-160.5, -154.6), ylim = c(18.8, 22.4), expand = FALSE) +
+  labs(
+    title    = "Mean coastal chlorophyll-a, Feb 15 – Jun 15, 2026",
+    subtitle = "VIIRS NOAA-20 daily, log-transformed",
+    x = "Longitude", y = "Latitude"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.background = element_rect(fill = "#cce5f0", color = NA),
+    legend.position  = "right"
+  )
+```
+
+## Historical monthly patterns
+
+Monthly mean chlorophyll-*a* from the full VIIRS NOAA-20 record (2013–2026) is shown below. Each line represents one calendar year; **2026 is highlighted in orange**. Only months with at least one valid pixel are included. Data for 2026 runs through May only (the current extent of the monthly product at time of rendering).
+
+```{r}
+#| label: load-monthly-data
+monthly_cache_file <- "hawaii_chlorophyll_monthly_cache.rds"
+
+if (file.exists(monthly_cache_file)) {
+  monthly_all <- readRDS(monthly_cache_file)
+} else {
+  years <- 2013:2026
+
+  pull_island_year <- function(island, lat_min, lat_max, lon_min, lon_max, yr) {
+    t_start <- paste0(yr, "-01-01")
+    t_end   <- if (yr == 2026) "2026-05-01" else paste0(yr, "-12-31")
+    tryCatch({
+      raw <- griddap(
+        "nesdisVHNSQchlaMonthly",
+        url       = erddap_url,
+        time      = c(t_start, t_end),
+        latitude  = c(lat_min, lat_max),
+        longitude = c(lon_min, lon_max),
+        fields    = "chlor_a"
+      )
+      raw$data |>
+        as_tibble() |>
+        mutate(island = island, date = as.Date(time)) |>
+        select(island, date, latitude, longitude, chlor_a)
+    }, error = function(e) {
+      warning(island, " ", yr, ": ", conditionMessage(e))
+      NULL
+    })
+  }
+
+  monthly_all <- map(islands$island, function(isl) {
+    row <- islands[islands$island == isl, ]
+    map(years, \(yr) pull_island_year(
+      isl, row$lat_min, row$lat_max, row$lon_min, row$lon_max, yr
+    )) |>
+      list_rbind()
+  }) |>
+    list_rbind()
+
+  saveRDS(monthly_all, monthly_cache_file)
+}
+```
+
+```{r}
+#| label: compute-monthly-means
+monthly_means <- monthly_all |>
+  filter(!is.na(chlor_a), !is.na(date)) |>
+  mutate(
+    year  = year(date),
+    month = month(date)
+  ) |>
+  group_by(island, year, month) |>
+  summarise(mean_chl = mean(chlor_a, na.rm = TRUE), .groups = "drop") |>
+  mutate(island = factor(island, levels = islands$island))
+
+month_labels <- c("Jan","Feb","Mar","Apr","May","Jun",
+                  "Jul","Aug","Sep","Oct","Nov","Dec")
+```
+
+```{r}
+#| label: monthly-plot-function
+plot_monthly_ts <- function(isl) {
+  df <- if (isl == "All islands") {
+    monthly_means |>
+      group_by(year, month) |>
+      summarise(mean_chl = mean(mean_chl), .groups = "drop")
+  } else {
+    monthly_means |> filter(island == isl)
+  }
+
+  ribbon <- df |>
+    filter(year != 2026) |>
+    group_by(month) |>
+    summarise(
+      p10 = quantile(mean_chl, 0.10, na.rm = TRUE),
+      p90 = quantile(mean_chl, 0.90, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  label_2026 <- df |> filter(year == 2026) |> slice_max(month, n = 1)
+
+  ggplot(df, aes(x = month, y = mean_chl, group = year)) +
+    geom_ribbon(
+      data = ribbon,
+      aes(x = month, ymin = p10, ymax = p90, group = 1),
+      fill = "grey85", alpha = 0.6, inherit.aes = FALSE
+    ) +
+    geom_line(
+      data  = \(d) filter(d, year != 2026),
+      color = "grey65", linewidth = 0.3, alpha = 0.5
+    ) +
+    geom_line(
+      data  = \(d) filter(d, year == 2026),
+      color = "#e6550d", linewidth = 1.3
+    ) +
+    geom_point(
+      data  = \(d) filter(d, year == 2026),
+      color = "#e6550d", size = 2.2
+    ) +
+    annotate(
+      "rect",
+      xmin = month(storm_start) - 0.4,
+      xmax = month(storm_end)   + 0.4,
+      ymin = -Inf, ymax = Inf,
+      fill = "#d95f02", alpha = 0.07
+    ) +
+    annotate(
+      "text",
+      x = label_2026$month + 0.25, y = label_2026$mean_chl,
+      label = "2026", color = "#e6550d", fontface = "bold",
+      hjust = 0, size = 3.2
+    ) +
+    scale_x_continuous(breaks = 1:12, labels = month_labels, limits = c(1, 12.8)) +
+    scale_y_continuous(labels = label_number(accuracy = 0.01)) +
+    labs(
+      title   = isl,
+      caption = "Shaded band = 10th–90th percentile of prior years (2013–2025)",
+      x = NULL, y = "Mean chlorophyll-a (mg m⁻³)"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title       = element_text(face = "bold"),
+      plot.caption     = element_text(color = "grey50", size = 8),
+      panel.grid.minor = element_blank()
+    )
+}
+```
+
+::: {.panel-tabset}
+
+## All islands
+
+```{r}
+#| label: monthly-all-islands
+plot_monthly_ts("All islands")
+```
+
+## Niihau
+
+```{r}
+#| label: monthly-niihau
+plot_monthly_ts("Niihau")
+```
+
+## Kauai
+
+```{r}
+#| label: monthly-kauai
+plot_monthly_ts("Kauai")
+```
+
+## Oahu
+
+```{r}
+#| label: monthly-oahu
+plot_monthly_ts("Oahu")
+```
+
+## Molokai
+
+```{r}
+#| label: monthly-molokai
+plot_monthly_ts("Molokai")
+```
+
+## Lanai
+
+```{r}
+#| label: monthly-lanai
+plot_monthly_ts("Lanai")
+```
+
+## Maui
+
+```{r}
+#| label: monthly-maui
+plot_monthly_ts("Maui")
+```
+
+## Kahoolawe
+
+```{r}
+#| label: monthly-kahoolawe
+plot_monthly_ts("Kahoolawe")
+```
+
+## Hawaii (Big Island)
+
+```{r}
+#| label: monthly-hawaii
+plot_monthly_ts("Hawaii")
+```
+
+:::
+
+## Summary
+
+```{r}
+#| label: summary-table
+daily_chl |>
+  group_by(island) |>
+  summarise(
+    `Days w/ data`    = sum(!is.na(mean_chl)),
+    `Mean (mg/m³)`    = round(mean(mean_chl, na.rm = TRUE), 3),
+    `Median (mg/m³)`  = round(median(mean_chl, na.rm = TRUE), 3),
+    `Max (mg/m³)`     = round(max(mean_chl, na.rm = TRUE), 3),
+    `Peak date`       = as.character(date[which.max(mean_chl)]),
+    .groups = "drop"
+  ) |>
+  rename(Island = island) |>
+  knitr::kable(caption = "Summary statistics per island, Feb 15 – Jun 15, 2026.")
+```
+
+*Interpret peak dates and summary statistics only for islands with adequate data coverage (see Data overview). Islands with fewer valid observations are more susceptible to sampling bias from cloud-free conditions, which tend to occur during calm, low-productivity periods.*

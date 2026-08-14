@@ -1,0 +1,478 @@
+---
+title: "Science Paper — Analytical & Figure Roadmap"
+subtitle: "Extreme storms reorganize coastal biogeochemistry across tropical island seascapes"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-float: true
+    code-fold: true
+    theme: cosmo
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(tidyverse)
+library(knitr)
+```
+
+---
+
+# Paper architecture
+
+## Core argument
+
+Extreme storms are intensifying under climate change, yet their coastal
+biogeochemical effects remain poorly characterized because conventional
+monitoring is too slow and too sparse to capture episodic events at island
+scale. We show — using a citizen science rapid-response network deployed
+within 15 days of the March 2026 Kona Low across 746 sites on four Hawaiian
+islands — that extreme storms do not simply elevate coastal nutrients: they
+*temporarily reorganize land–sea biogeochemical connectivity*, creating
+spatially coherent, chemically distinct nutrient fingerprints whose structure
+is predictable from pre-existing landscape features. This reframes storms from
+hydrological disturbances to biogeochemical restructuring events, with
+implications for reef exposure forecasting and monitoring design globally.
+
+## Claim hierarchy
+
+| # | Claim | Key evidence | Figure |
+|---|---|---|---|
+| 1 | Kona Low produced an island-scale, spatially coherent nutrient anomaly | Kriging maps; Moran's I significant for NO₃+NO₂ & SiO₂ across all islands | Fig 1 |
+| 2 | Storm generated chemically distinct fingerprints, not one uniform pulse | PAM k=4 clusters; stoichiometric divergence from Redfield | Fig 3 |
+| 3 | Storm temporarily elevated land–sea biogeochemical connectivity | Salinity–nutrient mixing; post-storm VIIRS chlorophyll bloom | Fig 1D + Fig 2B |
+| 4 | Reorganization was predictable from landscape structure | RF OOB 61 % (null 36 %); top predictors = coastal position + cesspool distance | Fig 4 |
+| 5 | Citizen science enabled detection; conventional monitoring was absent | 0 WQP records in storm window vs 746 CS samples | Fig 2 |
+
+## Numbers that must appear in the paper
+
+- **746 sites**, 4 islands, collected within **15 ± 3 days** of storm peak (Mar 14)
+- **0 conventional WQP records** during storm window (last record: Dec 18, 2025)
+- Maui **73%** / Oʻahu **40%** / Molokaʻi **65%** of sites exceeded NO₃+NO₂ reef threshold (1 µmol/L)
+- Storm peak: **68–124 mm/day** rainfall (NCEP); discharge spike **231–1,040 cfs** (USGS)
+- RF OOB accuracy **61.3%** vs null **36.3%**; top predictor = coastal geographic position
+
+---
+
+# Figure plan
+
+## Figure 1 — The biogeochemical footprint (impact figure)
+
+**One-sentence message:** The Kona Low imprinted a spatially coherent,
+island-specific pattern of coastal nutrient enrichment across four Hawaiian
+islands within days of landfall.
+
+**Layout:** 2-column Science figure (~18.3 cm wide × ~14 cm tall)
+
+| Panel | Content | Data | Status |
+|---|---|---|---|
+| **A** Oʻahu kriging map | NO₃+NO₂ kriged surface, plasma scale capped 20 µmol/L, hotspots obvious | `chem`, `ahupuaa_raw` | ✅ done |
+| **B** Maui kriging map | Same scale | `chem`, `ahupuaa_raw` | ✅ done |
+| **C** Molokaʻi kriging map | Same scale; Lānaʻi raw points inset | `chem`, `ahupuaa_raw` | ✅ done |
+| **D** Salinity–nutrient mixing | Scatter: salinity (x) vs NO₃+NO₂ (y, log), all islands, reef threshold line | `chem` | ✅ done |
+
+**Key design notes:**
+- All three kriging panels use the **same fixed color scale** (0–20 µmol/L, plasma)
+  so readers can compare islands directly.
+- Panel D anchor: add two reference points — (1) Hawaiian open ocean endmember
+  from HOT (Station ALOHA surface NO₃+NO₂ ≈ 0.1 µmol/L) and (2) median
+  salinity >34.5 PSU sub-group from our own data as "background" marker.
+  This makes the "reorganization" claim concrete.
+
+**Missing piece — HIGH PRIORITY:**
+> Download HOT (Hawaii Ocean Time-series) surface water NO₃+NO₂ data from
+> <https://hahana.soest.hawaii.edu/hot/hot-dogs/> (monthly since 1988).
+> Plot the mean ± SD as a horizontal reference band on panel D.
+> This baseline contrast is essential for Science — without it, we cannot
+> claim the values are anomalous, only that they vary.
+
+```{r fig1-baseline-stub, eval=FALSE, echo=TRUE}
+# Download HOT nutrient data (do once)
+# File: https://hahana.soest.hawaii.edu/hot/hot-dogs/bextracted.jgofs
+# Relevant columns: date, NO3NO2 (surface, <25 m), salinity
+
+hot <- read_table("data/hot_nutrients.txt", comment = "#") |>
+  filter(depth < 25, !is.na(NO3NO2)) |>
+  summarise(
+    mean_NO3NO2 = mean(NO3NO2, na.rm = TRUE),
+    sd_NO3NO2   = sd(NO3NO2,   na.rm = TRUE),
+    mean_sal    = mean(salinity, na.rm = TRUE)
+  )
+
+# Add to mixing plot as horizontal band
+# annotate("rect", xmin=34, xmax=36, ymin=hot$mean_NO3NO2 - hot$sd_NO3NO2,
+#          ymax=hot$mean_NO3NO2 + hot$sd_NO3NO2, fill="gray70", alpha=0.4)
+```
+
+---
+
+## Figure 2 — The storm cascade and the detection gap (methods / context)
+
+**One-sentence message:** The Kona Low generated a measurable hydrological
+discharge pulse and a post-storm chlorophyll bloom; citizen science was the
+only monitoring source present during the event.
+
+**Layout:** 2-column figure (~18.3 cm × ~12 cm tall), two rows
+
+| Panel | Content | Data | Status |
+|---|---|---|---|
+| **A** Storm cascade time series | NCEP rainfall (top) + USGS discharge (middle) + VIIRS chlorophyll (bottom); storm & sampling windows highlighted | `ncep`, `discharge_raw`, `chla` | ✅ done |
+| **B** Detection gap | WQP monthly counts 2015–2026 (top panel) vs citizen science burst (bottom panel); Kona Low window marked | `wqp_hist`, `chem` | ✅ done |
+
+**Key design notes:**
+- Panel A: three stacked time-series panels with shared x-axis. Collapse to
+  island means for clarity; show individual islands as translucent ribbons if
+  space allows.
+- Panel B: visually stark contrast is the point. Make the conventional
+  monitoring panel's y-axis start at 0 and end at ~250/month, so the
+  sudden drop to 0 in 2026 is obvious.
+
+**Missing piece — MODERATE PRIORITY:**
+> Add CHIRPS historical rainfall anomaly (2013–Feb 2026 baseline) to show
+> how unusual the March storm was in terms of return period. A single
+> annotation on Panel A — "e.g., 1-in-X year event" — greatly strengthens
+> the motivation.
+
+```{r fig2-storm-anomaly-stub, eval=FALSE, echo=TRUE}
+# CHIRPS historical March daily precip per island (already cached)
+# Compare Mar 14-16 2026 NCEP values to CHIRPS historical distribution
+
+chirps_march <- chirps |>
+  filter(island %in% c("Oahu","Maui","Molokai"),
+         lubridate::month(date) == 3) |>
+  group_by(island, date) |>
+  summarise(precip = mean(precip, na.rm = TRUE), .groups = "drop")
+
+storm_peak <- ncep |>
+  filter(island %in% c("Oahu","Maui","Molokai"),
+         date == as.Date("2026-03-14")) |>
+  group_by(island) |>
+  summarise(peak_mm = mean(precip_mmday, na.rm = TRUE), .groups = "drop")
+
+# Percentile rank of storm peak within 11-year March distribution
+chirps_march |>
+  group_by(island) |>
+  summarise(pct_rank = mean(precip < storm_peak$peak_mm[match(first(island),
+                                                               storm_peak$island)]),
+            .groups = "drop")
+```
+
+---
+
+## Figure 3 — Chemically distinct fingerprints (novelty figure)
+
+**One-sentence message:** The storm generated four chemically distinct coastal
+water types whose stoichiometric signatures reveal source-specific contributions
+from rock weathering, agricultural nitrogen, and wastewater phosphorus.
+
+**Layout:** 2-column figure (~18.3 cm × ~12 cm), two rows
+
+| Panel | Content | Data | Status |
+|---|---|---|---|
+| **A** PCA biplot | PC1 (64%) vs PC2 (17%); points colored by cluster; loading arrows; convex hulls | `chem`, PAM k=4 | ✅ done |
+| **B** Fingerprint heatmap | Rows = clusters; columns = Salinity, NO₃+NO₂, PO₄, SiO₂; Z-score fill; median values annotated | `chem`, PAM k=4 | ✅ done |
+| **C** Stoichiometric fingerprint | N:P (y) vs Si:N (x) scatter, log-log; island medians as diamonds; Redfield (N:P=16) and diatom (Si:N=1) reference lines; cluster background shading | `chem` | ✅ done |
+
+**Key design notes:**
+- Panels A and B together tell the clustering story; C extends it to
+  the source-attribution story (what *generates* the fingerprints).
+- In panel C, the key Science-level message: all islands fall in
+  P-excess / Si-rich quadrant (volcanic geology + wastewater), but
+  **Maui is closest to Redfield** (more agricultural N), while
+  **Oʻahu and Molokaʻi show greater P-enrichment** (cesspool density).
+  This is the distinction between islands that makes Claim 2 strong.
+
+**Missing piece — MODERATE PRIORITY:**
+> Add literature-derived reference points to panel C for:
+> (1) Open ocean (HOT surface water N:P and Si:N as a single point)
+> (2) Published Hawaiian reef water quality baselines (Smith et al. 2005;
+>     Stimson & Larned 2000) — these are tabulated in literature, no
+>     download needed.
+> These reference points anchor the stoichiometric fingerprint in a global
+> context and make the departure from background explicit.
+
+---
+
+## Figure 4 — Landscape predictability (forecasting figure)
+
+**One-sentence message:** The spatial structure of the biogeochemical anomaly
+was predictable from pre-existing landscape features — coastal geographic
+position and proximity to wastewater infrastructure — enabling a framework
+for reef exposure forecasting before future events.
+
+**Layout:** 2-column figure (~18.3 cm × ~12 cm), two rows
+
+| Panel | Content | Data | Status |
+|---|---|---|---|
+| **A** RF variable importance | Horizontal bar chart; normalized Gini impurity; OOB vs null accuracy in subtitle | `chem_full`, `ranger` | ✅ done |
+| **B** OOB confusion matrix | 4×4 heat map; row-normalized; % correct on diagonal | `ranger` | ✅ done |
+| **C** Cluster × geography | Maps of Oʻahu + Maui side by side; points colored by cluster; kriging surface background | `chem`, PAM, kriging | ✅ done |
+
+**Key design notes:**
+- Panel A's most important message: coastal position (lat/lon) dominates,
+  reflecting windward/leeward rainfall gradient. This is not just "where
+  you are" — it is a proxy for watershed exposure to orographic rainfall,
+  which is a fundamental landscape feature.
+- A short annotation on Panel A: "Windward/leeward position captures
+  storm exposure better than any single infrastructure metric" — this is
+  the conceptual bridge from empirical RF to landscape theory.
+
+**Missing pieces — LOWER PRIORITY (but would strengthen for Science):**
+> 1. **NOAA C-CAP impervious surface** — % impervious cover per ahupuaʻa
+>    watershed would replace lat/lon as a more mechanistically interpretable
+>    predictor. Access: <https://coast.noaa.gov/ccapftp/>
+>    Expected improvement: RF OOB probably rises from 61% to ~70-75%.
+>
+> 2. **NHDPlus stream density** — stream network density per watershed
+>    captures drainage efficiency. Access: `nhdplusTools` package.
+>
+> 3. **Watershed area** — from ahupuaʻa boundaries (already have polygons;
+>    just compute `st_area()`). Larger watersheds → more runoff volume.
+
+```{r fig4-watershed-area-stub, eval=FALSE, echo=TRUE}
+# Compute ahupuaa watershed area from existing polygons
+ahupuaa_area <- ahupuaa_raw |>
+  sf::st_transform(32604) |>
+  mutate(area_km2 = as.numeric(sf::st_area(geometry)) / 1e6) |>
+  sf::st_drop_geometry() |>
+  select(ahupuaa, moku, mokupuni, area_km2)
+
+# Join to chem_full and add to RF predictor set
+# Then re-run ranger and compare OOB accuracy
+```
+
+---
+
+# Extended data (supplementary figures)
+
+Science papers use "Extended Data" — numbered ED figures that appear after
+the main text in the online supplement but are peer-reviewed as part of the
+manuscript. Aim for 6–8 ED figures.
+
+| ED# | Content | Status |
+|---|---|---|
+| **ED1** | Sampling design map: all 4 islands with n per island, collection date distribution, and WQP conventional station locations for comparison | ✅ buildable from existing data |
+| **ED2** | Kriging diagnostics: empirical variograms + fitted models for each island | ✅ buildable from krige function internals |
+| **ED3** | Full salinity–nutrient mixing (4-panel: NO₃+NO₂, PO₄, SiO₂, NH₃ vs salinity) with reef threshold lines | ✅ done (`salinity-nutrient-mixing` chunk) |
+| **ED4** | Silhouette analysis (k=2–6 + individual widths for k=4) | ✅ done (`silhouette-supp` chunk) |
+| **ED5** | Moran's I spatial autocorrelation by island × nutrient | ✅ done (`morans-i` chunk) |
+| **ED6** | CHIRPS/NCEP rainfall return-period analysis — how anomalous was the Kona Low vs 11-year record? | ⚠️ needs storm anomaly code (stub in Fig 2 above) |
+| **ED7** | VIIRS chlorophyll anomaly — post-storm bloom relative to 2015–2025 March climatology | ⚠️ needs VIIRS climatology baseline (see stub below) |
+| **ED8** | Cesspool density → coastal NO₃+NO₂ regression (ahupuaʻa level, by island, log-log) | ✅ done (`cesspool-regression` chunk) |
+
+```{r ed7-chlorophyll-anomaly-stub, eval=FALSE, echo=TRUE}
+# ED7: VIIRS chlorophyll anomaly
+# Need: March climatology from NOAA CoastWatch ERDDAP (2015-2025 March mean per pixel)
+# Already have: hawaii_chlorophyll_cache.rds (Feb-Jun 2026)
+
+# Step 1: Pull monthly VIIRS from ERDDAP for March 2015-2025
+# library(rerddap)
+# viirs_march <- info("nesdisVHNSQchlaMonthly", url="coastwatch.pfeg.noaa.gov/erddap")
+# ... griddap() call for Hawaii bbox, March only, 2015-2025
+
+# Step 2: Compute pixel-level March mean (climatology)
+# Step 3: Subtract 2026 post-storm (late March) from climatology
+# Step 4: Map anomaly — positive = bloom, negative = no change
+```
+
+---
+
+# Data gaps summary
+
+## Priority 1 — Required before Science submission
+
+These gaps directly affect the paper's core claims:
+
+| Gap | What it provides | Source | R package | Est. effort |
+|---|---|---|---|---|
+| **HOT surface nutrients** (1988–2026) | Open-ocean baseline for Fig 1D mixing plot; anchors "reorganization" claim | <https://hahana.soest.hawaii.edu/hot/hot-dogs/> | `read_table()` | 1 hour |
+| **Internal salinity baseline** | High-salinity (>34.5 PSU) sites as within-study control; clean enrichment factor | Already in `chem_full` | none | 30 min |
+| **CHIRPS storm return period** | How unusual was March 14? "1-in-X year event" annotation on Fig 2A | Already in `chirps` cache | `dplyr` | 1 hour |
+
+## Priority 2 — Strengthens manuscript; reviewer-expected
+
+| Gap | What it provides | Source | R package | Est. effort |
+|---|---|---|---|---|
+| **NOAA C-CAP impervious surface** | Replaces lat/lon as RF predictor; more mechanistic than position alone | NOAA coast.noaa.gov/ccapftp | `terra`, `FedData` | 4 hours |
+| **Watershed area** (from ahupuaʻa polygons) | Runoff volume proxy; compute from existing data | `ahupuaa_raw` polygons | `sf::st_area()` | 30 min |
+| **WQP site locations** (mapped) | Spatial comparison for detection gap figure | `wqp_hist` + `whatWQPsites()` | `dataRetrieval` | 2 hours |
+| **VIIRS chlorophyll climatology** | Biological response anomaly (ED7) | NOAA CoastWatch ERDDAP | `rerddap` | 3 hours |
+
+## Priority 3 — Nice to have; supplements narrative
+
+| Gap | What it provides | Source | R package | Est. effort |
+|---|---|---|---|---|
+| **NOAA reef extent polygons** | % Hawaiian reef area above NO₃+NO₂ threshold | NOAA CRCP / CoRIS | `sf` | 3 hours |
+| **USGS WQP stream nutrients** (baseflow) | Storm amplification factor: storm-flow vs baseflow at gauged streams | WQP via `readWQPdata(siteid="USGS-XXXXXX")` | `dataRetrieval` | 2 hours |
+| **NHDPlus stream density** | Drainage efficiency per watershed | `nhdplusTools` | `nhdplusTools` | 4 hours |
+| **GPM IMERG rainfall** (0.1° res) | Higher-resolution storm footprint than NCEP | NASA Earthdata / ERDDAP | `httr2` | 3 hours |
+
+---
+
+# Analysis checklist
+
+## Done ✅
+
+- [x] Kriging maps (Oʻahu, Maui, Molokaʻi) — fixed plasma scale
+- [x] Salinity–nutrient mixing (all 4 nutrients)
+- [x] PAM k=4 cluster analysis with PCA biplot
+- [x] Chemical fingerprint heatmap (cluster profiles)
+- [x] Stoichiometric fingerprints (N:P, Si:N by island)
+- [x] Moran's I spatial autocorrelation
+- [x] Random forest: landscape → cluster membership (OOB 61.3%)
+- [x] Confusion matrix (OOB)
+- [x] Ahupuaʻa cesspool regression (NO₃+NO₂ and PO₄)
+- [x] WQP detection gap timeline
+- [x] Storm cascade figure (NCEP + USGS discharge + VIIRS chlorophyll)
+- [x] Silhouette analysis (k=2–6 supplementary)
+- [x] Kriging + cluster overlay maps
+
+## Needed ⚠️
+
+- [ ] **HOT baseline** — download and add to Fig 1D mixing plot
+- [ ] **Internal salinity baseline** — median nutrients at Sal >34.5 PSU vs <32 PSU
+- [ ] **CHIRPS storm anomaly** — percentile rank of March 14 peak vs 11-year record
+- [ ] **Watershed area** — `st_area()` on ahupuaʻa polygons → add to RF
+- [ ] **C-CAP impervious surface** — download, zonal stats per ahupuaʻa → add to RF
+- [ ] **VIIRS chlorophyll climatology** — March 2015–2025 mean → 2026 anomaly map
+- [ ] **WQP site map** — spatial visualization of conventional monitoring coverage
+- [ ] **Reef exposure** — % reef area above threshold (needs reef polygons)
+
+---
+
+# Quick-start code for highest-priority gaps
+
+## 1. Internal salinity baseline (30 minutes)
+
+```{r salinity-baseline, eval=FALSE, echo=TRUE}
+library(tidyverse)
+
+# Within-study control: high-salinity sites = near-background marine conditions
+baseline_vs_storm <- chem_full |>
+  filter(!is.na(Salinity), !is.na(NO3NO2)) |>
+  mutate(
+    condition = case_when(
+      Salinity > 34.5 ~ "Background\n(Sal > 34.5)",
+      Salinity < 32.0 ~ "Storm-influenced\n(Sal < 32)",
+      TRUE ~ NA_character_
+    )
+  ) |>
+  filter(!is.na(condition)) |>
+  group_by(condition) |>
+  summarise(
+    n            = n(),
+    median_NO3   = median(NO3NO2, na.rm = TRUE),
+    median_PO4   = median(PO4,    na.rm = TRUE),
+    median_SiO2  = median(SiO2,   na.rm = TRUE),
+    pct_above_N  = mean(NO3NO2 > 1, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Enrichment factor
+baseline_vs_storm |>
+  summarise(
+    NO3_enrichment = median_NO3[condition == "Storm-influenced\n(Sal < 32)"] /
+                     median_NO3[condition == "Background\n(Sal > 34.5)"]
+  )
+```
+
+## 2. Watershed area from existing polygons (30 minutes)
+
+```{r watershed-area, eval=FALSE, echo=TRUE}
+library(sf); library(tidyverse)
+
+watershed_area <- ahupuaa_raw |>
+  sf::st_transform(32604) |>
+  mutate(area_km2 = as.numeric(sf::st_area(geometry)) / 1e6) |>
+  sf::st_drop_geometry() |>
+  group_by(ahupuaa, moku, mokupuni) |>
+  summarise(area_km2 = sum(area_km2), .groups = "drop")
+
+# Join to chem_full and add to RF training set
+# Then re-run ranger() and check if OOB improves
+```
+
+## 3. HOT open-ocean baseline (1 hour)
+
+```{r hot-baseline, eval=FALSE, echo=TRUE}
+# Download from: https://hahana.soest.hawaii.edu/hot/hot-dogs/
+# Navigate to: HOT-DOGS > Nutrients > NO3+NO2 at surface
+
+# After download to data/hot_nutrients.csv:
+hot <- read_csv("data/hot_nutrients.csv", show_col_types = FALSE) |>
+  filter(depth_m < 25) |>
+  summarise(
+    mean_NO3 = mean(NO3NO2_umol_L, na.rm = TRUE),
+    sd_NO3   = sd(NO3NO2_umol_L,   na.rm = TRUE),
+    n        = n()
+  )
+
+# HOT surface NO3+NO2 typically: mean ≈ 0.03 umol/L, range 0.01–0.30
+# Use as reference line/band in Fig 1D mixing diagram
+```
+
+## 4. CHIRPS storm return period (1 hour)
+
+```{r chirps-return-period, eval=FALSE, echo=TRUE}
+library(tidyverse)
+
+# Already have chirps (2013-2026 Feb) and ncep for storm period
+
+# Step 1: Island-mean March precipitation from CHIRPS
+chirps_march_daily <- chirps |>
+  filter(island %in% c("Oahu","Maui","Molokai"),
+         lubridate::month(date) == 3) |>
+  group_by(island, date) |>
+  summarise(precip_mm = mean(precip, na.rm = TRUE), .groups = "drop")
+
+# Step 2: 3-day rolling max (storm is multi-day)
+chirps_3day <- chirps_march_daily |>
+  arrange(island, date) |>
+  group_by(island) |>
+  mutate(roll3 = zoo::rollmax(precip_mm, 3, fill = NA, align = "right")) |>
+  ungroup()
+
+# Step 3: Storm peak 3-day total from NCEP (Mar 13-15)
+ncep_storm <- ncep |>
+  filter(island %in% c("Oahu","Maui","Molokai"),
+         date >= as.Date("2026-03-13"), date <= as.Date("2026-03-15")) |>
+  group_by(island) |>
+  summarise(storm_3day = sum(precip_mmday, na.rm = TRUE), .groups = "drop")
+
+# Step 4: Exceedance probability
+chirps_3day |>
+  left_join(ncep_storm, by = "island") |>
+  group_by(island) |>
+  summarise(
+    pct_exceeded = mean(roll3 >= storm_3day, na.rm = TRUE),
+    return_period_yrs = 1 / pct_exceeded,
+    .groups = "drop"
+  )
+```
+
+---
+
+# Recommended next steps (prioritized)
+
+1. **Run the internal salinity baseline** (30 min) — produces the enrichment
+   factor number for the abstract ("X-fold above background").
+
+2. **Compute watershed area** (30 min) — immediate improvement to RF predictor
+   set with no data download needed.
+
+3. **Download HOT nutrients** (1 hr) — adds the open-ocean endmember to the
+   mixing diagram. This single addition makes the Fig 1D panel publication-ready
+   for Science's standards.
+
+4. **Run CHIRPS storm anomaly** (1 hr) — produces the return period estimate
+   for Fig 2 context ("1-in-N year event").
+
+5. **Download C-CAP impervious surface** (4 hrs, most involved) — transforms
+   the RF analysis from empirical (position-based) to mechanistic (land cover),
+   which is the difference between "interesting" and "impactful" for reviewers.
+
+---
+
+*Roadmap last updated: `r Sys.Date()`*
+*Data directory: `data/`*
+*Main analysis QMD: `nutrient_hotspot_maps.qmd`*
