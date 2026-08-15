@@ -1356,7 +1356,15 @@ hui_baseline_plot <- function(data,
                               conc_col,
                               x_label,
                               threshold        = NULL,
-                              fold_text_cutoff = 12) {
+                              fold_text_cutoff = 12,
+                              cs_data          = NULL,
+                              cs_radius        = 100) {
+
+  # Map Hui µmol column names to the corresponding chem column
+  cs_col_map <- c(NNN_umol       = "NO3NO2", Phosphate_umol = "PO4",
+                  Silicate_umol  = "SiO2",   NH4_umol       = "NH3")
+  cs_col  <- cs_col_map[conc_col]
+  show_cs <- !is.null(cs_data) && !is.na(cs_col) && cs_col %in% names(cs_data)
 
   # ── Data prep ───────────────────────────────────────────────────────────────
   historical <- data |>
@@ -1411,6 +1419,35 @@ hui_baseline_plot <- function(data,
       region = factor(region, levels = c("South Maui", "West Maui"))
     )
 
+  # ── CS spatial match: mean of post-storm CS samples within cs_radius of each station
+  if (show_cs) {
+    hui_stations_sf <- data |>
+      distinct(Station, SiteName, region, Lat, Long) |>
+      filter(!is.na(Lat), !is.na(Long)) |>
+      mutate(label = factor(str_trunc(SiteName, 28, ellipsis = "\u2026"), levels = lvls)) |>
+      filter(!is.na(label)) |>
+      sf::st_as_sf(coords = c("Long", "Lat"), crs = 4326) |>
+      sf::st_transform(32604)
+
+    cs_sf <- cs_data |>
+      filter(!is.na(.data[[cs_col]]), .data[[cs_col]] > 0,
+             !is.na(latitude), !is.na(longitude),
+             as.Date(collected_hst, tz = "HST") >= as.Date("2026-03-14")) |>
+      sf::st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+      sf::st_transform(32604)
+
+    cs_matched <- sf::st_join(
+      hui_stations_sf,
+      cs_sf |> dplyr::select(cs_val = dplyr::all_of(cs_col)),
+      join = sf::st_is_within_distance,
+      dist = cs_radius
+    ) |>
+      sf::st_drop_geometry() |>
+      filter(!is.na(cs_val)) |>
+      group_by(label) |>
+      summarise(cs_val = mean(cs_val, na.rm = TRUE), n_cs = n(), .groups = "drop")
+  }
+
   # ── Panel A: fold-change bars ────────────────────────────────────────────────
   pA <- ggplot(post, aes(x = fold_change, y = label, fill = above_p95)) +
     geom_col(width = 0.65, color = NA) +
@@ -1460,6 +1497,11 @@ hui_baseline_plot <- function(data,
     geom_point(data = filter(post, !is.na(label)),
                aes(x = conc, y = label, size = above_p95),
                color = "#E65100", shape = 16, alpha = 0.95) +
+    (if (show_cs && nrow(cs_matched) > 0)
+      geom_point(data = cs_matched,
+                 aes(x = cs_val, y = label),
+                 shape = 21, size = 4, stroke = 1.2,
+                 fill = "#AB47BC", color = "#4A148C", alpha = 0.85)) +
     scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2.2), guide = "none") +
     scale_x_log10(breaks = scales::breaks_log(n = 6),
                   labels = scales::label_number(drop0trailing = TRUE),
@@ -1495,22 +1537,26 @@ hui_baseline_plot <- function(data,
 HuiNN_raw<-hui_baseline_plot(bg_hui_loc,
                   conc_col  = "NNN_umol",
                   x_label   = "NO\u2083+NO\u2082 (\u03bcmol/L, log)",
-                  threshold = NA)
+                  threshold = NA,
+                  cs_data   = chem)
 
 HuiPO_raw<-hui_baseline_plot(bg_hui_loc,
                   conc_col  = "Phosphate_umol",
                   x_label   = "PO\u2084 (\u03bcmol/L, log)",
-                  threshold = NA)
+                  threshold = NA,
+                  cs_data   = chem)
 
 HuiSi_raw<-hui_baseline_plot(bg_hui_loc,
                   conc_col  = "Silicate_umol",
                   x_label   = "SiO\u2082 (\u03bcmol/L, log)",
-                  threshold = NA)
+                  threshold = NA,
+                  cs_data   = chem)
 
 HuiNH3_raw<-hui_baseline_plot(bg_hui_loc,
                   conc_col  = "NH4_umol",
                   x_label   = "NH\u2083 (\u03bcmol/L, log)",
-                  threshold = NA)
+                  threshold = NA,
+                  cs_data   = chem)
 
 HuiNN|HuiNN_raw
 ggsave(here("output","allNN_HuiData.png"), width = 16, height = 12)
@@ -1524,6 +1570,124 @@ ggsave(here("output","allSi_HuiData.png"), width = 16, height = 12)
 HuiNH3|HuiNH3_raw
 ggsave(here("output","allNH3_HuiData.png"), width = 16, height = 12)
 
+```
+
+## Direct comparison: community science vs Hui within 100 m
+
+To directly compare the two independent datasets at the same locations, we matched community science samples to Hui stations using a nearest-neighbour spatial join with a 100 m radius (UTM zone 4N). Both datasets are filtered to post-storm dates (≥ March 14, 2026). The datasets do not sample identically in time — Hui sampled March 18–31 and community science March 28–April 7 — so date difference (CS date − Hui date) is shown as point colour.
+
+```{r}
+#| label: hui-cs-comparison
+#| fig-height: 6
+#| fig-width: 8
+#| fig-cap: "Direct comparison of post-storm community science NO₃+NO₂ (y) against Hui o Ka Wai Ola NNN (x) at the same locations (within 100 m). Each point is one Hui station × CS sample pair. The dashed line is 1:1 agreement; colour shows the gap in days between the two sample dates (positive = CS collected after Hui). Only Maui stations are shown, as Hui monitoring is restricted to Maui."
+
+library(sf)
+
+# ── Hui post-storm: one row per station-date observation ─────────────────────
+hui_match_sf <- bg_hui_loc |>
+  filter(year(Date) == 2026, month(Date) == 3,
+         Date >= as.Date("2026-03-14"),
+         !is.na(Lat), !is.na(Long)) |>
+  st_as_sf(coords = c("Long", "Lat"), crs = 4326) |>
+  st_transform(32604)
+
+# ── Post-storm community science samples (Maui only, with coordinates) ────────
+cs_match_sf <- chem |>
+  filter(island == "Maui",
+         !is.na(latitude), !is.na(longitude),
+         as.Date(collected_hst, tz = "HST") >= as.Date("2026-03-14")) |>
+  mutate(cs_date = as.Date(collected_hst, tz = "HST")) |>
+  select(sample_id, cs_date, cs_NO3NO2 = NO3NO2, cs_PO4 = PO4,
+         cs_SiO2 = SiO2, cs_NH3 = NH3, latitude, longitude) |>
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+  st_transform(32604)
+
+# ── Spatial join: CS samples within 100 m of each Hui observation ─────────────
+matched_pairs <- st_join(
+  hui_match_sf,
+  cs_match_sf,
+  join    = st_is_within_distance,
+  dist    = 100
+) |>
+  st_drop_geometry() |>
+  filter(!is.na(sample_id)) |>
+  mutate(
+    date_diff = as.integer(cs_date - Date),  # positive = CS collected after Hui
+    dist_label = "≤ 100 m"
+  )
+
+cat(glue::glue(
+  "{nrow(matched_pairs)} Hui–CS pairs matched ",
+  "({n_distinct(matched_pairs$Station)} Hui stations, ",
+  "{n_distinct(matched_pairs$sample_id)} CS samples)\n",
+  "Date gap range: {min(matched_pairs$date_diff)} to {max(matched_pairs$date_diff)} days\n"
+))
+
+# ── Reshape to long for faceting ──────────────────────────────────────────────
+nutrient_map <- tribble(
+  ~hui_col,        ~cs_col,      ~label,
+  "NNN_umol",      "cs_NO3NO2",  "NO\u2083+NO\u2082",
+  "Phosphate_umol","cs_PO4",     "PO\u2084",
+  "Silicate_umol", "cs_SiO2",    "SiO\u2082",
+  "NH4_umol",      "cs_NH3",     "NH\u2084"
+)
+
+pairs_long <- nutrient_map |>
+  purrr::pmap(function(hui_col, cs_col, label) {
+    matched_pairs |>
+      filter(!is.na(.data[[hui_col]]), !is.na(.data[[cs_col]])) |>
+      transmute(
+        Station, SiteName, Date, cs_date, date_diff,
+        hui_val = .data[[hui_col]],
+        cs_val  = .data[[cs_col]],
+        nutrient = label
+      )
+  }) |>
+  list_rbind() |>
+  mutate(nutrient = factor(nutrient, levels = nutrient_map$label))
+
+# ── Per-nutrient correlations for facet labels ────────────────────────────────
+cor_labels <- pairs_long |>
+  filter(hui_val > 0, cs_val > 0) |>
+  group_by(nutrient) |>
+  summarise(
+    r   = cor(log10(hui_val), log10(cs_val), method = "pearson",  use = "complete.obs"),
+    rho = cor(log10(hui_val), log10(cs_val), method = "spearman", use = "complete.obs"),
+    n   = n(),
+    .groups = "drop"
+  ) |>
+  mutate(label = paste0(
+    nutrient, " (\u03bcmol/L)\n",
+    "r = ", round(r, 2), "  \u03c1 = ", round(rho, 2), "  n = ", n
+  ))
+
+cor_labeller <- setNames(cor_labels$label, cor_labels$nutrient)
+
+# ── Plot ──────────────────────────────────────────────────────────────────────
+ggplot(pairs_long, aes(x = hui_val, y = cs_val, color = date_diff)) +
+  geom_abline(slope = 1, intercept = 0,
+              linetype = "dashed", color = "gray50", linewidth = 0.5) +
+  geom_point(size = 2.5, alpha = 0.85) +
+  scale_color_gradient2(
+    low = "#1565C0", mid = "#FFA726", high = "#B71C1C", midpoint = 7,
+    name = "Days CS\nafter Hui",
+    guide = guide_colorbar(barheight = unit(8, "lines"), barwidth = unit(0.5, "lines"))
+  ) +
+  scale_x_log10(labels = scales::label_number(drop0trailing = TRUE)) +
+  scale_y_log10(labels = scales::label_number(drop0trailing = TRUE)) +
+  facet_wrap(~nutrient, scales = "free", ncol = 2,
+             labeller = labeller(nutrient = cor_labeller)) +
+  labs(
+    x = "Hui o Ka Wai Ola (\u03bcmol/L, log)",
+    y = "Community science (\u03bcmol/L, log)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor   = element_blank(),
+    strip.text         = element_text(face = "bold", size = 9.5),
+    plot.caption       = element_text(size = 8, color = "gray50", hjust = 0)
+  )
 ```
 
 ratios <- chem |>
