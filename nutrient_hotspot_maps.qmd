@@ -1433,12 +1433,14 @@ hui_baseline_plot <- function(data,
       filter(!is.na(.data[[cs_col]]), .data[[cs_col]] > 0,
              !is.na(latitude), !is.na(longitude),
              as.Date(collected_hst, tz = "HST") >= as.Date("2026-03-14")) |>
+      mutate(cs_val = .data[[cs_col]]) |>
       sf::st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
-      sf::st_transform(32604)
+      sf::st_transform(32604) |>
+      dplyr::select(cs_val)
 
     cs_matched <- sf::st_join(
       hui_stations_sf,
-      cs_sf |> dplyr::select(cs_val = dplyr::all_of(cs_col)),
+      cs_sf,
       join = sf::st_is_within_distance,
       dist = cs_radius
     ) |>
