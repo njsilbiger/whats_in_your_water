@@ -1439,10 +1439,8 @@ hui_baseline_plot <- function(data,
       dplyr::select(cs_val)
 
     cs_matched <- sf::st_join(
-      hui_stations_sf,
-      cs_sf,
-      join = sf::st_is_within_distance,
-      dist = cs_radius
+      hui_stations_sf, cs_sf,
+      join = sf::st_is_within_distance, dist = cs_radius
     ) |>
       sf::st_drop_geometry() |>
       filter(!is.na(cs_val)) |>
