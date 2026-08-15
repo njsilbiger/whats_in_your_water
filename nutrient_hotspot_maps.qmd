@@ -1477,9 +1477,26 @@ hui_baseline_plot <- function(data,
       plot.caption       = element_text(size = 8, color = "gray50", hjust = 0)
     )
 
-  # ── Panel B: forest plot ─────────────────────────────────────────────────────
+  # ── Panel B: build legend values conditionally on cs availability ─────────────
+  legend_vals <- c("Historical median" = "white",
+                   "Hui post-storm"    = "#E65100")
+  legend_ov   <- list(size   = c(2,       3.5),
+                      shape  = c(21,      21),
+                      color  = c("gray40", "#B04000"),
+                      stroke = c(0.5,     0.5),
+                      alpha  = c(1,       0.95))
+  if (show_cs && nrow(cs_matched) > 0) {
+    legend_vals["Community science (≤100 m)"] <- "#AB47BC"
+    legend_ov$size   <- c(legend_ov$size,   4)
+    legend_ov$shape  <- c(legend_ov$shape,  21)
+    legend_ov$color  <- c(legend_ov$color,  "#4A148C")
+    legend_ov$stroke <- c(legend_ov$stroke, 1.2)
+    legend_ov$alpha  <- c(legend_ov$alpha,  0.85)
+  }
+
+  # ── Panel B: forest plot ─────────────────────────────────────────────
   pB <- ggplot() +
-    (if (!is.null(threshold))
+    (if (!is.null(threshold) && !is.na(threshold))
       geom_vline(xintercept = threshold, color = "firebrick",
                  linetype = "dashed", linewidth = 0.6)) +
     geom_segment(data = filter(baselines, !is.na(label)),
@@ -1489,19 +1506,19 @@ hui_baseline_plot <- function(data,
                  aes(x = p25, xend = p75, y = label, yend = label),
                  color = "gray30", linewidth = 3, lineend = "butt") +
     geom_point(data = filter(baselines, !is.na(label)),
-               aes(x = med, y = label),
-               color = "white", size = 1.8, shape = 16) +
-#    geom_point(data = filter(pre, !is.na(label)),
-#               aes(x = conc, y = label),
-#               color = "#1565C0", shape = 1, size = 2.2, stroke = 1) +
+               aes(x = med, y = label, fill = "Historical median"),
+               color = "gray40", size = 1.8, shape = 21, stroke = 0.5) +
     geom_point(data = filter(post, !is.na(label)),
-               aes(x = conc, y = label, size = above_p95),
-               color = "#E65100", shape = 16, alpha = 0.95) +
+               aes(x = conc, y = label, size = above_p95, fill = "Hui post-storm"),
+               color = "#B04000", shape = 21, stroke = 0.5, alpha = 0.95) +
     (if (show_cs && nrow(cs_matched) > 0)
       geom_point(data = cs_matched,
-                 aes(x = cs_val, y = label),
+                 aes(x = cs_val, y = label, fill = "Community science (≤100 m)"),
                  shape = 21, size = 4, stroke = 1.2,
-                 fill = "#AB47BC", color = "#4A148C", alpha = 0.85)) +
+                 color = "#4A148C", alpha = 0.85)) +
+    scale_fill_manual(name   = NULL,
+                      values = legend_vals,
+                      guide  = guide_legend(override.aes = legend_ov)) +
     scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2.2), guide = "none") +
     scale_x_log10(breaks = scales::breaks_log(n = 6),
                   labels = scales::label_number(drop0trailing = TRUE),
@@ -1516,7 +1533,10 @@ hui_baseline_plot <- function(data,
       axis.text.y        = element_blank(),
       axis.ticks.y       = element_blank(),
       plot.tag           = element_text(face = "bold"),
-      plot.margin        = margin(t = 4, r = 8, b = 4, l = 0)
+      plot.margin        = margin(t = 4, r = 8, b = 4, l = 0),
+      legend.position    = "bottom",
+      legend.text        = element_text(size = 7.5),
+      legend.key.size    = unit(0.55, "lines")
     )
 
   # ── Assemble ─────────────────────────────────────────────────────────────────
