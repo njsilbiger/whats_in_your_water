@@ -24,6 +24,8 @@ execute:
 library(tidyverse)
 library(scales)
 library(knitr)
+library(patchwork)
+library(here)
 
 # Spatial
 library(sf)
@@ -39,6 +41,9 @@ library(cluster)
 
 # Repelled labels
 library(ggrepel)
+library(maptiles)
+library(tidyterra)
+
 
 # Spatial autocorrelation
 library(spdep)
@@ -50,7 +55,8 @@ library(ranger)
 library(dataRetrieval)
 library(nhdplusTools)
 
-library(gstat); library(stars)
+library(gstat) 
+library(stars)
 ```
 
 # Introduction
@@ -129,11 +135,70 @@ normalize_name <- function(x) {
     stringr::str_trim()
 }
 
+# Scale metadata for each plottable variable. Add entries here to support new variables.
+# `trans` drives both the internal kriging transform and the ggplot scale transform.
+# `oob_label` is the label used for the top break (values squished above the limit).
+var_meta <- list(
+  NO3NO2 = list(
+    label     = "NO\u2083+NO\u2082\n(\u03bcmol/L)",
+   # limits    = c(0, 20),
+  #  breaks    = c(0.5, 1, 3, 10, 20),
+   # labels    = c("0.5", "1", "3", "10", "\u226520"),
+     limits    = c(0, 10),
+    breaks    = c(0.5, 1, 3, 5, 10),
+    labels    = c("0.5", "1", "3", "5", "\u226510"),
+     trans     = "log1p",
+    direction = 1
+  ),
+  PO4 = list(
+    label     = "PO\u2084\n(\u03bcmol/L)",
+    limits    = c(0, 1),
+    breaks    = c(0.05, 0.1, 0.3, 0.5, 1),
+    labels    = c("0.05", "0.1", "0.3", "0.5", "\u22651"),
+    trans     = "log1p",
+    direction = 1
+  ),
+  SiO2 = list(
+    label     = "SiO\u2082\n(\u03bcmol/L)",
+   # limits    = c(0, 100),
+  #  breaks    = c(1, 5, 20, 50, 100),
+  #  labels    = c("1", "5", "20", "50", "\u2265100"),
+     limits    = c(0, 50),
+    breaks    = c(1, 5, 10, 20, 50),
+    labels    = c("1", "5", "10", "20", "\u226550"),
+    trans     = "log1p",
+    direction = 1
+  ),
+  NH3 = list(
+    label     = "NH\u2083\n(\u03bcmol/L)",
+    limits    = c(0, 3),
+    breaks    = c(0.1, 0.5, 1, 2, 3),
+    labels    = c("0.1", "0.5", "1", "2", "\u22653"),
+    trans     = "log1p",
+    direction = 1
+  ),
+  Salinity = list(
+    label     = "Salinity\n(PSU)",
+    limits    = c(28, 36),
+    breaks    = c(28, 30, 32, 34, 36),
+    labels    = c("\u226428", "30", "32", "34", "36"),
+    trans     = "identity",
+    direction = -1
+  )
+)
+
 krige_island_map <- function(data, island_name, ahupuaa_sf,
-                              res_m = 250, band_km = 3) {
+                              var = "NO3NO2",
+                              res_m = 250, band_km = 3, tile_zoom = 11) {
+  
+  meta    <- var_meta[[var]]
+  use_log <- !is.null(meta) && meta$trans == "log1p"
+  if (is.null(meta)) meta <- list(
+    label = var, limits = NULL, breaks = waiver(), labels = waiver(), trans = "identity"
+  )
   
   island_data <- data |>
-    filter(island == island_name, !is.na(NO3NO2), !is.na(latitude), !is.na(longitude))
+    filter(island == island_name, !is.na(.data[[var]]), !is.na(latitude), !is.na(longitude))
   
   # Dissolve ahupuaʻa polygons; drop parts < 1 km² to remove errant geometry
   match_idx <- normalize_name(ahupuaa_sf$mokupuni) == normalize_name(island_name)
@@ -152,21 +217,23 @@ krige_island_map <- function(data, island_name, ahupuaa_sf,
   pts_proj <- island_data |>
     st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
     st_transform(32604) |>
-    mutate(log_val = log1p(NO3NO2),
-           NO3NO2  = NO3NO2,
+    mutate(raw_val = .data[[var]],
+           log_val = if (use_log) log1p(raw_val) else raw_val,
            X = st_coordinates(geometry)[, 1],
            Y = st_coordinates(geometry)[, 2]) |>
     group_by(X, Y) |>
     summarise(log_val = mean(log_val, na.rm = TRUE),
-              NO3NO2  = mean(NO3NO2,  na.rm = TRUE), .groups = "drop") |>
+              raw_val = mean(raw_val, na.rm = TRUE), .groups = "drop") |>
     st_as_sf(coords = c("X", "Y"), crs = 32604)
   
-  # Display points clipped to coast_bbox; carries NO3NO2 values for shared color scale
+  # Display points clipped to coast_bbox; carries variable values for shared color scale
   pts_proj_all <- island_data |>
     filter(!is.na(latitude), !is.na(longitude)) |>
     st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
     st_transform(32604) |>
-    mutate(X = st_coordinates(geometry)[,1], Y = st_coordinates(geometry)[,2]) |>
+    mutate(val = .data[[var]],
+           X   = st_coordinates(geometry)[,1],
+           Y   = st_coordinates(geometry)[,2]) |>
     filter(X >= coast_bbox["xmin"], X <= coast_bbox["xmax"],
            Y >= coast_bbox["ymin"], Y <= coast_bbox["ymax"])
   
@@ -200,46 +267,54 @@ krige_island_map <- function(data, island_name, ahupuaa_sf,
   )
   pred_df <- st_coordinates(k_out) |>
     as.data.frame() |>
-    mutate(NO3NO2_pred = expm1(k_out$var1.pred))
+    mutate(pred = if (use_log) expm1(k_out$var1.pred) else k_out$var1.pred)
   
-  # Fixed plasma scale with log1p transform. Cap at 20 umol/L (squish above):
-  # puts the reef-health threshold (1 umol/L) at ~23% and the clear hotspot
-  # zone (10-20 umol/L) at 79-100% of the gradient — deep into the brightest
-  # plasma yellows. Fixed limits keep the scale comparable across all islands.
+  krige_label <- if (use_log) paste0("log1p(", var, ")") else var
+  
   ggplot() +
-    geom_raster(data = pred_df, aes(x = X, y = Y, fill = NO3NO2_pred)) +
-    geom_sf(data = land_sf_map, fill = "gray72", color = "gray40", linewidth = 0.4) +
-    geom_sf(data = pts_proj_all, aes(fill = NO3NO2), size = 1.8, shape = 21,
-            color = "white", stroke = 0.5, alpha = 0.9) +
+    geom_spatraster_rgb(data = get_tiles(st_transform(coast_outer, 4326),
+                                         provider = "Esri.WorldImagery", zoom = tile_zoom)) +
+    geom_raster(data = pred_df, aes(x = X, y = Y, fill = pred), alpha = 0.8) +
+    geom_sf(data = land_sf_map, fill = NA, color = "white", linewidth = 0.4) +
+    geom_sf(data = pts_proj_all, aes(fill = val), size = 1.0, shape = 21,
+            color = "white", stroke = 0.3, alpha = 0.5) +
     scale_fill_viridis_c(
-      name     = "NO\u2083+NO\u2082\n(\u03bcmol/L)",
-      option   = "plasma",
-      trans    = "log1p",
-      limits   = c(0, 20),
-      breaks   = c(0.5, 1, 3, 10, 20),
-      labels   = c("0.5", "1", "3", "10", "\u226520"),
-      oob      = scales::squish,
-      na.value = "transparent",
-      guide    = guide_colorbar(barheight = unit(10, "lines"),
-                                barwidth  = unit(0.6, "lines"),
-                                ticks.linewidth = 0.5)
+      name      = meta$label,
+      option    = "plasma",
+      direction = meta$direction,
+      trans     = meta$trans,
+      limits    = meta$limits,
+      breaks    = meta$breaks,
+      labels    = meta$labels,
+      oob       = scales::squish,
+      na.value  = "transparent",
+      guide     = guide_colorbar(barheight = unit(10, "lines"),
+                                 barwidth  = unit(0.6, "lines"),
+                                 ticks.linewidth = 0.5)
     ) +
     coord_sf(crs = 32604,
              xlim = c(coast_bbox["xmin"], coast_bbox["xmax"]),
              ylim = c(coast_bbox["ymin"], coast_bbox["ymax"]), expand = FALSE) +
     labs(title = island_name,
          subtitle = paste0("n = ", nrow(pts_proj),
-                           " unique locations | ordinary kriging on log1p(NO3+NO2)")) +
+                           " unique locations | ordinary kriging on ", krige_label)) +
     theme_minimal(base_size = 12) +
     theme(axis.title = element_blank(), axis.text = element_text(size = 7),
           plot.title = element_text(face = "bold", size = 14),
           plot.subtitle = element_text(size = 9, color = "gray40"))
 }
 
-raw_points_map <- function(data, island_name, ahupuaa_sf) {
+raw_points_map <- function(data, island_name, ahupuaa_sf,
+                            var = "NO3NO2", tile_zoom = 12) {
+  
+  meta <- var_meta[[var]]
+  if (is.null(meta)) meta <- list(
+    label = var, limits = NULL, breaks = waiver(), labels = waiver(), trans = "identity"
+  )
   
   island_data <- data |>
-    filter(island == island_name, !is.na(NO3NO2), !is.na(latitude), !is.na(longitude)) |>
+    filter(island == island_name, !is.na(.data[[var]]), !is.na(latitude), !is.na(longitude)) |>
+    mutate(val = .data[[var]]) |>
     st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
     st_transform(32604)
   
@@ -256,20 +331,26 @@ raw_points_map <- function(data, island_name, ahupuaa_sf) {
   coast_outer <- st_buffer(land_union, dist = 5000)
   coast_bbox  <- st_bbox(coast_outer)
   
+  sat_tiles <- get_tiles(st_transform(coast_outer, 4326),
+                         provider = "Esri.WorldImagery", zoom = tile_zoom)
+  
   ggplot() +
-    geom_sf(data = land_sf_map, fill = "gray72", color = "gray40", linewidth = 0.4) +
-    geom_sf(data = island_data, aes(color = NO3NO2), size = 3.5, shape = 16, alpha = 0.9) +
-    scale_color_viridis_c(
-      name   = "NO\u2083+NO\u2082\n(\u03bcmol/L)",
-      option = "plasma",
-      trans  = "log1p",
-      limits = c(0, 20),
-      breaks = c(0.5, 1, 3, 10, 20),
-      labels = c("0.5", "1", "3", "10", "\u226520"),
-      oob    = scales::squish,
-      guide  = guide_colorbar(barheight = unit(8, "lines"),
-                               barwidth  = unit(0.6, "lines"),
-                               ticks.linewidth = 0.5)
+    geom_spatraster_rgb(data = sat_tiles) +
+    geom_sf(data = land_sf_map, fill = NA, color = "white", linewidth = 0.4) +
+    geom_sf(data = island_data, aes(fill = val), size = 3.5, shape = 21,
+            color = "white", stroke = 0.5, alpha = 0.9) +
+    scale_fill_viridis_c(
+      name      = meta$label,
+      option    = "plasma",
+      direction = meta$direction,
+      trans     = meta$trans,
+      limits    = meta$limits,
+      breaks    = meta$breaks,
+      labels    = meta$labels,
+      oob       = scales::squish,
+      guide     = guide_colorbar(barheight = unit(8, "lines"),
+                                 barwidth  = unit(0.6, "lines"),
+                                 ticks.linewidth = 0.5)
     ) +
     coord_sf(crs = 32604,
              xlim = c(coast_bbox["xmin"], coast_bbox["xmax"]),
@@ -282,6 +363,192 @@ raw_points_map <- function(data, island_name, ahupuaa_sf) {
           plot.title = element_text(face = "bold", size = 14),
           plot.subtitle = element_text(size = 9, color = "gray40"))
 }
+
+# ── krige_surface_data: returns pred_df + land polygon + coast_bbox ───────────
+krige_surface_data <- function(data, island_name, ahupuaa_sf,
+                               var = "NO3NO2", res_m = 300, band_km = 3) {
+  meta    <- var_meta[[var]]
+  use_log <- !is.null(meta) && meta$trans == "log1p"
+  island_data <- data |>
+    filter(island == island_name, !is.na(.data[[var]]),
+           !is.na(latitude), !is.na(longitude))
+  match_idx  <- normalize_name(ahupuaa_sf$mokupuni) == normalize_name(island_name)
+  land_union <- ahupuaa_sf[match_idx, ] |>
+    st_transform(32604) |> st_make_valid() |> st_union()
+  land_parts <- st_cast(land_union, "POLYGON")
+  land_union <- land_parts[as.numeric(st_area(land_parts)) > 1e6] |> st_union()
+  coast_outer <- st_buffer(land_union, dist = band_km * 1000)
+  coast_band  <- st_difference(coast_outer, land_union)
+  coast_bbox  <- st_bbox(coast_outer)
+  pts_proj <- island_data |>
+    st_as_sf(coords = c("longitude","latitude"), crs = 4326) |>
+    st_transform(32604) |>
+    mutate(raw_val = .data[[var]],
+           log_val = if (use_log) log1p(raw_val) else raw_val,
+           X = st_coordinates(geometry)[,1],
+           Y = st_coordinates(geometry)[,2]) |>
+    group_by(X, Y) |>
+    summarise(log_val = mean(log_val, na.rm = TRUE),
+              raw_val = mean(raw_val, na.rm = TRUE), .groups = "drop") |>
+    st_as_sf(coords = c("X","Y"), crs = 32604)
+  island_diag <- sqrt(diff(st_bbox(pts_proj)[c("xmin","xmax")])^2 +
+                      diff(st_bbox(pts_proj)[c("ymin","ymax")])^2)
+  min_range <- island_diag / 5
+  v_emp  <- variogram(log_val ~ 1, pts_proj)
+  v_auto <- tryCatch(
+    fit.variogram(v_emp, vgm(var(pts_proj$log_val)*0.8, "Sph",
+                              min_range, var(pts_proj$log_val)*0.2)),
+    error = function(e) NULL)
+  v_fit <- if (!is.null(v_auto) && v_auto$range[2] >= min_range) v_auto else
+    vgm(var(pts_proj$log_val)*0.8, "Sph", min_range, var(pts_proj$log_val)*0.2)
+  sample_cov <- st_buffer(st_union(pts_proj), dist = min_range)
+  grid_pts <- st_make_grid(coast_band, cellsize = res_m, what = "centers") |>
+    st_as_sf() |> st_filter(coast_band) |> st_filter(sample_cov)
+  k_out <- suppressWarnings(krige(log_val ~ 1, pts_proj, grid_pts, model = v_fit, nmax = 40))
+  pred_df <- st_coordinates(k_out) |> as.data.frame() |>
+    mutate(pred = if (use_log) expm1(k_out$var1.pred) else k_out$var1.pred)
+  list(pred_df    = pred_df,
+       land_sf    = st_as_sf(st_sf(geometry = land_union)),
+       coast_bbox = coast_bbox)
+}
+
+# ── maui_validation_map: kriging surface + optional Hui station overlay ───────
+# Pass bg_hui_loc to show Hui triangles (only meaningful for var = "NO3NO2").
+maui_validation_map <- function(data, ahupuaa_sf, var = "NO3NO2",
+                                 bg_hui_loc = NULL, tile_zoom = 11) {
+  meta <- var_meta[[var]]
+  if (is.null(meta)) meta <- list(
+    label = var, limits = NULL, breaks = waiver(), labels = waiver(),
+    trans = "identity", direction = 1
+  )
+
+  kd     <- krige_surface_data(data, "Maui", ahupuaa_sf, var = var)
+  cs_pts <- data |>
+    filter(island == "Maui", !is.na(.data[[var]]), !is.na(latitude), !is.na(longitude)) |>
+    mutate(val = .data[[var]]) |>
+    st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+    st_transform(32604)
+  sat <- get_tiles(
+    st_as_sfc(kd$coast_bbox) |> st_set_crs(32604) |> st_transform(4326),
+    provider = "Esri.WorldImagery", zoom = tile_zoom
+  )
+
+  # Build Hui station sf internally when bg_hui_loc is supplied
+  # Map chem var names to the corresponding Hui column (all in µmol/L)
+  hui_col_map <- c(NO3NO2 = "NNN_umol", PO4 = "Phosphate_umol",
+                   SiO2   = "Silicate_umol", NH3 = "NH4_umol")
+  hui_col  <- hui_col_map[var]
+  show_hui <- !is.null(bg_hui_loc) && !is.na(hui_col) && hui_col %in% names(bg_hui_loc)
+
+  if (show_hui) {
+    hui_post <- bg_hui_loc |>
+      filter(year(Date) == 2026, month(Date) == 3,
+             Date >= as.Date("2026-03-14"), !is.na(.data[[hui_col]])) |>
+      group_by(Station, SiteName, region, Lat, Long) |>
+      summarise(val_umol = mean(.data[[hui_col]], na.rm = TRUE), .groups = "drop")
+    hui_hist_med <- bg_hui_loc |>
+      filter(!is.na(.data[[hui_col]])) |>
+      group_by(Station) |>
+      summarise(med_hist = median(.data[[hui_col]], na.rm = TRUE), .groups = "drop")
+    log_lo   <- log1p(1); log_hi <- log1p(20)
+    grey_pal <- colorRampPalette(c("gray20", "white"))(1000)
+    hui_sf <- bg_hui_loc |>
+      distinct(Station, SiteName, region, Lat, Long) |>
+      filter(!is.na(Lat), !is.na(Long)) |>
+      left_join(hui_post |> select(Station, val_umol), by = "Station") |>
+      left_join(hui_hist_med, by = "Station") |>
+      mutate(
+        fold_change = val_umol / med_hist,
+        fc_safe     = pmin(pmax(replace_na(fold_change, 1), 1), 20),
+        tri_fill    = grey_pal[round((log1p(fc_safe) - log_lo) /
+                                       (log_hi - log_lo) * 999) + 1],
+        tri_fill    = case_when(
+          is.na(fold_change) & !is.na(med_hist) ~ "gray50",
+          is.na(med_hist)                        ~ "gray70",
+          TRUE                                   ~ tri_fill
+        ),
+        fold_change = replace_na(fold_change, 1)
+      ) |>
+      st_as_sf(coords = c("Long","Lat"), crs = 4326) |>
+      st_transform(32604)
+  }
+
+  p <- ggplot() +
+    geom_spatraster_rgb(data = sat) +
+    geom_raster(data = kd$pred_df, aes(x = X, y = Y, fill = pred), alpha = 0.8) +
+    geom_sf(data = kd$land_sf, fill = NA, color = "white", linewidth = 0.35) +
+    geom_sf(data = cs_pts, aes(fill = val),
+            shape = 21, size = 1.0, color = "white", stroke = 0.3, alpha = 0.5)
+
+  # fill scale used only for kriging raster + CS circles (plasma)
+  p <- p +
+    scale_fill_viridis_c(
+      name      = meta$label,
+      option    = "plasma",
+      direction = meta$direction,
+      trans     = meta$trans,
+      limits    = meta$limits,
+      breaks    = meta$breaks,
+      labels    = meta$labels,
+      oob       = scales::squish,
+      na.value  = "transparent",
+      guide     = guide_colorbar(barheight = unit(10, "lines"),
+                                 barwidth  = unit(0.6, "lines"),
+                                 ticks.linewidth = 0.5)
+    )
+
+  if (show_hui) {
+    hui_breaks <- c(1, 3, 5, 10, 20)
+    hui_labels <- c("1", "3", "5", "10", "\u226520")
+    hui_name   <- "Fold-change\n(Mar 2026 /\nall-time median)"
+    p <- p +
+      # Shape 24 (fill + white outline); I() bypasses the plasma fill scale
+      geom_sf(data = hui_sf,
+              aes(size = fold_change, fill = I(tri_fill)),
+              color = "white", shape = 24, stroke = 0.8, alpha = 0.85) +
+      ggrepel::geom_label_repel(
+        data = hui_sf |> filter(fold_change > 15),
+        aes(label    = paste0(SiteName, "\n", round(fold_change, 0), "\u00d7"),
+            geometry = geometry),
+        stat = "sf_coordinates", size = 2.5, fontface = "bold", color = "#B71C1C",
+        fill = alpha("white", 0.85), label.size = 0.2,
+        nudge_y = 4500, min.segment.length = 0
+      ) +
+      scale_size_continuous(
+        name = hui_name, range = c(1.0, 8), limits = c(1, 20),
+        breaks = hui_breaks, labels = hui_labels,
+        guide = guide_legend(
+          theme = theme(legend.key = element_rect(fill = "gray30", color = NA)),
+          override.aes = list(shape = 24, color = "white", stroke = 0.8, alpha = 0.85,
+                              fill = c("#333333", "#6F6F6F", "#929292", "#C6C6C6", "#FFFFFF"))
+        )
+      )
+  }
+
+  hui_note <- if (show_hui) {
+    paste0("    \u25b3 Hui o Ka Wai Ola stations (size = Mar 2026 fold-change above all-time median)\n",
+           "\u25b3 small = no March 2026 sample    \u25b3 gray = insufficient data    ",
+           "Labels: stations with fold-change > 15\u00d7")
+  } else ""
+
+  p +
+    coord_sf(crs = 32604,
+             xlim = c(kd$coast_bbox["xmin"], kd$coast_bbox["xmax"]),
+             ylim = c(kd$coast_bbox["ymin"], kd$coast_bbox["ymax"]),
+             expand = FALSE) +
+    labs(
+  #    subtitle = paste0("\u25cf community science samples (this study)", hui_note),
+      caption  = if (show_hui) "Hui data: Falinski et al. / Hui o Ka Wai Ola." else NULL
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      axis.title    = element_blank(),
+      axis.text     = element_text(size = 7),
+      plot.subtitle = element_text(size = 8.5, color = "gray40"),
+      plot.caption  = element_text(size = 8, color = "gray50", hjust = 0),
+      legend.position = "right"
+    )
+}
 ```
 
 ## O'ahu
@@ -289,8 +556,19 @@ raw_points_map <- function(data, island_name, ahupuaa_sf) {
 ```{r}
 #| label: map-oahu
 #| fig-height: 7
-oahu<-krige_island_map(chem, "O'ahu", ahupuaa_raw)
-oahu
+oahuNN<-krige_island_map(chem, "O'ahu", ahupuaa_raw,var = "NO3NO2" )
+
+oahuPO<-krige_island_map(chem, "O'ahu", ahupuaa_raw,var ="PO4" )
+
+oahuSi<-krige_island_map(chem, "O'ahu", ahupuaa_raw,var ="SiO2" )
+
+oahuNH3<-krige_island_map(chem, "O'ahu", ahupuaa_raw,var ="NH3" )
+
+oahuSal<-krige_island_map(chem, "O'ahu", ahupuaa_raw,var ="Salinity" )
+
+(oahuNN|oahuPO|oahuNH3)/(oahuSi|oahuSal|plot_spacer())
+ggsave(here("output","Oahu_spatial.png"), height = 12, width = 18)
+
 ```
 
 ## Maui
@@ -298,8 +576,19 @@ oahu
 ```{r}
 #| label: map-maui
 #| fig-height: 7
-maui<-krige_island_map(chem, "Maui", ahupuaa_raw)
-maui
+
+MauiNN<-krige_island_map(chem, "Maui", ahupuaa_raw,var = "NO3NO2" )
+
+MauiPO<-krige_island_map(chem, "Maui", ahupuaa_raw,var ="PO4" )
+
+MauiSi<-krige_island_map(chem, "Maui", ahupuaa_raw,var ="SiO2" )
+
+MauiNH3<-krige_island_map(chem, "Maui", ahupuaa_raw,var ="NH3" )
+
+MauiSal<-krige_island_map(chem, "Maui", ahupuaa_raw,var ="Salinity" )
+
+(MauiNN|MauiPO|MauiNH3)/(MauiSi|MauiSal|plot_spacer())
+ggsave(here("output","Maui_spatial.png"), height = 12, width = 18)
 ```
 
 ## Moloka'i
@@ -307,8 +596,21 @@ maui
 ```{r}
 #| label: map-molokai
 #| fig-height: 5
-molokai<-krige_island_map(chem, "Moloka'i", ahupuaa_raw)
-molokai
+
+molokaiNN<-krige_island_map(chem, "Moloka'i", ahupuaa_raw,var = "NO3NO2", tile_zoom = 12 )
+
+molokaiPO<-krige_island_map(chem, "Moloka'i", ahupuaa_raw,var ="PO4" , tile_zoom = 12)
+
+molokaiSi<-krige_island_map(chem, "Moloka'i", ahupuaa_raw,var ="SiO2", tile_zoom = 12 )
+
+molokaiNH3<-krige_island_map(chem, "Moloka'i", ahupuaa_raw,var ="NH3", tile_zoom = 12 )
+
+molokaiSal<-krige_island_map(chem, "Moloka'i", ahupuaa_raw,var ="Salinity", tile_zoom = 12 )
+
+(molokaiNN|molokaiPO|molokaiNH3)/(molokaiSi|molokaiSal|plot_spacer())
+ggsave(here("output","molokai_spatial.png"), height = 12, width = 18)
+
+
 ```
 
 ## Lāna'i
@@ -318,85 +620,38 @@ Only raw sample locations are shown for Lāna'i; the 20 available samples do not
 ```{r}
 #| label: map-lanai
 #| fig-height: 6
-raw_points_map(chem, "L\u0101na\u2018i", ahupuaa_raw)
+lanaiNN<-raw_points_map(chem, "L\u0101na\u2018i", ahupuaa_raw, var = "NO3NO2", tile_zoom = 12)
+
+lanaiPO<-raw_points_map(chem, "L\u0101na\u2018i", ahupuaa_raw, var = "PO4", tile_zoom = 12)
+lanaiSi<-raw_points_map(chem, "L\u0101na\u2018i", ahupuaa_raw, var = "SiO2", tile_zoom = 12)
+lanaiNH3<-raw_points_map(chem, "L\u0101na\u2018i", ahupuaa_raw, var = "NH3", tile_zoom = 12)
+lanaiSal<-raw_points_map(chem, "L\u0101na\u2018i", ahupuaa_raw, var = "Salinity", tile_zoom = 12)
+
+(lanaiNN|lanaiPO|lanaiNH3)/(lanaiSi|lanaiSal|plot_spacer())
+ggsave(here("output","lanai_spatial.png"), height = 12, width = 18)
 ```
+
+
 ```{r}
 #| label: map-all
 #| fig-height: 6
 
-oahu / maui /molokai + plot_layout(guides = "collect")
-ggsave(here("output","maps_all.png"), height = 10, width = 10)
+#oahu / maui /molokai + plot_layout(guides = "collect")
+#ggsave(here("output","maps_all.png"), height = 10, width = 10)
  
 ```
 
 
 # Independent validation: Hui o Ka Wai Ola stations on the Maui kriging surface
 
-The kriging surface is derived entirely from citizen science samples. The Hui o Ka Wai Ola programme provides an independent check: do the long-term fixed stations — sampled with laboratory-grade methods over a decade — agree with where the citizen science kriging shows hotspots? Triangles show Hui station post-storm NO₃+NO₂ on the same color scale as the kriging surface; their colors should match the surface underneath them if the two datasets are consistent.
+The kriging surface is derived entirely from community science samples. The Hui o Ka Wai Ola programme provides an independent check: do the long-term fixed stations — sampled with laboratory-grade methods over a decade — agree with where the community science kriging shows hotspots? Triangles show Hui station post-storm NO₃+NO₂ on the same color scale as the kriging surface; their colors should match the surface underneath them if the two datasets are consistent.
 
 ```{r}
 #| label: maui-validation-map
 #| fig-height: 7
-#| fig-cap: "Maui kriging surface (background, plasma scale) with citizen science samples (circles) and Hui o Ka Wai Ola long-term monitoring stations (triangles) overlaid. Both use the same NO₃+NO₂ color scale. Triangles are colored by post-storm concentration; gray outlines indicate stations with no March 2026 sample. Labels show fold-change above historical station median for the four most anomalous Hui sites — all located where the kriging surface independently shows the strongest hotspot signal on the West Maui leeward coast. The spatial coherence between the citizen science interpolation and the independent monitoring network confirms that the kriging surface accurately captures the storm's chemical footprint."
+#| fig-cap: "Maui kriging surface (background, plasma scale) with community science samples (circles) and Hui o Ka Wai Ola long-term monitoring stations (triangles) overlaid. Both use the same NO₃+NO₂ color scale. Triangles are colored by post-storm concentration; gray outlines indicate stations with no March 2026 sample. Labels show fold-change above historical station median for the four most anomalous Hui sites — all located where the kriging surface independently shows the strongest hotspot signal on the West Maui leeward coast. The spatial coherence between the community science interpolation and the independent monitoring network confirms that the kriging surface accurately captures the storm's chemical footprint."
 
 
-
-# ── krige_surface_data: returns prediction grid + land polygon (not a ggplot) ─
-krige_surface_data <- function(data, island_name, ahupuaa_sf,
-                               res_m = 300, band_km = 3) {
-  island_data <- data |>
-    filter(island == island_name, !is.na(NO3NO2),
-           !is.na(latitude), !is.na(longitude))
-  match_idx   <- normalize_name(ahupuaa_sf$mokupuni) == normalize_name(island_name)
-  land_union  <- ahupuaa_sf[match_idx, ] |>
-    st_transform(32604) |> st_make_valid() |> st_union()
-  land_parts  <- st_cast(land_union, "POLYGON")
-  land_union  <- land_parts[as.numeric(st_area(land_parts)) > 1e6] |> st_union()
-  coast_outer <- st_buffer(land_union, dist = band_km * 1000)
-  coast_band  <- st_difference(coast_outer, land_union)
-  coast_bbox  <- st_bbox(coast_outer)
-  pts_proj <- island_data |>
-    st_as_sf(coords = c("longitude","latitude"), crs = 4326) |>
-    st_transform(32604) |>
-    mutate(log_val = log1p(NO3NO2),
-           X = st_coordinates(geometry)[,1],
-           Y = st_coordinates(geometry)[,2]) |>
-    group_by(X, Y) |>
-    summarise(log_val = mean(log_val, na.rm = TRUE),
-              NO3NO2  = mean(NO3NO2,  na.rm = TRUE), .groups = "drop") |>
-    st_as_sf(coords = c("X","Y"), crs = 32604)
-  island_diag <- sqrt(diff(st_bbox(pts_proj)[c("xmin","xmax")])^2 +
-                      diff(st_bbox(pts_proj)[c("ymin","ymax")])^2)
-  min_range   <- island_diag / 5
-  v_emp  <- variogram(log_val ~ 1, pts_proj)
-  v_auto <- tryCatch(
-    fit.variogram(v_emp, vgm(var(pts_proj$log_val)*0.8, "Sph",
-                              min_range, var(pts_proj$log_val)*0.2)),
-    error = function(e) NULL)
-  v_fit  <- if (!is.null(v_auto) && v_auto$range[2] >= min_range) v_auto else
-    vgm(var(pts_proj$log_val)*0.8, "Sph", min_range, var(pts_proj$log_val)*0.2)
-  sample_cov <- st_buffer(st_union(pts_proj), dist = min_range)
-  grid_pts   <- st_make_grid(coast_band, cellsize = res_m, what = "centers") |>
-    st_as_sf() |> st_filter(coast_band) |> st_filter(sample_cov)
-  k_out   <- suppressWarnings(
-    krige(log_val ~ 1, pts_proj, grid_pts, model = v_fit, nmax = 40))
-  pred_df <- st_coordinates(k_out) |> as.data.frame() |>
-    mutate(NO3NO2_pred = expm1(k_out$var1.pred))
-  list(pred_df = pred_df,
-       land_sf  = st_as_sf(st_sf(geometry = land_union)),
-       coast_bbox = coast_bbox)
-}
-
-# ── Maui kriging ──────────────────────────────────────────────────────────────
-maui_krige_v <- krige_surface_data(chem, "Maui", ahupuaa_raw)
-
-# ── Citizen science Maui points ──────────────────────────────────────────────
-cs_maui <- chem |>
-  filter(island == "Maui", !is.na(NO3NO2), !is.na(latitude), !is.na(longitude)) |>
-  st_as_sf(coords = c("longitude","latitude"), crs = 4326) |>
-  st_transform(32604)
-
-# ── Hui Maui station locations + post-storm NNN ──────────────────────────────
 bg_hui_loc <- bind_rows(
   readxl::read_excel(
     "data/background_nutrients/hui-south-maui-thru-2026-1st-quarter.0.xlsx",
@@ -407,95 +662,46 @@ bg_hui_loc <- bind_rows(
     sheet = "data") |>
     mutate(Turbidity = as.numeric(Turbidity), region = "West Maui")
 ) |>
-  mutate(Date     = as.Date(Date),
-         NNN_umol = as.numeric(NNN) / 14.007)
+  mutate(Date           = as.Date(Date),
+         NNN_umol       = as.numeric(NNN)       / 14.007,   # µg/L N  → µmol/L
+         Phosphate_umol = as.numeric(Phosphate) / 30.974,   # µg/L P  → µmol/L
+         Silicate_umol  = as.numeric(Silicate)  / 28.086,   # µg/L Si → µmol/L
+         NH4_umol       = as.numeric(NH4)        / 14.007)  # µg/L N  → µmol/L
 
-hui_post <- bg_hui_loc |>
-  filter(year(Date) == 2026, month(Date) == 3,
-         Date >= as.Date("2026-03-14"), !is.na(NNN_umol)) |>
-  group_by(Station, SiteName, region, Lat, Long) |>
-  summarise(NNN_umol = mean(NNN_umol, na.rm = TRUE), .groups = "drop")
+HuiNN<-maui_validation_map(chem, ahupuaa_raw, var = "NO3NO2", bg_hui_loc = bg_hui_loc)
 
-hui_hist_med <- bg_hui_loc |>
-  filter(year(Date) < 2026, !is.na(NNN_umol)) |>
-  group_by(Station) |>
-  summarise(med_hist = median(NNN_umol, na.rm = TRUE), .groups = "drop")
+HuiSi<-maui_validation_map(chem, ahupuaa_raw, var = "SiO2", bg_hui_loc = bg_hui_loc)
 
-hui_maui_sf <- bg_hui_loc |>
-  distinct(Station, SiteName, region, Lat, Long) |>
-  filter(!is.na(Lat), !is.na(Long)) |>
-  left_join(hui_post |> select(Station, NNN_umol), by = "Station") |>
-  left_join(hui_hist_med, by = "Station") |>
-  mutate(fold_change = NNN_umol / med_hist) |>
-  st_as_sf(coords = c("Long","Lat"), crs = 4326) |>
-  st_transform(32604)
+HuiNH3<-maui_validation_map(chem, ahupuaa_raw, var = "NH3", bg_hui_loc = bg_hui_loc)
 
-# ── Shared color scale ───────────────────────────────────────────────────────
-reef_breaks_v <- c(0.5, 1, 3, 8, 20)
-reef_colors_v <- c("#1A237E","#1976D2","#FFEE58","#FF8F00","#E53935","#4A0E0E")
+HuiPO<-maui_validation_map(chem, ahupuaa_raw, var = "PO4", bg_hui_loc = bg_hui_loc)
 
-ggplot() +
-  geom_raster(data = maui_krige_v$pred_df,
-              aes(x = X, y = Y, fill = NO3NO2_pred)) +
-  geom_sf(data = maui_krige_v$land_sf,
-          fill = "gray72", color = "gray45", linewidth = 0.35) +
-  # Citizen science: small circles
-  geom_sf(data = cs_maui, aes(fill = NO3NO2),
-          shape = 21, size = 1.6, color = "white", stroke = 0.4, alpha = 0.8) +
-  # Hui stations: triangles (post-storm color OR gray if no data)
-  geom_sf(data = hui_maui_sf |> filter(is.na(NNN_umol)),
-          fill = "gray80", shape = 24, size = 2.4,
-          color = "gray50", stroke = 0.8) +
-  geom_sf(data = hui_maui_sf |> filter(!is.na(NNN_umol)),
-          aes(fill = NNN_umol),
-          shape = 24, size = 3.4, color = "white", stroke = 1.2) +
-  # Labels for 4 most anomalous Hui sites
-  ggrepel::geom_label_repel(
-    data = hui_maui_sf |> filter(!is.na(fold_change), fold_change > 15),
-    aes(label   = paste0(SiteName, "\n", round(fold_change, 0), "\u00d7"),
-        geometry = geometry),
-    stat = "sf_coordinates",
-    size = 2.5, fontface = "bold", color = "#B71C1C",
-    fill = alpha("white", 0.85), label.size = 0.2,
-    nudge_y = 4500, min.segment.length = 0
-  ) +
-  scale_fill_stepsn(
-    colours  = reef_colors_v,
-    breaks   = reef_breaks_v,
-    limits   = c(0, 25),
-    oob      = scales::squish,
-    na.value = "transparent",
-    name     = "NO\u2083+NO\u2082\n(\u03bcmol/L)",
-    guide    = guide_colorsteps(barheight = unit(8,"lines"),
-                                barwidth  = unit(0.7,"lines"),
-                                show.limits = TRUE)
-  ) +
-  coord_sf(crs = 32604,
-           xlim = c(maui_krige_v$coast_bbox["xmin"],
-                    maui_krige_v$coast_bbox["xmax"]),
-           ylim = c(maui_krige_v$coast_bbox["ymin"],
-                    maui_krige_v$coast_bbox["ymax"]),
-           expand = FALSE) +
-  labs(
-    subtitle = paste0(
-      "\u25cf Citizen science samples (this study)    ",
-      "\u25b3 Hui o Ka Wai Ola stations (post-storm, same color scale)\n",
-      "\u25b3 gray = no March 2026 sample    ",
-      "Labels = fold-change above station historical median"
-    ),
-    caption = "Hui data: Falinski et al. / Hui o Ka Wai Ola."
-  ) +
-  theme_minimal(base_size = 11) +
-  theme(
-    axis.title    = element_blank(),
-    axis.text     = element_text(size = 7),
-    plot.subtitle = element_text(size = 8.5, color = "gray40"),
-    plot.caption  = element_text(size = 8, color = "gray50", hjust = 0),
-    legend.position = "right"
-  )
+no_sub  <- theme(plot.subtitle = element_blank(), plot.caption = element_blank())
+no_size <- guides(size = "none")
+
+size_legend <- get_legend(
+  HuiNN + guides(fill = "none") + theme(legend.position = "right")
+)
+
+plot_grid(
+  plot_grid(
+    HuiNN  + no_size + no_sub,
+    HuiPO  + no_size + no_sub,
+    HuiNH3 + no_size + no_sub,
+    HuiSi  + no_size + no_sub,
+    ncol = 2
+  ),
+  size_legend,
+  ncol = 2,
+  rel_widths = c(1, 0.13)
+) |>
+  ggdraw() +
+  theme(plot.background = element_rect(fill = "white", color = NA))
+
+ggsave(here("output","hui_spatial.png"), height = 12, width = 12)
 ```
 
-The Hui station triangles on the West Maui leeward coast — where the kriging surface shows its strongest hotspot — are amber to orange, consistent with 8–43× fold enrichment above their decade-long baselines. The eastern windward coast shows lower concentrations in both the kriging surface and the monitoring stations, confirming the spatial structure of the storm signal. This cross-dataset coherence validates the kriging interpolation and demonstrates that citizen science rapid-response sampling and long-term fixed-site monitoring captured the same biogeochemical event from complementary perspectives.
+The Hui station triangles on the West Maui leeward coast — where the kriging surface shows its strongest hotspot — are amber to orange, consistent with 8–43× fold enrichment above their decade-long baselines. The eastern windward coast shows lower concentrations in both the kriging surface and the monitoring stations, confirming the spatial structure of the storm signal. This cross-dataset coherence validates the kriging interpolation and demonstrates that community science rapid-response sampling and long-term fixed-site monitoring captured the same biogeochemical event from complementary perspectives.
 
 ---
 
@@ -507,9 +713,9 @@ The Kona Low triggered a cascade from rainfall through to coastal chemistry dete
 #| label: storm-cascade-figure
 #| fig-height: 8
 #| fig-width: 10
-#| fig-cap: "Storm cascade linking the March 2026 Kona Low to coastal biogeochemical disruption. (A) Island-mean daily precipitation from NCEP reanalysis. (B) Daily stream discharge at three USGS gauges (Makaha Stream, Oʻahu; Halawa Stream, Molokaʻi; Hanawi Stream, Maui). (C) Mean coastal chlorophyll-a from VIIRS NOAA-20 satellite, smoothed with LOESS (span = 0.2); points show individual day-island means with ≥8 valid pixels. (D) Post-storm nutrient concentrations from citizen science sampling (Mar 28–Apr 8). Dashed red lines indicate coral reef health thresholds. Blue shading marks the Kona Low storm window (Mar 10–25); green shading marks the citizen science sampling window."
+#| fig-cap: "Storm cascade linking the March 2026 Kona Low to coastal biogeochemical disruption. (A) Island-mean daily precipitation from NCEP reanalysis. (B) Daily stream discharge at three USGS gauges (Makaha Stream, Oʻahu; Halawa Stream, Molokaʻi; Hanawi Stream, Maui). (C) Mean coastal chlorophyll-a from VIIRS NOAA-20 satellite, smoothed with LOESS (span = 0.2); points show individual day-island means with ≥8 valid pixels. (D) Post-storm nutrient concentrations from community science sampling (Mar 28–Apr 8). Dashed red lines indicate coral reef health thresholds. Blue shading marks the Kona Low storm window (Mar 10–25); green shading marks the community science sampling window."
 
-library(patchwork)
+
 
 # ── shared constants ────────────────────────────────────────────────
 island_pal <- c("Oʻahu" = "#1565C0", "Maui" = "#2E7D32", "Molokaʻi" = "#E65100")
@@ -574,12 +780,16 @@ pB <- ggplot(dis_df, aes(x = Date, y = Flow, color = island, group = site_no)) +
   windows +
   geom_line(linewidth = 0.65, alpha = 0.9, na.rm = TRUE) +
   scale_color_manual(values = island_pal) +
-  scale_x_date(limits = plot_xlim, expand = c(0, 0)) +
+  scale_x_date(limits = plot_xlim, date_labels = "%b %Y", expand = c(0, 0)) +
   scale_y_log10(breaks = c(1, 10, 100, 1000),
                 labels = scales::label_number(big.mark = ",")) +
   coord_cartesian(ylim = c(0.8, 3000)) +
   labs(y = "Discharge\n(cfs, log)", tag = "B") +
-  ts_base
+  ts_base +
+  theme(
+    axis.text.x  = element_text(size = 8),
+    axis.ticks.x = element_line(linewidth = 0.3)
+  )
 
 # Panel C: Coastal chlorophyll (VIIRS NOAA-20 — cached in hawaii_chlorophyll_cache.rds)
 chla_df <- readRDS("hawaii_chlorophyll_cache.rds") |>
@@ -613,9 +823,9 @@ pC <- ggplot(chla_df, aes(x = date, y = mean_chla, color = island)) +
 
 # Panel D: Post-storm nutrient distributions
 thresh_df <- tibble(
-  nutrient  = factor(c("NO[3]+NO[2]", "PO[4]", "SiO[2]"),
-                     levels = c("NO[3]+NO[2]", "PO[4]", "SiO[2]")),
-  threshold = c(1, 0.1, 5)
+  nutrient  = factor(c("NO[3]+NO[2]", "NH[4]", "PO[4]", "SiO[2]"),
+                     levels = c("NO[3]+NO[2]", "NH[4]", "PO[4]", "SiO[2]")),
+  threshold = c(1, 1, 0.1, 5)
 )
 
 nut_long <- chem |>
@@ -624,12 +834,13 @@ nut_long <- chem |>
     island = recode(island, "O'ahu" = "Oʻahu", "Moloka'i" = "Molokaʻi"),
     island = factor(island, levels = c("Maui", "Molokaʻi", "Oʻahu"))
   ) |>
-  select(island, NO3NO2, PO4, SiO2) |>
-  pivot_longer(c(NO3NO2, PO4, SiO2), names_to = "nutrient", values_to = "conc") |>
+  select(island, NO3NO2, NH3, PO4, SiO2) |>
+  pivot_longer(c(NO3NO2, NH3, PO4, SiO2), names_to = "nutrient", values_to = "conc") |>
   filter(!is.na(conc), conc > 0) |>
   mutate(nutrient = factor(
-    recode(nutrient, "NO3NO2" = "NO[3]+NO[2]", "PO4" = "PO[4]", "SiO2" = "SiO[2]"),
-    levels = c("NO[3]+NO[2]", "PO[4]", "SiO[2]")
+    recode(nutrient, "NO3NO2" = "NO[3]+NO[2]", "NH3" = "NH[4]",
+           "PO4" = "PO[4]", "SiO2" = "SiO[2]"),
+    levels = c("NO[3]+NO[2]", "NH[4]", "PO[4]", "SiO[2]")
   ))
 
 pD <- ggplot(nut_long, aes(x = island, y = conc, fill = island, color = island)) +
@@ -650,7 +861,7 @@ pD <- ggplot(nut_long, aes(x = island, y = conc, fill = island, color = island))
   theme(
     panel.grid.minor   = element_blank(),
     panel.grid.major.x = element_blank(),
-    axis.text.x        = element_text(angle = 30, hjust = 1, size = 8.5),
+    axis.text.x        = element_text(angle = 30, hjust = 1, vjust = 1, size = rel(0.85)),
     strip.text         = element_text(size = 9, face = "bold"),
     legend.position    = "none",
     plot.margin        = margin(4, 8, 4, 2),
@@ -658,14 +869,14 @@ pD <- ggplot(nut_long, aes(x = island, y = conc, fill = island, color = island))
   )
 
 # Assemble
-((pA / pB / pC) | pD) +
+((pA / pB) | pD) +
   plot_layout(widths = c(3, 1.5)) +
   plot_annotation(
     title   = "Kona Low storm cascade: terrestrial runoff disrupts coastal biogeochemistry",
     caption = paste0(
       "Blue shading = Kona Low storm window (Mar 10\u201325).  ",
-      "Green shading = citizen science sampling (Mar 28\u2013Apr 8).\n",
-      "Dashed red lines = reef-health thresholds (NO3+NO2 > 1, PO4 > 0.1, SiO2 > 5 \u03bcmol/L).  ",
+      "Green shading = community science sampling (Mar 28\u2013Apr 8).\n",
+      "Dashed red lines = reef-health thresholds (NO3+NO2 \u2265 1, NH4 \u2265 1, PO4 \u2265 0.1, SiO2 \u2265 5 \u03bcmol/L).  ",
       "Stream gauges: Makaha Str (O\u02BBahu), Halawa Str (Moloka\u02BBi), Hanawi Str (Maui)."
     ),
     theme = theme(
@@ -675,6 +886,8 @@ pD <- ggplot(nut_long, aes(x = island, y = conc, fill = island, color = island))
       plot.margin  = margin(8, 8, 6, 8)
     )
   )
+
+ggsave(here("output","nutrient_gradient.png"))
 ```
 
 # Spatial structure of the biogeochemical signal
@@ -995,8 +1208,6 @@ High-salinity sites (>34.5 PSU) sampled during the same event represent water ma
 #| fig-height: 6.5
 #| fig-cap: "(A) Fold-enrichment of each nutrient at storm-influenced sites (Sal < 32 PSU, n = 241) relative to marine background sites (Sal > 34.5 PSU, n = 217). Points scaled by magnitude; error bars = 95% bootstrap CI on the median ratio (2,000 replicates). SiO₂ shows the largest enrichment (7.6×), consistent with its role as a conservative tracer of rock-weathering runoff from volcanic terrain. NO₃+NO₂ (3.1×) and PO₄ (2.4×) reflect combined agricultural, wastewater, and soil nitrogen/phosphorus flushing. NH₃ shows minimal enrichment (1.4×), consistent with its spatially diffuse remineralization origin rather than a point-source watershed signal. (B) Full concentration distributions by zone, log scale. Dashed red lines = coral reef health thresholds. SiO₂ threshold exceedance rises from 36% (background) to 80% (storm-influenced); NO₃+NO₂ exceedance rises from 37% to 63%."
 
-library(patchwork)
-
 # ── Define salinity zones ────────────────────────────────────────────────────
 sal_zones <- chem |>
   filter(!is.na(Salinity)) |>
@@ -1082,15 +1293,17 @@ nut_long_zones <- sal_zones |>
     zone = factor(zone, levels = names(zone_pal))
   )
 
-thresh_zones <- tibble(
-  nutrient  = factor(nut_labels_ascii, levels = nut_labels_ascii),
-  threshold = thresholds_vec
-)
+bg_means <- bg |>
+  summarise(across(all_of(nutrients_vec), \(x) mean(x, na.rm = TRUE))) |>
+  pivot_longer(everything(), names_to = "nutrient", values_to = "bg_mean") |>
+  mutate(nutrient = factor(recode(nutrient,
+    "NO3NO2" = "NO3+NO2", "PO4" = "PO4", "SiO2" = "SiO2", "NH3" = "NH3"),
+    levels = nut_labels_ascii))
 
 pDist <- ggplot(nut_long_zones,
                 aes(x = zone, y = conc, fill = zone, color = zone)) +
-  geom_hline(data = thresh_zones, aes(yintercept = threshold),
-             linetype = "dashed", color = "firebrick",
+  geom_hline(data = bg_means, aes(yintercept = bg_mean),
+             linetype = "dashed", color = "gray30",
              linewidth = 0.5, inherit.aes = FALSE) +
   geom_violin(alpha = 0.30, linewidth = 0.3, trim = TRUE) +
   geom_boxplot(width = 0.18, outliers = FALSE,
@@ -1110,6 +1323,7 @@ pDist <- ggplot(nut_long_zones,
         plot.tag     = element_text(face = "bold"))
 
 pFold / pDist + plot_layout(heights = c(1, 1.1))
+ggsave(here("output","nutrients_by_salinity.png"), width = 8, height = 6)
 ```
 
 **Key numbers for the abstract:** SiO₂ — the most conservative tracer of rock-weathering runoff — was enriched **7.6× above the marine background** at storm-influenced sites, rising from a median of 3.2 µmol/L in background waters to 24.6 µmol/L in freshwater-diluted waters (p < 0.001, Wilcoxon). NO₃+NO₂ was 3.1× enriched (0.73 → 2.28 µmol/L) and PO₄ was 2.4× enriched (0.13 → 0.33 µmol/L). SiO₂ threshold exceedance rose from 36% (background) to 80% (storm-influenced); NO₃+NO₂ from 37% to 63%.
@@ -1125,157 +1339,195 @@ The Hui o Ka Wai Ola programme has monitored fixed coastal stations in West and 
 **Units note:** Hui nutrients are reported in µg/L. Conversion to µmol/L: NNN ÷ 14.007 (as N); Phosphate ÷ 30.974 (as P); Silicate ÷ 28.086 (as Si).
 
 ```{r}
+#| label: hui-baseline-fn
+#| include: false
+
+# Build a fold-change + forest-plot comparison for any Hui nutrient column.
+#
+# Args:
+#   data      – bg_hui_loc (or any frame with Station, SiteName, region, Date,
+#               and a pre-computed µmol/L column)
+#   conc_col  – column name string, e.g. "NNN_umol", "Phosphate_umol"
+#   x_label   – x-axis label for the forest plot panel
+#   threshold – optional reef-health threshold drawn as a red dashed vline
+#   fold_text_cutoff – fold-change above which bar label flips white/inside
+
+hui_baseline_plot <- function(data,
+                              conc_col,
+                              x_label,
+                              threshold        = NULL,
+                              fold_text_cutoff = 12) {
+
+  # ── Data prep ───────────────────────────────────────────────────────────────
+  historical <- data |>
+    filter(year(Date) < 2026, !is.na(.data[[conc_col]]))
+
+  march <- data |>
+    filter(year(Date) == 2026, month(Date) == 3) |>
+    mutate(timing = if_else(Date < as.Date("2026-03-14"),
+                            "Pre-storm (Mar 10)", "Post-storm (Mar 18\u201331)"))
+
+  baselines <- historical |>
+    group_by(Station, SiteName, region) |>
+    summarise(
+      p05 = quantile(.data[[conc_col]], 0.05, na.rm = TRUE),
+      p25 = quantile(.data[[conc_col]], 0.25, na.rm = TRUE),
+      med = median(.data[[conc_col]],         na.rm = TRUE),
+      p75 = quantile(.data[[conc_col]], 0.75, na.rm = TRUE),
+      p95 = quantile(.data[[conc_col]], 0.95, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  post <- march |>
+    filter(str_detect(timing, "Post"), !is.na(.data[[conc_col]])) |>
+    left_join(baselines, by = c("Station", "SiteName", "region")) |>
+    filter(!is.na(med)) |>
+    mutate(
+      conc        = .data[[conc_col]],
+      fold_change = conc / med,
+      above_p95   = conc > p95,
+      label       = str_trunc(SiteName, 28, ellipsis = "\u2026"),
+      region      = factor(region, levels = c("South Maui", "West Maui"))
+    ) |>
+    arrange(region, desc(fold_change))
+
+  pre <- march |>
+    filter(str_detect(timing, "Pre"), !is.na(.data[[conc_col]])) |>
+    left_join(select(baselines, Station, SiteName, region, p05, p25, med, p75, p95),
+              by = c("Station", "SiteName", "region")) |>
+    mutate(
+      conc   = .data[[conc_col]],
+      label  = str_trunc(SiteName, 28, ellipsis = "\u2026"),
+      region = factor(region, levels = c("South Maui", "West Maui"))
+    )
+
+  # Station order: most anomalous at top within each region
+  lvls      <- post |> arrange(region, fold_change) |> pull(label)
+  post      <- post      |> mutate(label = factor(label, levels = lvls))
+  pre       <- pre       |> mutate(label = factor(label, levels = lvls))
+  baselines <- baselines |>
+    mutate(
+      label  = factor(str_trunc(SiteName, 28, ellipsis = "\u2026"), levels = lvls),
+      region = factor(region, levels = c("South Maui", "West Maui"))
+    )
+
+  # ── Panel A: fold-change bars ────────────────────────────────────────────────
+  pA <- ggplot(post, aes(x = fold_change, y = label, fill = above_p95)) +
+    geom_col(width = 0.65, color = NA) +
+    geom_text(aes(label  = paste0(round(fold_change, 1), "\u00d7"),
+                  hjust  = if_else(fold_change > fold_text_cutoff,  1.1, -0.1),
+                  color  = if_else(fold_change > fold_text_cutoff, "white", "gray25")),
+              size = 2.5, fontface = "bold") +
+    geom_vline(xintercept = 1, color = "gray40", linewidth = 0.5, linetype = "dashed") +
+    scale_fill_manual(values = c("TRUE" = "#E65100", "FALSE" = "#90A4AE"),
+                      labels = c("TRUE" = "Above 95th pct", "FALSE" = "Within range"),
+                      name   = NULL) +
+    scale_color_identity() +
+    scale_x_continuous(expand = expansion(mult = c(0, 0.22)),
+                       breaks = c(1, 5, 10, 20, 40)) +
+    facet_grid(region ~ ., scales = "free_y", space = "free_y", switch = "y") +
+    labs(x = "Fold above historical median", y = NULL, tag = "A") +
+    theme_minimal(base_size = 9.5) +
+    theme(
+      panel.grid.minor   = element_blank(),
+      panel.grid.major.y = element_blank(),
+      strip.text         = element_text(face = "bold", size = 9),
+      strip.placement    = "outside",
+      legend.position    = "top",
+      legend.text        = element_text(size = 8.5),
+      axis.text.y        = element_text(size = 7, lineheight = 0.82),
+      plot.tag           = element_text(face = "bold"),
+      plot.caption       = element_text(size = 8, color = "gray50", hjust = 0)
+    )
+
+  # ── Panel B: forest plot ─────────────────────────────────────────────────────
+  pB <- ggplot() +
+    (if (!is.null(threshold))
+      geom_vline(xintercept = threshold, color = "firebrick",
+                 linetype = "dashed", linewidth = 0.6)) +
+    geom_segment(data = filter(baselines, !is.na(label)),
+                 aes(x = p05, xend = p95, y = label, yend = label),
+                 color = "gray65", linewidth = 0.6, lineend = "round") +
+    geom_segment(data = filter(baselines, !is.na(label)),
+                 aes(x = p25, xend = p75, y = label, yend = label),
+                 color = "gray30", linewidth = 3, lineend = "butt") +
+    geom_point(data = filter(baselines, !is.na(label)),
+               aes(x = med, y = label),
+               color = "white", size = 1.8, shape = 16) +
+#    geom_point(data = filter(pre, !is.na(label)),
+#               aes(x = conc, y = label),
+#               color = "#1565C0", shape = 1, size = 2.2, stroke = 1) +
+    geom_point(data = filter(post, !is.na(label)),
+               aes(x = conc, y = label, size = above_p95),
+               color = "#E65100", shape = 16, alpha = 0.95) +
+    scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2.2), guide = "none") +
+    scale_x_log10(breaks = scales::breaks_log(n = 6),
+                  labels = scales::label_number(drop0trailing = TRUE),
+                  expand = expansion(mult = c(0.02, 0.05))) +
+    facet_grid(region ~ ., scales = "free_y", space = "free_y", switch = "y") +
+    labs(x = x_label, y = NULL, tag = "B") +
+    theme_minimal(base_size = 9.5) +
+    theme(
+      panel.grid.minor   = element_blank(),
+      panel.grid.major.y = element_blank(),
+      strip.text         = element_blank(),
+      axis.text.y        = element_blank(),
+      axis.ticks.y       = element_blank(),
+      plot.tag           = element_text(face = "bold"),
+      plot.margin        = margin(t = 4, r = 8, b = 4, l = 0)
+    )
+
+  # ── Assemble ─────────────────────────────────────────────────────────────────
+  (pA | pB) +
+    plot_layout(widths = c(1.4, 1)) +
+    plot_annotation(
+      caption = "Source: Hui o Ka Wai Ola long-term monitoring programme (Falinski et al.)."
+    )
+}
+```
+
+```{r}
 #| label: hui-baseline-comparison
 #| fig-height: 11
 #| fig-width: 11
 #| fig-cap: "(A) Fold-change in NO₃+NO₂ above each station's historical median, ordered from most to least anomalous. Orange = exceeded the station's 95th historical percentile; gray = within historical range. Mala Ramp (43×) and Camp Olowalu (32×) on West Maui show the most extreme departures from baseline. (B) Actual post-storm concentrations (solid orange) and pre-storm concentrations (open blue) relative to the full historical distribution at each station (gray bar = IQR; thin line = 5th–95th pct; white dot = median; dashed red = reef health threshold 1 µmol/L). Stations in the same order as (A), so the biggest-anomaly sites are always at the top of both panels. Pre-storm samples (Mar 10, blue) sit within the historical range at all stations; post-storm samples (Mar 18–31, orange) extend far beyond it at most sites. Data: Hui o Ka Wai Ola long-term monitoring programme."
 
-library(readxl)
-library(patchwork)
+HuiNN_raw<-hui_baseline_plot(bg_hui_loc,
+                  conc_col  = "NNN_umol",
+                  x_label   = "NO\u2083+NO\u2082 (\u03bcmol/L, log)",
+                  threshold = NA)
 
-# ── Load and convert units ────────────────────────────────────────────────────
-bg_hui <- bind_rows(
-  read_excel("data/background_nutrients/hui-south-maui-thru-2026-1st-quarter.0.xlsx",
-             sheet = "data") |>
-    mutate(Turbidity = as.numeric(Turbidity), region = "South Maui"),
-  read_excel("data/background_nutrients/hui-west-maui-thru-2026-1st-quarter.0.xlsx",
-             sheet = "data") |>
-    mutate(Turbidity = as.numeric(Turbidity), region = "West Maui")
-) |>
-  mutate(
-    Date     = as.Date(Date),
-    NNN_umol = as.numeric(NNN) / 14.007
-  )
+HuiPO_raw<-hui_baseline_plot(bg_hui_loc,
+                  conc_col  = "Phosphate_umol",
+                  x_label   = "PO\u2084 (\u03bcmol/L, log)",
+                  threshold = NA)
 
-historical_hui <- bg_hui |> filter(year(Date) < 2026, !is.na(NNN_umol))
-march_hui      <- bg_hui |>
-  filter(year(Date) == 2026, month(Date) == 3) |>
-  mutate(timing = if_else(Date < as.Date("2026-03-14"),
-                          "Pre-storm (Mar 10)", "Post-storm (Mar 18\u201331)"))
+HuiSi_raw<-hui_baseline_plot(bg_hui_loc,
+                  conc_col  = "Silicate_umol",
+                  x_label   = "SiO\u2082 (\u03bcmol/L, log)",
+                  threshold = NA)
 
-# ── Per-station historical range ─────────────────────────────────────────────
-baselines_h <- historical_hui |>
-  group_by(Station, SiteName, region) |>
-  summarise(
-    p05 = quantile(NNN_umol, 0.05, na.rm = TRUE),
-    p25 = quantile(NNN_umol, 0.25, na.rm = TRUE),
-    med = median(NNN_umol,         na.rm = TRUE),
-    p75 = quantile(NNN_umol, 0.75, na.rm = TRUE),
-    p95 = quantile(NNN_umol, 0.95, na.rm = TRUE),
-    .groups = "drop"
-  )
+HuiNH3_raw<-hui_baseline_plot(bg_hui_loc,
+                  conc_col  = "NH4_umol",
+                  x_label   = "NH\u2083 (\u03bcmol/L, log)",
+                  threshold = NA)
 
-# ── Post-storm fold-change; order stations by fold-change (most anomalous top) ─
-post_h <- march_hui |>
-  filter(str_detect(timing, "Post"), !is.na(NNN_umol)) |>
-  left_join(baselines_h, by = c("Station","SiteName","region")) |>
-  filter(!is.na(med)) |>
-  mutate(
-    fold_change = NNN_umol / med,
-    above_p95   = NNN_umol > p95,
-    label       = paste0(str_trunc(SiteName, 22, ellipsis = "\u2026"),
-                         "\n(", Station, ")"),
-    region      = factor(region, levels = c("South Maui","West Maui"))
-  ) |>
-  arrange(region, desc(fold_change))
+HuiNN|HuiNN_raw
+ggsave(here("output","allNN_HuiData.png"), width = 16, height = 12)
 
-pre_h <- march_hui |>
-  filter(str_detect(timing, "Pre"), !is.na(NNN_umol)) |>
-  left_join(baselines_h |> select(Station, SiteName, region, p05, p25, med, p75, p95),
-            by = c("Station","SiteName","region")) |>
-  mutate(
-    label  = paste0(str_trunc(SiteName, 22, ellipsis = "\u2026"), "\n(", Station, ")"),
-    region = factor(region, levels = c("South Maui","West Maui"))
-  )
+HuiPO|HuiPO_raw
+ggsave(here("output","allPO_HuiData.png"), width = 16, height = 12)
 
-# Shared station label order (most anomalous at top within each region)
-site_lvls <- post_h |> arrange(region, fold_change) |> pull(label)
-post_h      <- post_h      |> mutate(label = factor(label, levels = site_lvls))
-pre_h       <- pre_h       |> mutate(label = factor(label, levels = site_lvls))
-baselines_h <- baselines_h |>
-  mutate(
-    label  = paste0(str_trunc(SiteName, 22, ellipsis = "\u2026"), "\n(", Station, ")"),
-    label  = factor(label, levels = site_lvls),
-    region = factor(region, levels = c("South Maui","West Maui"))
-  )
+HuiSi|HuiSi_raw
+ggsave(here("output","allSi_HuiData.png"), width = 16, height = 12)
 
-# ── Panel A: fold-change bar ──────────────────────────────────────────────────
-pA_hui <- ggplot(post_h,
-                 aes(x = fold_change, y = label, fill = above_p95)) +
-  geom_col(width = 0.65, color = NA) +
-  geom_text(aes(label   = paste0(round(fold_change, 1), "\u00d7"),
-                hjust   = if_else(fold_change > 12, 1.1, -0.1),
-                color   = if_else(fold_change > 12, "white", "gray25")),
-            size = 2.5, fontface = "bold") +
-  geom_vline(xintercept = 1, color = "gray40", linewidth = 0.5, linetype = "dashed") +
-  scale_fill_manual(values = c("TRUE" = "#E65100", "FALSE" = "#90A4AE"),
-                    labels = c("TRUE" = "Above 95th pct", "FALSE" = "Within range"),
-                    name   = NULL) +
-  scale_color_identity() +
-  scale_x_continuous(expand = expansion(mult = c(0, 0.22)),
-                     breaks = c(1, 5, 10, 20, 40)) +
-  facet_grid(region ~ ., scales = "free_y", space = "free_y", switch = "y") +
-  labs(x = "Fold above historical median", y = NULL, tag = "A") +
-  theme_minimal(base_size = 9.5) +
-  theme(
-    panel.grid.minor   = element_blank(),
-    panel.grid.major.y = element_blank(),
-    strip.text    = element_text(face = "bold", size = 9),
-    strip.placement    = "outside",
-    legend.position    = "top",
-    legend.text        = element_text(size = 8.5),
-    axis.text.y        = element_text(size = 7, lineheight = 0.82),
-    plot.tag           = element_text(face = "bold")
-  )
+HuiNH3|HuiNH3_raw
+ggsave(here("output","allNH3_HuiData.png"), width = 16, height = 12)
 
-# ── Panel B: forest plot ──────────────────────────────────────────────────────
-pB_hui <- ggplot() +
-  geom_vline(xintercept = 1, color = "firebrick",
-             linetype = "dashed", linewidth = 0.6) +
-  geom_segment(data = baselines_h |> filter(!is.na(label)),
-               aes(x = p05, xend = p95, y = label, yend = label),
-               color = "gray65", linewidth = 0.6, lineend = "round") +
-  geom_segment(data = baselines_h |> filter(!is.na(label)),
-               aes(x = p25, xend = p75, y = label, yend = label),
-               color = "gray30", linewidth = 3, lineend = "butt") +
-  geom_point(data = baselines_h |> filter(!is.na(label)),
-             aes(x = med, y = label),
-             color = "white", size = 1.8, shape = 16) +
-  geom_point(data = pre_h  |> filter(!is.na(label)),
-             aes(x = NNN_umol, y = label),
-             color = "#1565C0", shape = 1, size = 2.2, stroke = 1) +
-  geom_point(data = post_h |> filter(!is.na(label)),
-             aes(x = NNN_umol, y = label, size = above_p95),
-             color = "#E65100", shape = 16, alpha = 0.95) +
-  scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2.2), guide = "none") +
-  scale_x_log10(breaks = c(0.1, 0.3, 1, 3, 10, 30),
-                labels = c("0.1","0.3","1","3","10","30"),
-                expand = expansion(mult = c(0.02, 0.05))) +
-  facet_grid(region ~ ., scales = "free_y", space = "free_y", switch = "y") +
-  labs(x = "NO3+NO2 (\u03bcmol/L, log)", y = NULL, tag = "B") +
-  theme_minimal(base_size = 9.5) +
-  theme(
-    panel.grid.minor   = element_blank(),
-    panel.grid.major.y = element_blank(),
-    strip.text         = element_blank(),
-    axis.text.y        = element_blank(),
-    axis.ticks.y       = element_blank(),
-    plot.tag           = element_text(face = "bold"),
-    plot.margin        = margin(t = 4, r = 8, b = 4, l = 0)
-  )
-
-# ── Assemble ─────────────────────────────────────────────────────────────────
-((pA_hui | pB_hui) +
-  plot_layout(widths = c(1.4, 1), guides = "collect") &
-  theme(legend.position = "top")) +
-  plot_annotation(
-    caption = "Source: Hui o Ka Wai Ola long-term monitoring programme (Falinski et al.).",
-    theme   = theme(plot.caption = element_text(size = 8, color = "gray50", hjust = 0))
-  )
 ```
 
-At 40 long-term Hui o Ka Wai Ola stations sampled 4–6 days after the storm, post-storm NO₃+NO₂ sat clearly outside the historical range at most sites: **14 of 40 stations exceeded their 95th historical percentile** and 8 reached all-time records. Pre-storm samples (Mar 10) were indistinguishable from typical historical conditions. The median post-storm concentration was 2.1× above the station historical median (maximum 43×). These results confirm — independently of the citizen science dataset — that the Kona Low elevated coastal nutrients to historically anomalous levels across a decade of fixed-site monitoring spanning both the leeward (West Maui) and kona (South Maui) coastlines.
-
+ratios <- chem |>
+  filter(!is.na(island), NO3NO2 > 0, PO4 > 0, SiO2 > 0) |>
 ---
 
 # Stoichiometric fingerprints — Claim 2
@@ -1991,14 +2243,14 @@ The positive relationship between cesspool density and coastal NO₃+NO₂ (R² 
 
 ---
 
-# Citizen science detection advantage — Claim 5
+# community science detection advantage — Claim 5
 
 We queried the EPA Water Quality Portal (WQP) for all Hawaii coastal nutrient records across 11 years (2015–2025). The last WQP record predates our storm by three months (December 18, 2025); zero records exist from the storm window or the sampling period that followed.
 
 ```{r}
 #| label: detection-gap-figure
 #| fig-height: 5
-#| fig-cap: "Monthly sample counts for conventional monitoring programs (EPA Water Quality Portal, all Hawaii programs, 2015–2025; red) and this citizen science study (blue). Conventional monitoring averaged ~120 samples per month across Hawaii but dropped to zero in 2026, three months before the Kona Low. The citizen science deployment collected 746 samples in six weeks (March–April 2026), representing more than four times the typical monthly conventional monitoring rate and covering the storm's chemical footprint at a spatial density conventional programs cannot sustain."
+#| fig-cap: "Monthly sample counts for conventional monitoring programs (EPA Water Quality Portal, all Hawaii programs, 2015–2025; red) and this community science study (blue). Conventional monitoring averaged ~120 samples per month across Hawaii but dropped to zero in 2026, three months before the Kona Low. The community science deployment collected 746 samples in six weeks (March–April 2026), representing more than four times the typical monthly conventional monitoring rate and covering the storm's chemical footprint at a spatial density conventional programs cannot sustain."
 
 wqp_monthly_p <- read_csv("data/clean_chemdata.csv", show_col_types = FALSE) |>
   # placeholder — actual wqp_hist loaded from cache below
@@ -2018,7 +2270,7 @@ cs_monthly_p <- read_csv("data/clean_chemdata.csv", show_col_types = FALSE) |>
   filter(!is.na(collected_hst)) |>
   mutate(month = lubridate::floor_date(as.Date(collected_hst), "month")) |>
   count(month) |>
-  mutate(source = "Citizen science\n(this study)")
+  mutate(source = "community science\n(this study)")
 
 gap_rows <- tibble(
   month  = seq(as.Date("2026-01-01"), as.Date("2026-06-01"), by = "month"),
@@ -2028,13 +2280,13 @@ gap_rows <- tibble(
 
 source_pal <- c(
   "Conventional monitoring\n(WQP, all programs)" = "#B71C1C",
-  "Citizen science\n(this study)"                = "#1565C0"
+  "community science\n(this study)"                = "#1565C0"
 )
 
 bind_rows(wqp_monthly_p, gap_rows, cs_monthly_p) |>
   mutate(source = factor(source,
     levels = c("Conventional monitoring\n(WQP, all programs)",
-               "Citizen science\n(this study)"))) |>
+               "community science\n(this study)"))) |>
   ggplot(aes(x = month, y = n, fill = source)) +
   annotate("rect",
            xmin = as.Date("2026-03-10"), xmax = as.Date("2026-03-25"),
@@ -2055,7 +2307,7 @@ bind_rows(wqp_monthly_p, gap_rows, cs_monthly_p) |>
         strip.text = element_text(face = "bold", size = 10))
 ```
 
-The `r scales::comma(nrow(wqp_hist_p))` WQP records from `r n_distinct(wqp_hist_p$MonitoringLocationIdentifier)` conventional monitoring sites across 11 years produced a steady background of ~120 samples per month — but entirely missed the storm. Our citizen science study collected `r nrow(chem)` samples in six weeks, concentrated precisely at the time and place of the disturbance. This detection advantage is structural, not incidental: conventional programs sample on fixed schedules optimized for chronic conditions, not acute episodic events.
+The `r scales::comma(nrow(wqp_hist_p))` WQP records from `r n_distinct(wqp_hist_p$MonitoringLocationIdentifier)` conventional monitoring sites across 11 years produced a steady background of ~120 samples per month — but entirely missed the storm. Our community science study collected `r nrow(chem)` samples in six weeks, concentrated precisely at the time and place of the disturbance. This detection advantage is structural, not incidental: conventional programs sample on fixed schedules optimized for chronic conditions, not acute episodic events.
 
 ---
 
@@ -2372,7 +2624,7 @@ lm(log1p(mean_NO3NO2) ~ log1p(cesspool_density_per_km2), data = ahupuaa_nutrient
 
 ---
 
-## Claim 5 · Citizen science enabled detection
+## Claim 5 · community science enabled detection
 
 **Goal:** Quantify the monitoring gap — show that conventional water quality monitoring in Hawaiʻi would not have captured this event at the spatial or temporal resolution needed. Two lines of evidence: (1) spatial coverage comparison, (2) sampling timing relative to storm.
 
@@ -2414,7 +2666,7 @@ wqp_hi |>
 ```{r}
 #| label: claim5-coverage-map
 #| eval: false
-# Map conventional monitoring sites (WQP) vs citizen science sites (chem)
+# Map conventional monitoring sites (WQP) vs community science sites (chem)
 # to visualize the spatial coverage gap.
 # Expects: wqp_hi cached above
 
@@ -2429,11 +2681,11 @@ wqp_sf <- wqp_hi |>
   sf::st_as_sf(coords = c("LongitudeMeasure", "LatitudeMeasure"), crs = 4326) |>
   mutate(source = "Conventional monitoring")
 
-# Citizen science sites as sf
+# community science sites as sf
 cs_sf <- chem |>
   filter(!is.na(longitude), !is.na(latitude)) |>
   sf::st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
-  mutate(source = "Citizen science (this study)")
+  mutate(source = "community science (this study)")
 
 
 # Hawaii land for background
@@ -2451,13 +2703,13 @@ bind_rows(
   geom_sf(data = hi_land, fill = "gray80", color = "gray50", linewidth = 0.3) +
   geom_sf(aes(color = source, size = source), alpha = 0.7) +
   scale_color_manual(values = c("Conventional monitoring"   = "firebrick",
-                                "Citizen science (this study)" = "#1565C0")) +
+                                "community science (this study)" = "#1565C0")) +
   scale_size_manual(values  = c("Conventional monitoring"   = 2.5,
-                                "Citizen science (this study)" = 1.0)) +
+                                "community science (this study)" = 1.0)) +
   facet_wrap(~source) +
   theme_minimal() +
   theme(legend.position = "none", axis.text = element_blank()) +
-  labs(title = "Spatial monitoring coverage: conventional vs. citizen science")
+  labs(title = "Spatial monitoring coverage: conventional vs. community science")
 ```
 
 ---
