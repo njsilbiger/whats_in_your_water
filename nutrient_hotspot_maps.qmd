@@ -1444,7 +1444,7 @@ hui_baseline_plot <- function(data,
     ) |>
       sf::st_drop_geometry() |>
       filter(!is.na(cs_val)) |>
-      group_by(label) |>
+      group_by(label, region) |>
       summarise(cs_val = mean(cs_val, na.rm = TRUE), n_cs = n(), .groups = "drop")
   }
 
@@ -1480,14 +1480,14 @@ hui_baseline_plot <- function(data,
   # ── Panel B: build legend values conditionally on cs availability ─────────────
   legend_vals <- c("Historical median" = "white",
                    "Hui post-storm"    = "#E65100")
-  legend_ov   <- list(size   = c(2,       3.5),
+  legend_ov   <- list(size   = c(2,       3),
                       shape  = c(21,      21),
                       color  = c("gray40", "#B04000"),
                       stroke = c(0.5,     0.5),
                       alpha  = c(1,       0.95))
   if (show_cs && nrow(cs_matched) > 0) {
     legend_vals["Community science (≤100 m)"] <- "#AB47BC"
-    legend_ov$size   <- c(legend_ov$size,   4)
+    legend_ov$size   <- c(legend_ov$size,   3)
     legend_ov$shape  <- c(legend_ov$shape,  21)
     legend_ov$color  <- c(legend_ov$color,  "#4A148C")
     legend_ov$stroke <- c(legend_ov$stroke, 1.2)
@@ -1508,18 +1508,17 @@ hui_baseline_plot <- function(data,
     geom_point(data = filter(baselines, !is.na(label)),
                aes(x = med, y = label, fill = "Historical median"),
                color = "gray40", size = 1.8, shape = 21, stroke = 0.5) +
-    geom_point(data = filter(post, !is.na(label)),
-               aes(x = conc, y = label, size = above_p95, fill = "Hui post-storm"),
-               color = "#B04000", shape = 21, stroke = 0.5, alpha = 0.95) +
     (if (show_cs && nrow(cs_matched) > 0)
       geom_point(data = cs_matched,
                  aes(x = cs_val, y = label, fill = "Community science (≤100 m)"),
-                 shape = 21, size = 4, stroke = 1.2,
+                 shape = 21, size = 2, stroke = 1.2,
                  color = "#4A148C", alpha = 0.85)) +
+    geom_point(data = filter(post, !is.na(label)),
+               aes(x = conc, y = label, fill = "Hui post-storm"),
+               color = "#B04000", shape = 21, size = 2, stroke = 0.5, alpha = 0.95) +
     scale_fill_manual(name   = NULL,
                       values = legend_vals,
                       guide  = guide_legend(override.aes = legend_ov)) +
-    scale_size_manual(values = c("TRUE" = 3.5, "FALSE" = 2.2), guide = "none") +
     scale_x_log10(breaks = scales::breaks_log(n = 6),
                   labels = scales::label_number(drop0trailing = TRUE),
                   expand = expansion(mult = c(0.02, 0.05))) +
@@ -1534,17 +1533,19 @@ hui_baseline_plot <- function(data,
       axis.ticks.y       = element_blank(),
       plot.tag           = element_text(face = "bold"),
       plot.margin        = margin(t = 4, r = 8, b = 4, l = 0),
-      legend.position    = "bottom",
-      legend.text        = element_text(size = 7.5),
-      legend.key.size    = unit(0.55, "lines")
+      legend.position      = "bottom",
+      legend.justification = "left",
+      legend.text          = element_text(size = 7.5),
+      legend.key.size      = unit(0.55, "lines")
     )
 
   # ── Assemble ─────────────────────────────────────────────────────────────────
   (pA | pB) +
-    plot_layout(widths = c(1.4, 1)) +
+    plot_layout(widths = c(1.4, 1), guides = "collect") +
     plot_annotation(
       caption = "Source: Hui o Ka Wai Ola long-term monitoring programme (Falinski et al.)."
-    )
+    ) &
+    theme(legend.position = "bottom", legend.justification = "center")
 }
 ```
 
@@ -1579,16 +1580,16 @@ HuiNH3_raw<-hui_baseline_plot(bg_hui_loc,
                   cs_data   = chem)
 
 HuiNN|HuiNN_raw
-ggsave(here("output","allNN_HuiData.png"), width = 16, height = 12)
+ggsave(here("output","allNN_HuiData.png"), width = 16, height = 8)
 
 HuiPO|HuiPO_raw
-ggsave(here("output","allPO_HuiData.png"), width = 16, height = 12)
+ggsave(here("output","allPO_HuiData.png"), width = 16, height = 8)
 
 HuiSi|HuiSi_raw
-ggsave(here("output","allSi_HuiData.png"), width = 16, height = 12)
+ggsave(here("output","allSi_HuiData.png"), width = 16, height = 8)
 
 HuiNH3|HuiNH3_raw
-ggsave(here("output","allNH3_HuiData.png"), width = 16, height = 12)
+ggsave(here("output","allNH3_HuiData.png"), width = 16, height = 8)
 
 ```
 
@@ -1633,7 +1634,7 @@ matched_pairs <- st_join(
   st_drop_geometry() |>
   filter(!is.na(sample_id)) |>
   mutate(
-    date_diff = as.integer(cs_date - Date),  # positive = CS collected after Hui
+    date_diff = as.integer(cs_date - Date),  # positive = WIYW collected after Hui
     dist_label = "≤ 100 m"
   )
 
@@ -1685,13 +1686,14 @@ cor_labels <- pairs_long |>
 cor_labeller <- setNames(cor_labels$label, cor_labels$nutrient)
 
 # ── Plot ──────────────────────────────────────────────────────────────────────
-ggplot(pairs_long, aes(x = hui_val, y = cs_val, color = date_diff)) +
+ggplot(pairs_long |>
+  filter(hui_val > 0, cs_val > 0), aes(x = hui_val, y = cs_val, color = date_diff)) +
   geom_abline(slope = 1, intercept = 0,
               linetype = "dashed", color = "gray50", linewidth = 0.5) +
   geom_point(size = 2.5, alpha = 0.85) +
   scale_color_gradient2(
     low = "#1565C0", mid = "#FFA726", high = "#B71C1C", midpoint = 7,
-    name = "Days CS\nafter Hui",
+    name = "Days WIYW\nafter Hui",
     guide = guide_colorbar(barheight = unit(8, "lines"), barwidth = unit(0.5, "lines"))
   ) +
   scale_x_log10(labels = scales::label_number(drop0trailing = TRUE)) +
@@ -1700,7 +1702,8 @@ ggplot(pairs_long, aes(x = hui_val, y = cs_val, color = date_diff)) +
              labeller = labeller(nutrient = cor_labeller)) +
   labs(
     x = "Hui o Ka Wai Ola (\u03bcmol/L, log)",
-    y = "Community science (\u03bcmol/L, log)"
+    y = "What's in your water (\u03bcmol/L, log)",
+    caption = str_wrap("Direct comparison of post-storm WIYW community science NO₃+NO₂ (y) against Hui o Ka Wai Ola NNN (x) at the same locations (within 100 m). Each point is one Hui station × CS sample pair. The dashed line is 1:1 agreement; colour shows the gap in days between the two sample dates (positive = WIYW collected after Hui). Only Maui stations are shown, as Hui monitoring is restricted to Maui", width = 120)
   ) +
   theme_minimal(base_size = 11) +
   theme(
@@ -1708,10 +1711,10 @@ ggplot(pairs_long, aes(x = hui_val, y = cs_val, color = date_diff)) +
     strip.text         = element_text(face = "bold", size = 9.5),
     plot.caption       = element_text(size = 8, color = "gray50", hjust = 0)
   )
+ggsave(here("output","comparisonHui_WIYW.png"))
 ```
 
-ratios <- chem |>
-  filter(!is.na(island), NO3NO2 > 0, PO4 > 0, SiO2 > 0) |>
+
 ---
 
 # Stoichiometric fingerprints — Claim 2
