@@ -1968,19 +1968,29 @@ set.seed(8341)
 pam4 <- pam(clust_mat, k = 3, pamonce = 5)
 
 # Reorder clusters so that: 1 = Marine bg (lowest), 2 = Nearshore (middle), 3 = Runoff (highest)
+# First, add temporary cluster assignments from PAM
+chem_clust <- chem_clust |>
+  mutate(temp_cluster = pam4$clustering)
+
+# Calculate medians for each PAM cluster
 cluster_medians <- chem_clust |>
-  mutate(cluster = pam4$clustering) |>
-  group_by(cluster) |>
+  group_by(temp_cluster) |>
   summarise(median_NO3 = median(NO3NO2, na.rm = TRUE), .groups = "drop") |>
   arrange(median_NO3) |>
   mutate(new_cluster = row_number())
 
 # Create mapping from old cluster numbers to new ones
-cluster_remap <- setNames(cluster_medians$new_cluster, cluster_medians$cluster)
+cluster_remap <- setNames(cluster_medians$new_cluster, cluster_medians$temp_cluster)
+
+# Apply the remapping to both chem_clust and pam4
+chem_clust <- chem_clust |>
+  mutate(cluster = as.numeric(cluster_remap[temp_cluster])) |>
+  select(-temp_cluster)
+
 pam4$clustering <- as.numeric(cluster_remap[pam4$clustering])
 
-cluster_labels <- c("1" = "Marine background", "3" = "Nearshore enriched",
-                    "2" = "Runoff-dominated")
+cluster_labels <- c("1" = "Marine background", "2" = "Runoff-dominated",
+                    "3" = "Nearshore enriched")
 cluster_pal_named <- c(
   "Marine background"  = "#1565C0", "Nearshore enriched" = "#2E7D32",
   "Runoff-dominated"   = "#E65100"
