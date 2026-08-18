@@ -1020,12 +1020,12 @@ Silica (SiO₂) shows the tightest geographic clustering on Maui (Moran's I = 0.
 
 # Storm context: rainfall return period
 
-Was this storm unusual? This matters enormously for interpretation: if the March 2026 Kona Low was a once-in-a-generation event, the chemical impacts it caused might be rare too. If it was an ordinary storm, those same impacts are happening every year — they've just never been measured at this scale before.
+Was this storm unusual? If the March 2026 Kona Low was a once-in-a-generation event, the chemical impacts it caused might be rare too. If it was an ordinary storm, those same impacts are happening every year — they've just never been measured at this scale before.
 
 ```{r}
 #| label: storm-return-period
 #| eval: true
-#| echo: false
+#| include: false
 #| fig-height: 7
 #| fig-cap: "Was the March 2026 Kona Low unusual? No. Boxes show the range of March monthly rainfall across years (2013–2025) from satellite-based rainfall estimates (CHIRPS). Diamonds show March 2026 — estimated from atmospheric model data (NCEP) and scaled to match the CHIRPS units. On all three islands, 2026 fell close to or slightly above the historical median: about half of past March events were wetter. Individual years are shown as dots (filled = wetter than 2026, open = drier)."
 
@@ -2325,12 +2325,10 @@ pSilA_s | pSilB_s
 
 ---
 
-# Cluster–kriging overlay: where do fingerprints grade into hotspots?
-
-The interpolated nitrogen map gives a continuous picture across the coast; the cluster labels give each site a chemical identity. Overlaying them shows whether the water types line up with the spatial hotspots — or whether the chemistry and geography tell different stories.
 
 ```{r}
 #| label: krige-cluster-overlay
+#| include: false
 #| fig-height: 6.5
 #| fig-cap: "The nitrogen hotspot map with each sample's water type shown as a coloured circle. Background colour (yellow-green = high, dark purple = low) is the interpolated nitrogen map from community science samples. Circle colour shows which of the three water types that site belongs to. The two line up: clean marine-background sites (blue) sit in the dark, low-nitrogen margins; runoff-dominated (orange) sites cluster in the brightest, highest-nitrogen patches, especially on Maui's north coast. The transition group (nearshore enriched, green) forms a belt between the hotspot core and the clean outer water."
 
@@ -2386,7 +2384,7 @@ chem_clust_overlay <- chem |>
 set.seed(8341)
 pam4_ov <- pam(
   chem_clust_overlay |> select(Salinity, log_NO3NO2, log_PO4, log_SiO2) |> scale(),
-  k = 4, pamonce = 5
+  k = 3, pamonce = 5
 )
 chem_clust_overlay <- chem_clust_overlay |>
   mutate(cluster       = factor(pam4_ov$clustering),
@@ -3347,6 +3345,7 @@ hi_gauges |>
 ```{r}
 #| label: claim3-discharge-pull
 #| eval: false
+#| include: false
 # Pull daily discharge for key gauges, Jan–Apr 2026.
 # Known active Oahu gauges (verify currency with whatNWISsites above):
 #   16211600 — Manoa Stream at Manoa   (urban/residential watershed)
@@ -3386,6 +3385,7 @@ discharge_raw |>
 ```{r}
 #| label: claim3-nwis-wq-note
 #| eval: false
+#| include: false
 # NOTE (July 2026): The USGS NWIS discrete water-quality service ("qw") has been
 # retired. readNWISqw() and readNWISdata(service="qw") no longer work.
 # Use the Water Quality Portal instead — query USGS sites by site number via WQP:
@@ -3401,6 +3401,7 @@ discharge_raw |>
 ```{r}
 #| label: claim3-discharge-vs-nutrients
 #| eval: false
+#| include: false
 # After pulling discharge: compare peak storm discharge per watershed
 # to mean nutrient concentration at sampling sites within that watershed.
 # Requires joining gauge sites to ahupuaʻa assignments (by spatial proximity).
@@ -3435,6 +3436,7 @@ peak_q <- discharge |>
 ```{r}
 #| label: claim4-nhd-download
 #| eval: false
+#| include: false
 # Download NHDPlus (National Hydrography Dataset) for Hawaii.
 # Use to compute: stream density (km/km²) per ahupuaʻa watershed.
 # Dense stream networks = more efficient nutrient routing to coast.
@@ -3461,6 +3463,7 @@ saveRDS(flowlines, "data/nhd_oahu_flowlines.rds")
 ```{r}
 #| label: claim4-landscape-regression
 #| eval: false
+#| include: false
 # Regression: mean NO3+NO2 per ahupuaʻa ~ cesspool_density + pct_impervious
 # + stream_density + watershed_area
 # Requires: ccap_by_ahupuaa.csv (from Claim 2) and nhd stream density (above)
@@ -3503,6 +3506,7 @@ lm(log1p(mean_NO3NO2) ~ log1p(cesspool_density_per_km2), data = ahupuaa_nutrient
 ```{r}
 #| label: claim5-wqp-query
 #| eval: false
+#| include: false
 # Query all Hawaii coastal nutrient samples from WQP in the 60 days
 # surrounding the storm. Compare: how many samples? At how many unique sites?
 # How close to shore? How soon after the storm?
@@ -3532,6 +3536,7 @@ wqp_hi |>
 ```{r}
 #| label: claim5-coverage-map
 #| eval: false
+#| include: false
 # Map conventional monitoring sites (WQP) vs community science sites (chem)
 # to visualize the spatial coverage gap.
 # Expects: wqp_hi cached above
