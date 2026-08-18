@@ -1,6 +1,6 @@
 ---
 title: "Nutrient hotspot maps — post-Kona low storm"
-subtitle: "Spatial interpolation of NO₃+NO₂ concentrations across Hawaiʻi, March–April 2026"
+subtitle: "Spatial interpolation of nutrient concentrations across Hawaiʻi, March–April 2026"
 author: "Silbiger, N., Kealoha, A., & Kahanamoku, S."
 date: today
 format:
@@ -49,6 +49,7 @@ library(exactextractr)
 library(cowplot)
 library(ggrepel)
 library(ggdendro)
+library(kableExtra)
 
 # Clustering & spatial statistics
 library(cluster)
@@ -65,7 +66,7 @@ library(pdp)
 
 # Introduction
 
-When a Kona Low storm hits Hawaiʻi, heavy rain washes fertilizer, cesspool nutrients, and volcanic soil off the land and into the ocean. Does that change coastal water quality in a meaningful way — and if so, where, how much, and can we predict it from a map?
+When a Kona Low storm hits Hawaiʻi, heavy rain washes fertilizer, cesspool nutrients, and volcanic soil off the land and into the ocean. Does that change coastal water quality in a meaningful way and if so, where, how much, and can we predict it from a map?
 
 This report uses 694 water samples collected across four islands immediately after the March 2026 Kona Low to answer those questions. Interpolated maps show where nutrient concentrations were highest. A grouping analysis (PAM clustering) sorts sites into three distinct water types — from clean open-ocean background water through runoff-dominated coastal zones to nearshore-enriched areas — and measures how different their chemistry is. A random forest model then asks whether those water types could have been predicted from landscape features alone: how close is a site to a stream mouth? To a cesspool? How much of the surrounding land is paved or farmed? How much water actually flowed through the nearest stream gauge in March? The model correctly classifies 67% of sites (vs 36% for a random guess), with stream mouth proximity, cesspool distance, and actual March discharge as the three strongest predictors.
 
@@ -77,7 +78,7 @@ chem <- read_csv("data/clean_chemdata.csv", show_col_types = FALSE) |>
   filter(!is.na(island)) |>
   # Normalise apostrophe variants (ʻokina U+02BB, smart quotes U+2018/9) to
   # plain ASCII apostrophe so island-name joins are consistent throughout
-  mutate(island = stringr::str_replace_all(island, "[\u02BB\u02BC\u2018\u2019]", "'")) |>
+  mutate(island = stringr::str_replace_all(island, "[ʻʼ‘’]", "'")) |>
   # Ahupuaʻa assignment (spatial join pre-computed in 01_load_clean_data.R)
   left_join(
     read_csv("data/ahupuaa_cache.csv", show_col_types = FALSE),
@@ -97,26 +98,67 @@ chem <- read_csv("data/clean_chemdata.csv", show_col_types = FALSE) |>
   )
 ```
 
-`r nrow(chem)` samples collected across `r n_distinct(chem$island)` islands between `r format(min(chem$collected_hst, na.rm = TRUE), "%B %d, %Y")` and `r format(max(chem$collected_hst, na.rm = TRUE), "%B %d, %Y")`. Cesspool density is unavailable for Lānaʻi (no public data) and `r chem |> filter(island != "L\u0101na'i", is.na(cesspool_density_per_km2)) |> nrow()` samples on other islands where the ahupuaʻa is not in the cesspool dataset.
+`r nrow(chem)` samples collected across `r n_distinct(chem$island)` islands between `r format(min(chem$collected_hst, na.rm = TRUE), "%B %d, %Y")` and `r format(max(chem$collected_hst, na.rm = TRUE), "%B %d, %Y")`. Cesspool density is unavailable for Lānaʻi (no public data) and `r chem |> filter(island != "Lāna'i", is.na(cesspool_density_per_km2)) |> nrow()` samples on other islands where the ahupuaʻa is not in the cesspool dataset.
 
 ```{r}
 #| label: data-summary-table
+
+
 chem |>
   group_by(island) |>
   summarise(
-    n_samples       = n(),
-    n_with_no3no2   = sum(!is.na(NO3NO2)),
-    median_no3no2   = median(NO3NO2, na.rm = TRUE),
-    max_no3no2      = max(NO3NO2, na.rm = TRUE),
-    date_min        = format(min(collected_hst, na.rm = TRUE), "%b %d"),
-    date_max        = format(max(collected_hst, na.rm = TRUE), "%b %d"),
+    n          = n(),
+    dates      = paste0(
+                   format(min(collected_hst, na.rm = TRUE), "%b %d"),
+                   "–",
+                   format(max(collected_hst, na.rm = TRUE), "%b %d")
+                 ),
+    med_NO3NO2 = median(NO3NO2,  na.rm = TRUE),
+    max_NO3NO2 = max(NO3NO2,     na.rm = TRUE),
+    med_PO4    = median(PO4,     na.rm = TRUE),
+    max_PO4    = max(PO4,        na.rm = TRUE),
+    med_NH3    = median(NH3,     na.rm = TRUE),
+    max_NH3    = max(NH3,        na.rm = TRUE),
+    med_SiO2   = median(SiO2,    na.rm = TRUE),
+    max_SiO2   = max(SiO2,       na.rm = TRUE),
+    med_Sal    = median(Salinity, na.rm = TRUE),
+    min_Sal    = min(Salinity,    na.rm = TRUE),
     .groups = "drop"
   ) |>
   kable(
-    col.names = c("Island", "Total samples", "Samples w/ NO₃+NO₂",
-                  "Median (µmol/L)", "Max (µmol/L)", "First collected", "Last collected"),
-    digits = 2,
-    caption = "Summary of sample counts and NO₃+NO₂ concentrations by island."
+    col.names = c(
+      "Island", "n", "Dates",
+      "Median", "Max",
+      "Median", "Max",
+      "Median", "Max",
+      "Median", "Max",
+      "Median", "Min"
+    ),
+    digits  = 2,
+    escape  = FALSE,
+    caption = "Sample counts and nutrient summary statistics by island. Nutrient concentrations in &mu;mol/L; salinity in PSU. Salinity minimum reflects the most freshwater-influenced site sampled on each island.",
+    align   = c("l", "c", "c", rep("r", 10))
+  ) |>
+  add_header_above(c(
+    " "                                        = 3,
+    "NO<sub>3</sub>+NO<sub>2</sub> (&#956;mol/L)" = 2,
+    "PO<sub>4</sub> (&#956;mol/L)"               = 2,
+    "NH<sub>3</sub> (&#956;mol/L)"               = 2,
+    "SiO<sub>2</sub> (&#956;mol/L)"              = 2,
+    "Salinity (PSU)"                            = 2
+  ), escape = FALSE) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width        = TRUE,
+    font_size         = 13
+  ) |>
+  column_spec(1, bold = TRUE) |>
+  row_spec(0, bold = TRUE, color = "white", background = "#37474F") |>
+  footnote(
+    general           = "NO<sub>3</sub>+NO<sub>2</sub>, PO<sub>4</sub>, NH<sub>3</sub>, SiO<sub>2</sub>: concentrations in &mu;mol/L. Salinity in PSU. Median and Max shown per nutrient; Min shown for Salinity (lower values indicate greater freshwater influence).",
+    general_title     = "",
+    footnote_as_chunk = TRUE,
+    escape            = FALSE
   )
 ```
 
@@ -136,8 +178,8 @@ Each map shows a kriged surface of NO₃+NO₂ (µmol/L) interpolated from coast
 
 normalize_name <- function(x) {
   x |>
-    stringr::str_replace_all("[\u02BB\u2018\u2019']", "") |>  # strip okina/smart quotes
-    stringr::str_replace_all("\u0101", "a") |>                 # ā → a
+    stringr::str_replace_all("[ʻ‘’']", "") |>  # strip okina/smart quotes
+    stringr::str_replace_all("ā", "a") |>                 # ā → a
     stringr::str_to_lower() |>
     stringr::str_trim()
 }
@@ -156,7 +198,7 @@ recode_island <- c(
   "Oahu"    = "O'ahu",
   "Maui"    = "Maui",
   "Molokai" = "Moloka'i",
-  "Lanai"   = "L\u0101na'i"
+  "Lanai"   = "Lāna'i"
 )
 
 # Scale metadata for each plottable variable. Add entries here to support new variables.
@@ -164,48 +206,48 @@ recode_island <- c(
 # `oob_label` is the label used for the top break (values squished above the limit).
 var_meta <- list(
   NO3NO2 = list(
-    label     = "NO₃+NO₂\n(µmol/L)",
+    label     = expression(atop(NO[3]+NO[2], "("*mu*"mol/L)")),
    # limits    = c(0, 20),
   #  breaks    = c(0.5, 1, 3, 10, 20),
-   # labels    = c("0.5", "1", "3", "10", "\u226520"),
+   # labels    = c("0.5", "1", "3", "10", ">=20"),
      limits    = c(0, 10),
     breaks    = c(0.5, 1, 3, 5, 10),
-    labels    = c("0.5", "1", "3", "5", "\u226510"),
+    labels    = c("0.5", "1", "3", "5", "≥10"),
      trans     = "log1p",
     direction = 1
   ),
   PO4 = list(
-    label     = "PO\u2084\n(\u03bcmol/L)",
+    label     = expression(atop(PO[4], "("*mu*"mol/L)")),
     limits    = c(0, 1),
     breaks    = c(0.05, 0.1, 0.3, 0.5, 1),
-    labels    = c("0.05", "0.1", "0.3", "0.5", "\u22651"),
+    labels    = c("0.05", "0.1", "0.3", "0.5", "≥1"),
     trans     = "log1p",
     direction = 1
   ),
   SiO2 = list(
-    label     = "SiO₂\n(µmol/L)",
+    label     = expression(atop(SiO[2], "("*mu*"mol/L)")),
    # limits    = c(0, 100),
   #  breaks    = c(1, 5, 20, 50, 100),
-  #  labels    = c("1", "5", "20", "50", "\u2265100"),
+  #  labels    = c("1", "5", "20", "50", "≥100"),
      limits    = c(0, 50),
     breaks    = c(1, 5, 10, 20, 50),
-    labels    = c("1", "5", "10", "20", "\u226550"),
+    labels    = c("1", "5", "10", "20", "≥50"),
     trans     = "log1p",
     direction = 1
   ),
   NH3 = list(
-    label     = "NH₃\n(µmol/L)",
+    label     = expression(atop(NH[3], "("*mu*"mol/L)")),
     limits    = c(0, 3),
     breaks    = c(0.1, 0.5, 1, 2, 3),
-    labels    = c("0.1", "0.5", "1", "2", "\u22653"),
+    labels    = c("0.1", "0.5", "1", "2", "≥3"),
     trans     = "log1p",
     direction = 1
   ),
   Salinity = list(
-    label     = "Salinity\n(PSU)",
+    label     = expression(atop("Salinity", "(PSU)")),
     limits    = c(28, 36),
     breaks    = c(28, 30, 32, 34, 36),
-    labels    = c("\u226428", "30", "32", "34", "36"),
+    labels    = c("≤28", "30", "32", "34", "36"),
     trans     = "identity",
     direction = -1
   )
@@ -523,7 +565,7 @@ maui_validation_map <- function(data, ahupuaa_sf, var = "NO3NO2",
 
   if (show_hui) {
     hui_breaks <- c(1, 3, 5, 10, 20)
-    hui_labels <- c("1", "3", "5", "10", "\u226520")
+    hui_labels <- c("1", "3", "5", "10", "≥20")
     hui_name   <- "Fold-change\n(Mar 2026 /\nall-time median)"
     p <- p +
       # Shape 24 (fill + white outline); I() bypasses the plasma fill scale
@@ -532,7 +574,7 @@ maui_validation_map <- function(data, ahupuaa_sf, var = "NO3NO2",
               color = "white", shape = 24, stroke = 0.8, alpha = 0.85) +
       ggrepel::geom_label_repel(
         data = hui_sf |> filter(fold_change > 15),
-        aes(label    = paste0(SiteName, "\n", round(fold_change, 0), "\u00d7"),
+        aes(label    = paste0(SiteName, "\n", round(fold_change, 0), "×"),
             geometry = geometry),
         stat = "sf_coordinates", size = 2.5, fontface = "bold", color = "#B71C1C",
         fill = alpha("white", 0.85), label.size = 0.2,
@@ -550,9 +592,9 @@ maui_validation_map <- function(data, ahupuaa_sf, var = "NO3NO2",
   }
 
   hui_note <- if (show_hui) {
-    paste0("    \u25b3 Hui o Ka Wai Ola stations (size = Mar 2026 fold-change above all-time median)\n",
-           "\u25b3 small = no March 2026 sample    \u25b3 gray = insufficient data    ",
-           "Labels: stations with fold-change > 15\u00d7")
+    paste0("    △ Hui o Ka Wai Ola stations (size = Mar 2026 fold-change above all-time median)\n",
+           "△ small = no March 2026 sample    △ gray = insufficient data    ",
+           "Labels: stations with fold-change > 15×")
   } else ""
 
   p +
@@ -561,7 +603,7 @@ maui_validation_map <- function(data, ahupuaa_sf, var = "NO3NO2",
              ylim = c(kd$coast_bbox["ymin"], kd$coast_bbox["ymax"]),
              expand = FALSE) +
     labs(
-  #    subtitle = paste0("\u25cf community science samples (this study)", hui_note),
+  #    subtitle = paste0("● community science samples (this study)", hui_note),
       caption  = if (show_hui) "Hui data: Falinski et al. / Hui o Ka Wai Ola." else NULL
     ) +
     theme_minimal(base_size = 11) +
@@ -577,11 +619,11 @@ maui_validation_map <- function(data, ahupuaa_sf, var = "NO3NO2",
 
 ## O'ahu
 
-Oʻahu's highest nutrient concentrations cluster along the northwestern (Waiʻanae) coast and around Pearl Harbor, consistent with those areas having both dense cesspool infrastructure and streams that drain heavily developed land. The salinity map shows freshwater dilution in the same locations, confirming this is land-sourced water, not re-suspended sediment.
+Oʻahu's highest nutrient concentrations cluster along the northwestern (Waiʻanae) coast and around Pearl Harbor, consistent with those areas having both dense cesspool infrastructure and streams that drain heavily developed land. The salinity map shows freshwater dilution in the same locations, confirming this is land-sourced water.
 
 ```{r}
 #| label: map-oahu
-#| fig-height: 7
+#| fig-height: 14
 #| fig-cap: "Spatially interpolated nutrient and salinity maps for Oʻahu, March 2026. Color shows concentration — yellow-green = highest, dark purple = lowest (all log scale). Circles are individual sample points colored on the same scale. Low-salinity (freshwater-diluted) hotspots on the northwest coast line up with the highest nitrogen and silica readings."
 oahuNN<-krige_island_map(chem, "O'ahu", ahupuaa_raw,var = "NO3NO2" )
 
@@ -604,7 +646,7 @@ Maui shows the most dramatic hotspot signal of any island, concentrated on the n
 
 ```{r}
 #| label: map-maui
-#| fig-height: 7
+#| fig-height: 14
 #| fig-cap: "Spatially interpolated nutrient and salinity maps for Maui, March 2026. West Maui's leeward coast and the windward north coast show the highest concentrations. The match between low-salinity patches and high-nutrient zones confirms that dilution with freshwater runoff is driving the signal, not local biological processes."
 
 MauiNN<-krige_island_map(chem, "Maui", ahupuaa_raw,var = "NO3NO2" )
@@ -627,7 +669,7 @@ Molokaʻi shows elevated nitrogen and silica across most of its southern coast, 
 
 ```{r}
 #| label: map-molokai
-#| fig-height: 5
+#| fig-height: 14
 #| fig-cap: "Spatially interpolated nutrient and salinity maps for Molokaʻi, March 2026. Elevated nutrients are distributed broadly along the south coast rather than in discrete plumes, reflecting the island's lower elevation and more evenly distributed runoff pathways."
 
 molokaiNN<-krige_island_map(chem, "Moloka'i", ahupuaa_raw,var = "NO3NO2", tile_zoom = 12 )
@@ -653,12 +695,12 @@ Only raw sample locations are shown for Lānaʻi — with just 20 samples, there
 ```{r}
 #| label: map-lanai
 #| fig-height: 6
-lanaiNN<-raw_points_map(chem, "L\u0101na'i", ahupuaa_raw, var = "NO3NO2", tile_zoom = 12)
+lanaiNN<-raw_points_map(chem, "Lāna'i", ahupuaa_raw, var = "NO3NO2", tile_zoom = 12)
 
-lanaiPO<-raw_points_map(chem, "L\u0101na'i", ahupuaa_raw, var = "PO4", tile_zoom = 12)
-lanaiSi<-raw_points_map(chem, "L\u0101na'i", ahupuaa_raw, var = "SiO2", tile_zoom = 12)
-lanaiNH3<-raw_points_map(chem, "L\u0101na'i", ahupuaa_raw, var = "NH3", tile_zoom = 12)
-lanaiSal<-raw_points_map(chem, "L\u0101na'i", ahupuaa_raw, var = "Salinity", tile_zoom = 12)
+lanaiPO<-raw_points_map(chem, "Lāna'i", ahupuaa_raw, var = "PO4", tile_zoom = 12)
+lanaiSi<-raw_points_map(chem, "Lāna'i", ahupuaa_raw, var = "SiO2", tile_zoom = 12)
+lanaiNH3<-raw_points_map(chem, "Lāna'i", ahupuaa_raw, var = "NH3", tile_zoom = 12)
+lanaiSal<-raw_points_map(chem, "Lāna'i", ahupuaa_raw, var = "Salinity", tile_zoom = 12)
 
 (lanaiNN|lanaiPO|lanaiNH3)/(lanaiSi|lanaiSal|plot_spacer())
 ggsave(here("output","lanai_spatial.png"), height = 12, width = 18)
@@ -677,17 +719,16 @@ ggsave(here("output","lanai_spatial.png"), height = 12, width = 18)
 
 # Independent validation: Hui o Ka Wai Ola stations on the Maui kriging surface
 
-The kriging surface is derived entirely from community science samples. The Hui o Ka Wai Ola programme provides an independent check: do the long-term fixed stations — sampled with laboratory-grade methods over a decade — agree with where the community science kriging shows hotspots? Triangles show Hui station post-storm NO₃+NO₂ on the same color scale as the kriging surface; their colors should match the surface underneath them if the two datasets are consistent.
+The kriging surface is derived entirely from community science samples. The Hui o Ka Wai Ola programme provides an independent check: do the long-term fixed stations agree with where the community science kriging shows hotspots? Triangles show Hui station post-storm with size relative to fold-increase from baseline values.
 
 ```{r}
 #| label: maui-validation-map
-#| fig-height: 7
-#| fig-cap: "Two independent datasets, one picture. Background: the interpolated nitrogen (NO₃+NO₂) map built from community science samples. Triangles: Hui o Ka Wai Ola professional monitoring stations, colored by their own post-storm measurements (same color scale). Gray-outlined triangles had no March 2026 sample. The Hui stations with the most extreme readings — Mālā Ramp (43×), Camp Olowalu (32×), and others on West Maui — sit precisely where the community science map shows the darkest hotspot colors. The agreement between two completely independent datasets confirms the hotspot pattern is real."
+#| fig-height: 14
+#| fig-cap: " Background: the interpolated nitrogen (NO₃+NO₂) map built from community science samples. Triangles: Hui o Ka Wai Ola monitoring stations. The Hui stations with the most extreme readings — Mālā Ramp (43×), Camp Olowalu (32×), and others on West Maui — sit precisely where the community science map shows the darkest hotspot colors. The agreement between two completely independent datasets confirms the hotspot pattern is real."
 
 
 bg_hui_loc <- bind_rows(
-  readxl::read_excel(
-    "data/background_nutrients/hui-south-maui-thru-2026-1st-quarter.0.xlsx",
+  readxl::read_excel("data/background_nutrients/hui-south-maui-thru-2026-1st-quarter.0.xlsx",
     sheet = "data") |>
     mutate(Turbidity = as.numeric(Turbidity), region = "South Maui"),
   readxl::read_excel(
@@ -740,13 +781,13 @@ The Hui stations on West Maui's leeward coast show amber-to-orange colors, meani
 
 # Storm cascade: disruption of coastal biogeochemistry
 
-The storm set off a four-step chain of events visible in satellite data, stream gauges, and water chemistry. Rain (panel A) filled streams (panel B), which flushed nutrients into the coast, triggering an algae bloom visible from space (panel C), and leaving elevated chemical concentrations still measurable when volunteers sampled two weeks later (panel D). Peak rainfall hit March 13–14, reaching 42–100 mm/day averaged across each island. Streams responded immediately, with peak flows of 231–1,040 cubic feet per second depending on watershed size. Coastal chlorophyll — a measure of algae growth — rose across all three islands within days and remained elevated for weeks. When community scientists sampled in late March and early April, nitrogen (NO₃+NO₂) and silica (SiO₂) were the most clearly elevated nutrients, consistent with runoff from volcanic soils.
+The storm set off a chain of events visible in satellite data, stream gauges, and water chemistry. Rain (panel A) filled streams (panel B), which flushed nutrients into the coast, and leaving elevated chemical concentrations still measurable when volunteers sampled two weeks later (panel C). Peak rainfall hit March 13–14, reaching 42–100 mm/day averaged across each island. Streams responded immediately, with peak flows of 231–1,040 cubic feet per second depending on watershed size. When community scientists sampled in late March and early April, nitrogen (NO₃+NO₂) and silica (SiO₂) were the most clearly elevated nutrients, consistent with runoff from volcanic soils.
 
 ```{r}
 #| label: storm-cascade-figure
 #| fig-height: 8
 #| fig-width: 10
-#| fig-cap: "Rain → streams → algae → chemistry: the full storm cascade in four panels. (A) Average daily rainfall per island from atmospheric model data (NCEP). (B) Stream discharge at three USGS gauges — Makaha Stream (Oʻahu), Halawa Stream (Molokaʻi), Hanawi Stream (Maui) — on a log scale because flows span three orders of magnitude. (C) Mean coastal chlorophyll-a from satellite (VIIRS NOAA-20), with a smoothed trend line; individual daily averages shown as points (only days with ≥8 valid satellite pixels included). (D) Post-storm nutrient concentrations by island from community science sampling (Mar 28–Apr 8). Blue shading = the Kona Low storm window (Mar 10–25); green shading = sampling window."
+#| fig-cap: "Rain → streams → algae → chemistry: the full storm cascade in four panels. (A) Average daily rainfall per island from atmospheric model data (NCEP). (B) Stream discharge at three USGS gauges — Makaha Stream (Oʻahu), Halawa Stream (Molokaʻi), Hanawi Stream (Maui) — on a log scale because flows span three orders of magnitude. (C) Post-storm nutrient concentrations by island from community science sampling (Mar 28–Apr 8). Blue shading = the Kona Low storm window (Mar 10–25); green shading = sampling window."
 
 
 
@@ -879,7 +920,7 @@ pD <- ggplot(nut_long, aes(x = island, y = conc, fill = island, color = island))
                 labels = scales::label_number(drop0trailing = TRUE)) +
   facet_wrap(~nutrient, ncol = 1, scales = "free_y",
              labeller = label_parsed) +
-  labs(tag = "D", y = expression(paste(mu, "mol L"^{-1})), x = NULL) +
+  labs(tag = "C", y = expression(paste(mu, "mol L"^{-1})), x = NULL) +
   theme_minimal(base_size = 10) +
   theme(
     panel.grid.minor   = element_blank(),
@@ -897,10 +938,10 @@ pD <- ggplot(nut_long, aes(x = island, y = conc, fill = island, color = island))
   plot_annotation(
     title   = "Kona Low storm cascade: terrestrial runoff disrupts coastal biogeochemistry",
     caption = paste0(
-      "Blue shading = Kona Low storm window (Mar 10\u201325).  ",
-      "Green shading = community science sampling (Mar 28\u2013Apr 8).\n",
+      "Blue shading = Kona Low storm window (Mar 10–25).  ",
+      "Green shading = community science sampling (Mar 28–Apr 8).\n",
       "",
-      "Stream gauges: Makaha Str (O\u02BBahu), Halawa Str (Moloka\u02BBi), Hanawi Str (Maui)."
+      "Stream gauges: Makaha Str (Oʻahu), Halawa Str (Molokaʻi), Hanawi Str (Maui)."
     ),
     theme = theme(
       plot.title   = element_text(size = 11, face = "bold", margin = margin(b = 4)),
@@ -915,12 +956,12 @@ ggsave(here("output","nutrient_gradient.png"))
 
 # Spatial structure of the biogeochemical signal
 
-If the storm's chemical impact was driven by watershed runoff, then nearby coastal sites should have more similar nutrient levels than sites far apart — high readings near stream mouths, lower readings away from them. This would produce a non-random, geographically coherent pattern. We test this with Moran's I, a standard measure of spatial clustering where a positive, statistically significant value means nearby sites are more alike than you'd expect by chance. The test was run separately for each nutrient and island using the eight nearest sampling neighbours. Lāna'i had too few samples and is excluded.
+If the storm's chemical impact was driven by watershed runoff, then nearby coastal sites should have more similar nutrient levels than sites far apart — high readings near stream mouths or cesspools, lower readings away from them. This would produce a non-random, geographically coherent pattern. We test this with Moran's I, a standard measure of spatial clustering where a positive, statistically significant value means nearby sites are more alike than you'd expect by chance. The test was run separately for each nutrient and island using the eight nearest sampling neighbours. Lāna'i had too few samples and is excluded.
 
 ```{r}
 #| label: morans-i
 #| fig-height: 5
-#| fig-cap: "Do high-nutrient sites cluster together spatially? Moran's I measures this: values above zero (filled points, p < 0.05) mean nearby sites are more similar than random chance would produce; open circles are not statistically distinguishable from random. Error bars = ±1.96 standard errors. SiO₂ and NO₃+NO₂ show clear geographic clustering on both Maui and Molokaʻi — their hotspots follow the shape of watersheds and stream mouths. NH₃ shows no significant clustering, meaning it is scattered randomly across the coast rather than concentrated near any particular landscape feature."
+#| fig-cap: "Do high-nutrient sites cluster together spatially? Moran's I measures this: values above zero mean nearby sites are more similar than random chance would produce. Filled circles = significant (p < 0.05); open circles = not significant. Error bars = ±1.96 standard errors. SiO₂ and NO₃+NO₂ show clear geographic clustering on both Maui and Molokaʻi — their hotspots follow the shape of watersheds and stream mouths. NH₃ shows no significant clustering in Maui or Molokaʻi, meaning it is scattered randomly across the coast rather than concentrated near any particular landscape feature."
 
 nutrients  <- c("SiO2", "NO3NO2", "PO4", "NH3")
 islands    <- c("O'ahu", "Maui", "Moloka'i")
@@ -961,14 +1002,8 @@ moran_results |>
   mutate(
     island   = factor(island,   levels = c("O'ahu", "Maui", "Moloka'i")),
     nutrient = factor(nutrient, levels = nutrients),
-    sig_label = case_when(
-      p_value < 0.001 ~ "p < 0.001",
-      p_value < 0.01  ~ "p < 0.01",
-      p_value < 0.05  ~ "p < 0.05",
-      TRUE            ~ "n.s."
-    ),
-    sig_label = factor(sig_label,
-      levels = c("p < 0.001", "p < 0.01", "p < 0.05", "n.s."))
+    sig_label = if_else(p_value < 0.05, "p < 0.05", "n.s."),
+    sig_label = factor(sig_label, levels = c("p < 0.05", "n.s."))
   ) |>
   ggplot(aes(x = moran_I, y = nutrient, color = island, shape = sig_label)) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "gray50", linewidth = 0.5) +
@@ -982,7 +1017,7 @@ moran_results |>
   geom_point(size = 3.2, position = position_dodge(width = 0.55)) +
   scale_color_manual(values = island_pal, name = NULL) +
   scale_shape_manual(
-    values = c("p < 0.001" = 16, "p < 0.01" = 17, "p < 0.05" = 15, "n.s." = 1),
+    values = c("p < 0.05" = 16, "n.s." = 1),
     name   = "Significance"
   ) +
   scale_x_continuous(limits = c(-0.05, 0.5), breaks = seq(0, 0.5, 0.1)) +
@@ -1016,106 +1051,7 @@ moran_results |>
         caption = "Moran's I spatial autocorrelation statistics per island and nutrient. Spatial weights: k = 8 nearest neighbours (UTM zone 4N). One-sided test against the alternative of positive spatial autocorrelation.")
 ```
 
-Silica (SiO₂) shows the tightest geographic clustering on Maui (Moran's I = 0.41) and Molokaʻi (I = 0.40). Silica is a reliable marker of volcanic rock weathering — it enters the ocean almost exclusively through stream runoff, so its spatial pattern closely traces where streams met the coast during the storm. Nitrogen (NO₃+NO₂) clusters almost as strongly. Ammonium (NH₃), by contrast, shows no significant spatial pattern on either island — it appears scattered randomly across the coast. This contrast is telling: the storm stamped a watershed-shaped footprint on nitrogen and silica, but NH₃ — which builds up through biological decomposition in sediments — was unaffected by the event.
-
-# Storm context: rainfall return period
-
-Was this storm unusual? If the March 2026 Kona Low was a once-in-a-generation event, the chemical impacts it caused might be rare too. If it was an ordinary storm, those same impacts are happening every year — they've just never been measured at this scale before.
-
-```{r}
-#| label: storm-return-period
-#| eval: true
-#| include: false
-#| fig-height: 7
-#| fig-cap: "Was the March 2026 Kona Low unusual? No. Boxes show the range of March monthly rainfall across years (2013–2025) from satellite-based rainfall estimates (CHIRPS). Diamonds show March 2026 — estimated from atmospheric model data (NCEP) and scaled to match the CHIRPS units. On all three islands, 2026 fell close to or slightly above the historical median: about half of past March events were wetter. Individual years are shown as dots (filled = wetter than 2026, open = drier)."
-
-# ── Historical March monthly totals from CHIRPS (2013–2025) ─────────────────
-# Cache stores monthly totals as one value per island per month (labeled day 1).
-march_hist <- read_csv("hawaii_rainfall_cache.csv", show_col_types = FALSE) |>
-  filter(source == "CHIRPS",
-         island %in% c("Oahu","Maui","Molokai"),
-         lubridate::month(date) == 3,
-         lubridate::year(date) <= 2025) |>
-  mutate(precip = if_else(precip < 0, NA_real_, precip)) |>
-  group_by(island, year = lubridate::year(date)) |>
-  summarise(march_mm = mean(precip, na.rm = TRUE), .groups = "drop")
-
-# ── March 2026 monthly total: NCEP bias-corrected to CHIRPS scale ────────────
-ncep_daily_rp <- read_csv("hawaii_ncep_janjun_cache.csv", show_col_types = FALSE) |>
-  filter(island %in% c("Oahu","Maui","Molokai")) |>
-  group_by(island, date) |>
-  summarise(precip_mm = mean(precip_mmday, na.rm = TRUE), .groups = "drop")
-
-# Bias factor: ratio of CHIRPS to NCEP over Jan–Feb overlap (same months in cache)
-chirps_jf <- read_csv("hawaii_rainfall_cache.csv", show_col_types = FALSE) |>
-  filter(source == "CHIRPS",
-         island %in% c("Oahu","Maui","Molokai"),
-         lubridate::month(date) %in% c(1, 2),
-         lubridate::year(date) >= 2013) |>
-  mutate(precip = if_else(precip < 0, NA_real_, precip)) |>
-  group_by(island, year = lubridate::year(date),
-           month = lubridate::month(date)) |>
-  summarise(chirps_mm = mean(precip, na.rm = TRUE), .groups = "drop")
-
-ncep_jf <- ncep_daily_rp |>
-  filter(lubridate::month(date) %in% c(1, 2),
-         lubridate::year(date) >= 2013,
-         date <= as.Date("2026-02-28")) |>
-  group_by(island, year = lubridate::year(date),
-           month = lubridate::month(date)) |>
-  summarise(ncep_mm = sum(precip_mm, na.rm = TRUE), .groups = "drop")
-
-bias_rp <- inner_join(chirps_jf, ncep_jf, by = c("island","year","month")) |>
-  group_by(island) |>
-  summarise(factor = mean(chirps_mm, na.rm = TRUE) /
-                     mean(ncep_mm,   na.rm = TRUE),
-            .groups = "drop")
-
-storm_rp <- ncep_daily_rp |>
-  filter(lubridate::year(date) == 2026, lubridate::month(date) == 3) |>
-  group_by(island) |>
-  summarise(ncep_march_mm = sum(precip_mm, na.rm = TRUE), .groups = "drop") |>
-  left_join(bias_rp, by = "island") |>
-  mutate(storm_mm = ncep_march_mm * factor)
-
-# ── Recode plain cache names → display names before plotting ─────────────────
-march_hist  <- march_hist  |> mutate(island = recode_island[island])
-storm_rp    <- storm_rp    |> mutate(island = recode_island[island])
-
-march_hist_storm <- march_hist |>
-  left_join(storm_rp |> select(island, storm_mm), by = "island") |>
-  mutate(above = march_mm >= storm_mm)
-
-# Panel A: year-by-year dots + boxplot summary
-pA_rp <- ggplot(march_hist, aes(x = island, y = march_mm,
-                                 fill = island, color = island)) +
-  geom_boxplot(alpha = 0.25, outlier.shape = NA, linewidth = 0.4, width = 0.5) +
-  geom_jitter(aes(shape = march_hist_storm$above), width = 0.08,
-              size = 2.3, alpha = 0.8) +
-  geom_point(data = storm_rp,
-             aes(x = island, y = storm_mm),
-             color = "black", fill = "white",
-             size = 4.5, shape = 23, stroke = 1.5, inherit.aes = FALSE) +
-  scale_fill_manual(values  = island_pal, name = NULL) +
-  scale_color_manual(values = island_pal, name = NULL) +
-  scale_shape_manual(values = c("FALSE" = 1, "TRUE" = 16),
-                     labels = c("Below 2026", "Above 2026"),
-                     name   = NULL) +
-  scale_y_continuous(expand = expansion(mult = c(0.02, 0.1))) +
-  labs(x = NULL, y = "March rainfall total (mm)",
-       subtitle = "CHIRPS island-mean March totals 2013\u20132025 \u00b7 Diamond = March 2026 (NCEP, bias-corrected)") +
-  theme_minimal(base_size = 11) +
-  theme(panel.grid.minor   = element_blank(),
-        panel.grid.major.x = element_blank(),
-        legend.position    = "bottom",
-        plot.subtitle      = element_text(size = 8.5, color = "gray40"))
-
-#pA_rp
-```
-
-March 2026 was an average March — slightly above the historical median on all three islands (Maui: `r round(storm_rp$storm_mm[storm_rp$island=="Maui"])` mm vs. the typical `r round(median(march_hist$march_mm[march_hist$island=="Maui"], na.rm=TRUE))` mm; Molokaʻi: `r round(storm_rp$storm_mm[storm_rp$island=="Moloka'i"])` vs. `r round(median(march_hist$march_mm[march_hist$island=="Moloka'i"], na.rm=TRUE))` mm; Oʻahu: `r round(storm_rp$storm_mm[storm_rp$island=="O'ahu"])` vs. `r round(median(march_hist$march_mm[march_hist$island=="O'ahu"], na.rm=TRUE))` mm), with stream gauge records confirming moderate, not record, flows. About half of past March events were wetter. **This is the most important finding in the report: the dramatic water-quality changes documented here — nutrients 3–6× above background, spatial hotspots at stream mouths, a measurable algae bloom — were caused by a perfectly ordinary Kona Low.** If an average storm does this, the same thing happens every year. These impacts are not rare — they have just never been measured at this spatial scale before.
-
----
+Silica (SiO₂) shows the tightest geographic clustering on Maui (Moran's I = 0.41) and Molokaʻi (I = 0.40). Silica is a reliable marker of volcanic rock weathering — it enters the ocean almost exclusively through stream runoff and SGD, so its spatial pattern closely traces where streams met the coast during the storm. Nitrogen (NO₃+NO₂) clusters almost as strongly. Ammonium (NH₃), by contrast, shows no significant spatial pattern on Maui or Molokaʻi — it appears scattered randomly across the coast. This contrast is telling: the storm stamped a watershed-shaped footprint on nitrogen and silica, but NH₃ — which builds up through biological decomposition in sediments — was  less affected by the event.
 
 # Land–sea connectivity: salinity–nutrient mixing
 
@@ -1126,7 +1062,7 @@ Salinity is a natural tracer of freshwater: the lower it is, the more land-sourc
 #| fig-height: 7
 #| fig-cap: "As salinity drops (more freshwater mixing in), nutrients rise — but only for the nutrients carried by runoff. Orange points and trend line: storm-influenced sites (Sal ≤ 34 PSU). Blue points and horizontal line: marine-background sites (Sal > 34 PSU) shown at their median concentration. NO₃+NO₂ and SiO₂ show steep, consistent increases as sites become more freshwater-influenced — confirming that land-sourced water is delivering these nutrients. PO₄ shows a weaker version of the same pattern. NH₃ has a flat, scattered relationship, meaning it is not being delivered by runoff in the same way — it comes from other sources (biological breakdown in sediments) that are unrelated to how much freshwater is present."
 
-sal_zone_pal <- c("Storm-influenced\n(\u2264 34 PSU)" = "#E65100",
+sal_zone_pal <- c("Storm-influenced\n(≤ 34 PSU)" = "#E65100",
                   "Marine background\n(> 34 PSU)"   = "#1565C0")
 
 mixing_long <- chem |>
@@ -1138,15 +1074,15 @@ mixing_long <- chem |>
   mutate(
     nutrient = factor(nutrient,
       levels = c("NO3NO2", "PO4", "SiO2", "NH3"),
-      labels = c("NO₃+NO₂ (µmol/L)",
-                 "PO₄ (µmol/L)",
-                 "SiO₂ (µmol/L)",
-                 "NH₃ (µmol/L)")),
+      labels = c("NO[3]+NO[2]~(mu*mol/L)",
+                 "PO[4]~(mu*mol/L)",
+                 "SiO[2]~(mu*mol/L)",
+                 "NH[3]~(mu*mol/L)")),
     sal_zone = factor(
       if_else(Salinity > 34,
               "Marine background\n(> 34 PSU)",
-              "Storm-influenced\n(\u2264 34 PSU)"),
-      levels = c("Storm-influenced\n(\u2264 34 PSU)",
+              "Storm-influenced\n(≤ 34 PSU)"),
+      levels = c("Storm-influenced\n(≤ 34 PSU)",
                  "Marine background\n(> 34 PSU)"))
   )
 
@@ -1160,7 +1096,7 @@ ggplot(mixing_long, aes(x = Salinity, y = conc, color = sal_zone)) +
   geom_vline(xintercept = 34, linetype = "dotted",
              color = "gray40", linewidth = 0.6) +
   geom_point(size = 1.2, alpha = 0.45) +
-  geom_smooth(data = \(d) filter(d, sal_zone == "Storm-influenced\n(\u2264 34 PSU)"),
+  geom_smooth(data = \(d) filter(d, sal_zone == "Storm-influenced\n(≤ 34 PSU)"),
               method = "lm", se = TRUE, linewidth = 0.8, alpha = 0.15,
               color = "#E65100") +
   geom_hline(data = marine_medians, aes(yintercept = med),
@@ -1169,7 +1105,7 @@ ggplot(mixing_long, aes(x = Salinity, y = conc, color = sal_zone)) +
   scale_color_manual(values = sal_zone_pal, name = NULL) +
   scale_y_log10(labels = label_number(drop0trailing = TRUE)) +
   scale_x_continuous(limits = c(NA, 36.5)) +
-  facet_wrap(~nutrient, scales = "free_y", ncol = 2) +
+  facet_wrap(~nutrient, scales = "free_y", ncol = 2, labeller = label_parsed) +
   labs(x = "Salinity (PSU)", y = NULL) +
   theme_minimal(base_size = 12) +
   theme(
@@ -1179,7 +1115,7 @@ ggplot(mixing_long, aes(x = Salinity, y = conc, color = sal_zone)) +
   )
 ```
 
-**NO₃+NO₂ and SiO₂** behave as expected if they are coming from land runoff: concentrations fall steeply as salinity rises, and level off once water becomes fully marine. This is the textbook pattern for a land-sourced contaminant diluting into the ocean. **PO₄** follows the same pattern but also remains elevated in fully marine water — suggesting a chronic background phosphorus source (likely cesspools leaching through groundwater) beyond the storm signal alone. **NH₃** shows little relationship with salinity in either zone, confirming it is not being delivered by runoff and instead accumulates through biological processes in seafloor sediments.
+**NO₃+NO₂ and SiO₂** behave as expected if they are coming from land runoff: concentrations fall steeply as salinity rises, and level off once water becomes fully marine. This is the textbook pattern for a land-sourced contaminant diluting into the ocean. **PO₄** follows the same pattern but also remains elevated in fully marine water — suggesting a chronic background phosphorus source (likely cesspools leaching through groundwater) beyond the storm signal alone. **NH₃** shows little relationship with salinity in either zone.
 
 # Methods
 
@@ -1253,13 +1189,13 @@ pFold <- ggplot(ci_df, aes(x = fold, y = nutrient)) +
                 width = 0.25, linewidth = 0.6,
                 color = "#37474F", orientation = "y") +
   geom_point(aes(size = fold), color = "#E65100", shape = 16) +
-  geom_text(aes(label = paste0(round(fold, 1), "\u00d7")),
+  geom_text(aes(label = paste0(round(fold, 1), "×")),
             nudge_y = 0.38, size = 3.5, fontface = "bold",
             color = "#E65100") +
   scale_x_continuous(limits = c(0, 12), breaks = c(1, 2, 4, 8)) +
   scale_size_continuous(range = c(3, 8), guide = "none") +
   labs(
-    x        = "Fold-enrichment  (storm-influenced \u00f7 background)",
+    x        = "Fold-enrichment  (storm-influenced ÷ background)",
     y        = NULL, tag = "A",
     subtitle = paste0(
       "Background: Sal > 34 PSU (n = ", nrow(bg),
@@ -1368,7 +1304,7 @@ hui_baseline_plot <- function(data,
   march <- data |>
     filter(year(Date) == 2026, month(Date) == 3) |>
     mutate(timing = if_else(Date < as.Date("2026-03-14"),
-                            "Pre-storm (Mar 10)", "Post-storm (Mar 18\u201331)"))
+                            "Pre-storm (Mar 10)", "Post-storm (Mar 18–31)"))
 
   baselines <- historical |>
     group_by(Station, SiteName, region) |>
@@ -1389,7 +1325,7 @@ hui_baseline_plot <- function(data,
       conc        = .data[[conc_col]],
       fold_change = conc / med,
       above_p95   = conc > p95,
-      label       = str_trunc(SiteName, 28, ellipsis = "\u2026"),
+      label       = str_trunc(SiteName, 28, ellipsis = "…"),
       region      = factor(region, levels = c("South Maui", "West Maui"))
     ) |>
     arrange(region, desc(fold_change))
@@ -1400,7 +1336,7 @@ hui_baseline_plot <- function(data,
               by = c("Station", "SiteName", "region")) |>
     mutate(
       conc   = .data[[conc_col]],
-      label  = str_trunc(SiteName, 28, ellipsis = "\u2026"),
+      label  = str_trunc(SiteName, 28, ellipsis = "…"),
       region = factor(region, levels = c("South Maui", "West Maui"))
     )
 
@@ -1410,7 +1346,7 @@ hui_baseline_plot <- function(data,
   pre       <- pre       |> mutate(label = factor(label, levels = lvls))
   baselines <- baselines |>
     mutate(
-      label  = factor(str_trunc(SiteName, 28, ellipsis = "\u2026"), levels = lvls),
+      label  = factor(str_trunc(SiteName, 28, ellipsis = "…"), levels = lvls),
       region = factor(region, levels = c("South Maui", "West Maui"))
     )
 
@@ -1419,7 +1355,7 @@ hui_baseline_plot <- function(data,
     hui_stations_sf <- data |>
       distinct(Station, SiteName, region, Lat, Long) |>
       filter(!is.na(Lat), !is.na(Long)) |>
-      mutate(label = factor(str_trunc(SiteName, 28, ellipsis = "\u2026"), levels = lvls)) |>
+      mutate(label = factor(str_trunc(SiteName, 28, ellipsis = "…"), levels = lvls)) |>
       filter(!is.na(label)) |>
       sf::st_as_sf(coords = c("Long", "Lat"), crs = 4326) |>
       sf::st_transform(32604)
@@ -1446,7 +1382,7 @@ hui_baseline_plot <- function(data,
   # ── Panel A: fold-change bars ────────────────────────────────────────────────
   pA <- ggplot(post, aes(x = fold_change, y = label, fill = above_p95)) +
     geom_col(width = 0.65, color = NA) +
-    geom_text(aes(label  = paste0(round(fold_change, 1), "\u00d7"),
+    geom_text(aes(label  = paste0(round(fold_change, 1), "×"),
                   hjust  = if_else(fold_change > fold_text_cutoff,  1.1, -0.1),
                   color  = if_else(fold_change > fold_text_cutoff, "white", "gray25")),
               size = 2.5, fontface = "bold") +
@@ -1465,7 +1401,7 @@ hui_baseline_plot <- function(data,
       panel.grid.major.y = element_blank(),
       strip.text         = element_text(face = "bold", size = 9),
       strip.placement    = "outside",
-      legend.position    = "top",
+      legend.position    = "bottom",
       legend.text        = element_text(size = 8.5),
       axis.text.y        = element_text(size = 7, lineheight = 0.82),
       plot.tag           = element_text(face = "bold"),
@@ -1481,7 +1417,7 @@ hui_baseline_plot <- function(data,
                       stroke = c(0.5,     0.5),
                       alpha  = c(1,       0.95))
   if (show_cs && nrow(cs_matched) > 0) {
-    legend_vals["Community science (≤100 m)"] <- "#AB47BC"
+    legend_vals["WIYW (≤100 m)"] <- "#AB47BC"
     legend_ov$size   <- c(legend_ov$size,   3)
     legend_ov$shape  <- c(legend_ov$shape,  21)
     legend_ov$color  <- c(legend_ov$color,  "#4A148C")
@@ -1502,7 +1438,7 @@ hui_baseline_plot <- function(data,
                color = "gray40", size = 1.8, shape = 21, stroke = 0.5) +
     (if (show_cs && nrow(cs_matched) > 0)
       geom_point(data = cs_matched,
-                 aes(x = cs_val, y = label, fill = "Community science (≤100 m)"),
+                 aes(x = cs_val, y = label, fill = "WIYW (≤100 m)"),
                  shape = 21, size = 2, stroke = 1.2,
                  color = "#4A148C", alpha = 0.85)) +
     geom_point(data = filter(post, !is.na(label)),
@@ -1510,6 +1446,7 @@ hui_baseline_plot <- function(data,
                color = "#B04000", shape = 21, size = 2, stroke = 0.5, alpha = 0.95) +
     scale_fill_manual(name   = NULL,
                       values = legend_vals,
+                      drop   = FALSE,
                       guide  = guide_legend(override.aes = legend_ov)) +
     scale_x_log10(breaks = scales::breaks_log(n = 6),
                   labels = scales::label_number(drop0trailing = TRUE),
@@ -1533,11 +1470,10 @@ hui_baseline_plot <- function(data,
 
   # ── Assemble ─────────────────────────────────────────────────────────────────
   (pA | pB) +
-    plot_layout(widths = c(1.4, 1), guides = "collect") +
+    plot_layout(widths = c(1.4, 1)) +
     plot_annotation(
       caption = "Source: Hui o Ka Wai Ola long-term monitoring programme (Falinski et al.)."
-    ) &
-    theme(legend.position = "bottom", legend.justification = "center")
+    )
 }
 ```
 
@@ -1549,34 +1485,34 @@ hui_baseline_plot <- function(data,
 
 HuiNN_raw<-hui_baseline_plot(bg_hui_loc,
                   conc_col  = "NNN_umol",
-                  x_label   = "NO₃+NO₂ (µmol/L, log)",
+                  x_label   = expression(NO[3]+NO[2]~"("*mu*"mol/L, log)"),
                   cs_data   = chem)
 
 HuiPO_raw<-hui_baseline_plot(bg_hui_loc,
                   conc_col  = "Phosphate_umol",
-                  x_label   = "PO\u2084 (\u03bcmol/L, log)",
+                  x_label   = expression(PO[4]~"("*mu*"mol/L, log)"),
                   cs_data   = chem)
 
 HuiSi_raw<-hui_baseline_plot(bg_hui_loc,
                   conc_col  = "Silicate_umol",
-                  x_label   = "SiO₂ (µmol/L, log)",
+                  x_label   = expression(SiO[2]~"("*mu*"mol/L, log)"),
                   cs_data   = chem)
 
 HuiNH3_raw<-hui_baseline_plot(bg_hui_loc,
                   conc_col  = "NH4_umol",
-                  x_label   = "NH₃ (µmol/L, log)",
+                  x_label   = expression(NH[3]~"("*mu*"mol/L, log)"),
                   cs_data   = chem)
 
-HuiNN|HuiNN_raw
-ggsave(here("output","allNN_HuiData.png"), width = 16, height = 8)
+HuiNN/HuiNN_raw
+ggsave(here("output","allNN_HuiData.png"), width = 8, height = 16)
 
-HuiPO|HuiPO_raw
-ggsave(here("output","allPO_HuiData.png"), width = 16, height = 8)
+HuiPO/HuiPO_raw
+ggsave(here("output","allPO_HuiData.png"), width = 8, height = 16)
 
-HuiSi|HuiSi_raw
-ggsave(here("output","allSi_HuiData.png"), width = 16, height = 8)
+HuiSi/HuiSi_raw
+ggsave(here("output","allSi_HuiData.png"), width = 8, height = 16)
 
-HuiNH3|HuiNH3_raw
+HuiNH3/HuiNH3_raw
 ggsave(here("output","allNH3_HuiData.png"), width = 16, height = 8)
 
 ```
@@ -1589,7 +1525,7 @@ To directly compare the two independent datasets at the same locations, we match
 #| label: hui-cs-comparison
 #| fig-height: 6
 #| fig-width: 8
-#| fig-cap: "Direct comparison of post-storm community science NO₃+NO₂ (y) against Hui o Ka Wai Ola NNN (x) at the same locations (within 100 m). Each point is one Hui station × CS sample pair. The dashed line is 1:1 agreement; colour shows the gap in days between the two sample dates (positive = CS collected after Hui). Only Maui stations are shown, as Hui monitoring is restricted to Maui."
+#| fig-cap: "Direct comparison of post-storm community science (What's in your water) nutrients (y) against Hui o Ka Wai Ola(x) at similar locations (within 100 m). Each point is one Hui station × CS sample pair. The dashed line is 1:1 agreement; colour shows the gap in days between the two sample dates (positive = CS collected after Hui). Only Maui stations are shown, as Hui monitoring is restricted to Maui."
 
 # ── Hui post-storm: one row per station-date observation ─────────────────────
 hui_match_sf <- bg_hui_loc |>
@@ -1634,10 +1570,10 @@ cat(glue::glue(
 # ── Reshape to long for faceting ──────────────────────────────────────────────
 nutrient_map <- tribble(
   ~hui_col,        ~cs_col,      ~label,
-  "NNN_umol",      "cs_NO3NO2",  "NO₃+NO₂",
-  "Phosphate_umol","cs_PO4",     "PO\u2084",
-  "Silicate_umol", "cs_SiO2",    "SiO₂",
-  "NH4_umol",      "cs_NH3",     "NH\u2084"
+  "NNN_umol",      "cs_NO3NO2",  "NO[3]+NO[2]",
+  "Phosphate_umol","cs_PO4",     "PO[4]",
+  "Silicate_umol", "cs_SiO2",    "SiO[2]",
+  "NH4_umol",      "cs_NH3",     "NH[4]"
 )
 
 pairs_long <- nutrient_map |>
@@ -1665,8 +1601,8 @@ cor_labels <- pairs_long |>
     .groups = "drop"
   ) |>
   mutate(label = paste0(
-    nutrient, " (\u03bcmol/L)\n",
-    "r = ", round(r, 2), "  \u03c1 = ", round(rho, 2), "  n = ", n
+    "atop(", nutrient, "~(mu*mol/L), ",
+    "paste('r =', ", round(r, 2), ", '~~', rho, '=', ", round(rho, 2), ", '~~n =', ", n, "))"
   ))
 
 cor_labeller <- setNames(cor_labels$label, cor_labels$nutrient)
@@ -1685,9 +1621,9 @@ ggplot(pairs_long |>
   scale_x_log10(labels = scales::label_number(drop0trailing = TRUE)) +
   scale_y_log10(labels = scales::label_number(drop0trailing = TRUE)) +
   facet_wrap(~nutrient, scales = "free", ncol = 2,
-             labeller = labeller(nutrient = cor_labeller)) +
+             labeller = as_labeller(cor_labeller, label_parsed)) +
   labs(
-    x = "Hui o Ka Wai Ola (\u03bcmol/L, log)",
+    x = expression("Hui o Ka Wai Ola ("*mu*"mol/L, log)"),
     y = expression("What's in your water ("*mu*"mol/L, log)"),
     caption = str_wrap("Direct comparison of post-storm WIYW community science NO₃+NO₂ (y) against Hui o Ka Wai Ola NNN (x) at the same locations (within 100 m). Each point is one Hui station × CS sample pair. The dashed line is 1:1 agreement; colour shows the gap in days between the two sample dates (positive = WIYW collected after Hui). Only Maui stations are shown, as Hui monitoring is restricted to Maui", width = 120)
   ) +
@@ -1802,9 +1738,9 @@ p_rain_hn <- ggplot(chirps_full_maui, aes(x=ym, y=chirps_mm)) +
            hjust=0.5, fontface="italic", lineheight=0.85) +
   scale_x_date(date_breaks="1 year", date_labels="%Y") +
   labs(x=NULL, y="Rainfall (mm)", tag="A",
-       subtitle=paste0("CHIRPS island-mean · all months 2016\u20132026  |  ",
+       subtitle=paste0("CHIRPS island-mean · all months 2016–2026  |  ",
                        "median ", round(median(chirps_full_maui$chirps_mm,na.rm=TRUE)),
-                       " mm \u00b7 max 373 mm (Mar 2026)")) +
+                       " mm · max 373 mm (Mar 2026)")) +
   theme_minimal(base_size=10) +
   theme(panel.grid.minor=element_blank(), plot.tag=element_text(face="bold"),
         plot.subtitle=element_text(size=8, color="gray40"))
@@ -1821,24 +1757,35 @@ p_scatter_hn <- ggplot(
     data=\(d) filter(d, year==2026, month==3),
     aes(label="Mar 2026\nKona Low"), size=2.6, color="#1565C0",
     lineheight=0.85, min.segment.length=0.1) +
-  scale_color_manual(values=c("FALSE"="#90A4AE","TRUE"="#E65100"), guide="none") +
+  scale_color_manual(
+    values = c("FALSE" = "#90A4AE", "TRUE" = "#E65100"),
+    labels = c("FALSE" = "2016–2022",  "TRUE" = "2023–2026"),
+    name   = NULL
+  ) +
   annotate("text", x=3.2, y=max(hui_anomaly_hn$fold_NNN_med,na.rm=TRUE)*0.94,
-           label=paste0("r² = ",r2_hn,"\np = ",p_hn),
-           size=2.9, color="#E65100", hjust=0, lineheight=1.1) +
+           label = paste0("atop(r^2 == ", r2_hn, ", p == ", p_hn, ")"),
+           parse = TRUE,
+           size=2.9, color="#E65100", hjust=0) +
   scale_x_continuous(
     breaks=log1p(c(0,10,25,50,100,200,400)),
     labels=c("0","10","25","50","100","200","400")) +
   labs(x="Monthly rainfall, log scale (mm, CHIRPS island-mean)",
-       y="NO₃+NO₂ fold-change\nfrom station baseline", tag="B",
-       subtitle="Each point = one monthly Hui sampling  \u00b7  log scale removes right-skew") +
+       y=expression(atop(NO[3]+NO[2]~"fold-change", "from station baseline")),
+       tag="B",
+       subtitle="Each point = one monthly Hui sampling  ·  log scale removes right-skew") +
   theme_minimal(base_size=10) +
-  theme(panel.grid.minor=element_blank(), plot.tag=element_text(face="bold"),
-        plot.subtitle=element_text(size=8, color="gray40"))
+  theme(panel.grid.minor    = element_blank(),
+        plot.tag             = element_text(face="bold"),
+        plot.subtitle        = element_text(size=8, color="gray40"),
+        legend.position      = c(0.12, 0.88),
+        legend.background    = element_blank(),
+        legend.key.size      = unit(0.6, "lines"),
+        legend.text          = element_text(size=8))
 
 p_rain_hn / p_scatter_hn +
   plot_annotation(
     title="Maui coastal nitrogen responds to rainfall, but only extreme storms drive ecologically meaningful anomalies",
-    subtitle="Hui o Ka Wai Ola fixed stations 2016\u20132026 \u00b7 station-normalised fold-change from 10-year baseline",
+    subtitle="Hui o Ka Wai Ola fixed stations 2016–2026 · station-normalised fold-change from 10-year baseline",
     theme=theme(plot.title=element_text(face="bold", size=11),
                 plot.subtitle=element_text(size=8.5, color="gray40"))
   )
@@ -1848,7 +1795,7 @@ The log-linear relationship (r² = `r r2_hn`, p = `r p_hn`) confirms that monthl
 
 ---
 
-# Stoichiometric fingerprints — Claim 2
+# Stoichiometric fingerprints
 
 Did all islands produce the same kind of runoff, or does each island have its own chemical identity? The ratios of nutrients to each other — nitrogen to phosphorus (N:P) and silica to nitrogen (Si:N) — act like a fingerprint that reveals where nutrients came from. Ocean plankton maintain nitrogen and phosphorus in a fairly fixed ratio of 16:1 (the Redfield ratio). Below 16 means unusual phosphorus enrichment, pointing to a cesspool or wastewater source. Above 1 for Si:N means silica-rich volcanic rock weathering is dominant. The four islands show distinctly different ratios, meaning the storm flushed island-specific chemical fingerprints — not a single uniform nutrient pulse.
 
@@ -1928,7 +1875,7 @@ pScatter_s <- ggplot(ratios, aes(x = NP, y = SiN, color = island)) +
 title_row_s <- ggdraw() +
   draw_label("Stoichiometric fingerprints distinguish island nutrient sources",
              fontface = "bold", size = 11, x = 0.01, hjust = 0) +
-  draw_label("Dashed lines = Redfield N:P (16) and diatom Si:N (1). Diamonds = island medians.",
+  draw_label("Dashed lines = Redfield N:P (16) and Si:N (1). Diamonds = island medians.",
              color = "gray40", size = 9, x = 0.01, y = 0.2, hjust = 0)
 
 plot_grid(
@@ -1942,7 +1889,7 @@ Maui's N:P ratio (median `r round(median(ratios$NP[ratios$island == "Maui"], na.
 
 ---
 
-# Biogeochemical cluster analysis — Claims 2 & 4
+# Biogeochemical cluster analysis 
 
 We sorted the 694 sample sites into groups (using a statistical clustering method called PAM) based purely on their water chemistry: salinity, nitrogen, phosphorus, and silica. Four distinct water types emerged. The number four was chosen because it was the smallest number that captured all four clearly different kinds of coastal water without over-splitting into groups that were chemically too similar to distinguish. Testing two to six groups confirmed this choice.
 
@@ -2051,7 +1998,8 @@ hm_df <- chem_clust |>
   ungroup() |>
   mutate(
     variable      = factor(variable, levels = fp_vars, labels = fp_labels),
-    cluster_label = factor(cluster_label, levels = rev(cluster_labels)),
+    cluster_label = factor(cluster_label,
+                           levels = c("Runoff-dominated", "Nearshore enriched", "Marine background")),
     val_label     = case_when(
       variable == "Salinity\n(PSU)"    ~ as.character(round(median_val, 1)),
       variable == "NO3+NO2\n(µmol/L)" ~ as.character(round(median_val, 2)),
@@ -2156,7 +2104,7 @@ plot_grid(
     "Four biogeochemical clusters reveal distinct post-storm coastal water types",
     fontface = "bold", size = 11, x = 0.01, hjust = 0) +
     draw_label(
-      paste0("PAM clustering on scaled log-nutrients + salinity (k = 4, n = ",
+      paste0("PAM clustering on scaled log-nutrients + salinity (k = 3, n = ",
              nrow(chem_clust), " sites). Convex hulls in A = envelopes per cluster."),
       color = "gray40", size = 8.5, x = 0.01, y = 0.22, hjust = 0),
   plot_grid(
@@ -2180,7 +2128,7 @@ Ammonium (NH₃) was not included in the grouping analysis. The figure below sho
 
 ```{r}
 #| label: nh3-posthoc
-#| fig-height: 4.5
+#| fig-height: 8
 #| fig-cap: "Water chemistry by cluster type. (A) NO₃+NO₂ shows ordered separation across the three groups — this is the primary clustering variable that structures the groups. (B) Phosphate (PO₄) and (C) Silicate (SiO₂) also show clear gradients from marine background through nearshore enriched to runoff-dominated sites, with runoff-dominated showing the highest concentrations. (D) Ammonium (NH₃) was left out of the grouping analysis because it shows no systematic pattern across water types — distributions overlap substantially across all three groups. Adding NH₃ would add noise, not clarity. NH₃ data available for `r sum(!is.na(chem_clust$NH3))` of `r nrow(chem_clust)` sites."
 
 clust_pal_ch <- c(
@@ -2323,140 +2271,7 @@ pSilB_s <- ggplot(sil4_s, aes(x = sorted_id, y = sil_width, fill = cluster_label
 pSilA_s | pSilB_s
 ```
 
----
-
-
-```{r}
-#| label: krige-cluster-overlay
-#| include: false
-#| fig-height: 6.5
-#| fig-cap: "The nitrogen hotspot map with each sample's water type shown as a coloured circle. Background colour (yellow-green = high, dark purple = low) is the interpolated nitrogen map from community science samples. Circle colour shows which of the three water types that site belongs to. The two line up: clean marine-background sites (blue) sit in the dark, low-nitrogen margins; runoff-dominated (orange) sites cluster in the brightest, highest-nitrogen patches, especially on Maui's north coast. The transition group (nearshore enriched, green) forms a belt between the hotspot core and the clean outer water."
-
-# krige_surface_data helper — same kriging logic as krige_island_map but
-# returns components rather than a ggplot, allowing dual color scales.
-krige_surface_data <- function(data, island_name, ahupuaa_sf,
-                               res_m = 300, band_km = 3) {
-  island_data <- data |>
-    filter(island == island_name, !is.na(NO3NO2), !is.na(latitude), !is.na(longitude))
-  match_idx  <- normalize_name(ahupuaa_sf$mokupuni) == normalize_name(island_name)
-  land_union <- ahupuaa_sf[match_idx, ] |>
-    st_transform(32604) |> st_make_valid() |> st_union()
-  land_parts <- st_cast(land_union, "POLYGON")
-  land_union  <- land_parts[as.numeric(st_area(land_parts)) > 1e6] |> st_union()
-  land_sf_out <- st_as_sf(st_sf(geometry = land_union))
-  coast_outer <- st_buffer(land_union, dist = band_km * 1000)
-  coast_band  <- st_difference(coast_outer, land_union)
-  coast_bbox  <- st_bbox(coast_outer)
-  pts_proj <- island_data |>
-    st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
-    st_transform(32604) |>
-    mutate(log_val = log1p(NO3NO2),
-           X = st_coordinates(geometry)[, 1], Y = st_coordinates(geometry)[, 2]) |>
-    group_by(X, Y) |>
-    summarise(log_val = mean(log_val, na.rm = TRUE),
-              NO3NO2  = mean(NO3NO2,  na.rm = TRUE), .groups = "drop") |>
-    st_as_sf(coords = c("X","Y"), crs = 32604)
-  island_diag <- sqrt(diff(st_bbox(pts_proj)[c("xmin","xmax")])^2 +
-                      diff(st_bbox(pts_proj)[c("ymin","ymax")])^2)
-  min_range <- island_diag / 5
-  v_emp  <- variogram(log_val ~ 1, pts_proj)
-  v_auto <- tryCatch(
-    fit.variogram(v_emp, vgm(var(pts_proj$log_val)*0.8, "Sph",
-                              min_range, var(pts_proj$log_val)*0.2)),
-    error = function(e) NULL)
-  v_fit <- if (!is.null(v_auto) && v_auto$range[2] >= min_range) v_auto else
-    vgm(var(pts_proj$log_val)*0.8, "Sph", min_range, var(pts_proj$log_val)*0.2)
-  sample_cov <- st_buffer(st_union(pts_proj), dist = min_range)
-  grid_pts   <- st_make_grid(coast_band, cellsize = res_m, what = "centers") |>
-    st_as_sf() |> st_filter(coast_band) |> st_filter(sample_cov)
-  k_out   <- suppressWarnings(krige(log_val ~ 1, pts_proj, grid_pts,
-                                     model = v_fit, nmax = 40))
-  pred_df <- st_coordinates(k_out) |> as.data.frame() |>
-    mutate(NO3NO2_pred = expm1(k_out$var1.pred))
-  list(pred_df = pred_df, land_sf = land_sf_out, coast_bbox = coast_bbox)
-}
-
-# Attach cluster labels to chem (chem already has the chemistry needed for PAM)
-chem_clust_overlay <- chem |>
-  filter(!is.na(Salinity), !is.na(NO3NO2), !is.na(PO4), !is.na(SiO2)) |>
-  mutate(log_NO3NO2 = log1p(NO3NO2), log_PO4 = log1p(PO4), log_SiO2 = log1p(SiO2))
-
-set.seed(8341)
-pam4_ov <- pam(
-  chem_clust_overlay |> select(Salinity, log_NO3NO2, log_PO4, log_SiO2) |> scale(),
-  k = 3, pamonce = 5
-)
-chem_clust_overlay <- chem_clust_overlay |>
-  mutate(cluster       = factor(pam4_ov$clustering),
-         cluster_label = factor(cluster_labels[cluster], levels = cluster_labels))
-
-krige_cluster_overlay_fn <- function(island_name, title = island_name, pt_size = 1.8) {
-  kd  <- krige_surface_data(chem_clust_overlay, island_name, ahupuaa_raw)
-  pts <- chem_clust_overlay |>
-    filter(island == island_name, !is.na(latitude), !is.na(longitude)) |>
-    st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
-    st_transform(32604)
-  nice_cap <- ceiling(
-    quantile(chem_clust_overlay$NO3NO2[chem_clust_overlay$island == island_name],
-             0.95, na.rm = TRUE) / 5) * 5
-  ggplot() +
-    geom_raster(data = kd$pred_df, aes(x = X, y = Y, fill = NO3NO2_pred)) +
-    geom_sf(data = kd$land_sf, fill = "gray72", color = "gray40", linewidth = 0.3) +
-    geom_sf(data = pts, aes(color = cluster_label),
-            size = pt_size, alpha = 0.9, shape = 21, stroke = 0.9, fill = NA) +
-    scale_fill_viridis_c(option = "plasma", name = "NO3+NO2\n(umol/L)",
-                         limits = c(0, nice_cap), oob = scales::squish,
-                         labels = scales::label_number(drop0trailing = TRUE)) +
-    scale_color_manual(values = cluster_pal_named, name = "Cluster", guide = "none") +
-    coord_sf(crs = 32604,
-             xlim = c(kd$coast_bbox["xmin"], kd$coast_bbox["xmax"]),
-             ylim = c(kd$coast_bbox["ymin"], kd$coast_bbox["ymax"]), expand = FALSE) +
-    labs(title = title) +
-    theme_void(base_size = 9) +
-    theme(plot.title = element_text(face = "bold", size = 9.5, hjust = 0.5,
-                                    margin = margin(b = 3)),
-          legend.position    = "right",
-          legend.title       = element_text(size = 7.5),
-          legend.text        = element_text(size = 7),
-          legend.key.height  = unit(1.6, "lines"))
-}
-
-p_ov_oahu    <- krige_cluster_overlay_fn("O'ahu",    "Oʻahu",    pt_size = 1.4)
-p_ov_maui    <- krige_cluster_overlay_fn("Maui",     "Maui",     pt_size = 2.0)
-p_ov_molokai <- krige_cluster_overlay_fn("Moloka'i", "Molokaʻi", pt_size = 2.2)
-
-cl_legend <- cowplot::get_legend(
-  ggplot(chem_clust_overlay, aes(x = 1, y = 1, color = cluster_label)) +
-    geom_point(size = 3.5, shape = 21, stroke = 1.2, fill = NA) +
-    scale_color_manual(values = cluster_pal_named, name = "Cluster") +
-    theme(legend.position = "bottom",
-          legend.title = element_text(face = "bold", size = 9),
-          legend.text  = element_text(size = 8.5),
-          legend.key.size = unit(1, "lines"))
-)
-
-fill_legend <- cowplot::get_legend(
-  p_ov_oahu + theme(legend.position = "bottom",
-                    legend.title = element_text(size = 8.5),
-                    legend.text  = element_text(size = 8),
-                    legend.key.width = unit(2, "lines"))
-)
-
-cowplot::plot_grid(
-  cowplot::plot_grid(
-    p_ov_oahu    + theme(legend.position = "none"),
-    p_ov_maui    + theme(legend.position = "none"),
-    p_ov_molokai + theme(legend.position = "none"),
-    nrow = 1, rel_widths = c(1.6, 1.4, 0.9), align = "h"
-  ),
-  cowplot::plot_grid(fill_legend, cl_legend, nrow = 1, rel_widths = c(1, 1.4)),
-  ncol = 1, rel_heights = c(1, 0.2)
-)
-```
-
----
-
-# Random forest: landscape predictors of cluster membership — Claim 4
+# Random forest: landscape predictors of cluster membership 
 
 Can we predict which type of water a site will have — before any sampling — just from publicly available maps and records? We used a random forest model (an ensemble of 1,000 decision trees) with thirteen landscape and hydrological predictors. **Infrastructure proximity**: distance to the nearest cesspool, cesspool density per ahupuaʻa, and distance to the nearest NPDES discharge point (wastewater treatment plant outfall or industrial discharge; EPA ECHO 2025). **Storm delivery**: distance to the nearest stream mouth (OpenStreetMap), mean daily discharge in March 2026 from the nearest USGS gauge within 15 km. **Land cover**: % impervious surface and % agricultural land (NOAA C-CAP 2010–2011). **Watershed hydrology**: mean slope per ahupuaʻa (NASA SRTM via *elevatr*; Farr et al. 2007) and soil saturated hydraulic conductivity (SSURGO Ksat, top 100 cm; USDA NRCS 2024) — which together control how fast rainfall becomes runoff. **Pre-storm conditions**: root-zone soil wetness in the 30 days before the storm (NASA POWER, Feb 1–Mar 10 2026; Sparks et al. 2018). **Livestock density**: cattle per km² of agricultural land (USDA NASS 2022 Census of Agriculture). 
 
@@ -2637,7 +2452,7 @@ if (file.exists(ccap_cache_path)) {
 # ── 1. Watershed slope ─────────────────────────────────────────────────────
 slope_cache <- here::here("data", "ahupuaa_slope.csv")
 if (!file.exists(slope_cache)) {
-  islands_needed <- c("O'ahu","Maui","Moloka'i","L\u0101na'i")
+  islands_needed <- c("O'ahu","Maui","Moloka'i","Lāna'i")
   slope_by_island <- purrr::map(islands_needed, function(isl) {
     ahu_isl <- ahupuaa_raw |>
       filter(normalize_name(mokupuni) == normalize_name(isl)) |>
@@ -2672,7 +2487,7 @@ if (!file.exists(ksat_cache)) {
   )
   ahu_centroids_sda <- ahupuaa_raw |>
     filter(normalize_name(mokupuni) %in%
-             normalize_name(c("O'ahu","Maui","Moloka'i","L\u0101na'i"))) |>
+             normalize_name(c("O'ahu","Maui","Moloka'i","Lāna'i"))) |>
     st_centroid() |> st_transform(4326) |>
     mutate(lon = st_coordinates(geometry)[,1],
            lat = st_coordinates(geometry)[,2]) |>
@@ -2727,7 +2542,7 @@ if (!file.exists(smap_cache)) {
     "O'ahu",   -157.98,   21.47,
     "Maui",    -156.34,   20.80,
     "Moloka'i",-157.02,   21.13,
-    "L\u0101na'i", -156.92, 20.83
+    "Lāna'i", -156.92, 20.83
   )
   sm_df <- purrr::pmap_dfr(island_pts, function(island, lon, lat) {
     nasapower::get_power(community="ag", lonlat=c(lon,lat),
@@ -2740,7 +2555,7 @@ if (!file.exists(smap_cache)) {
   write_csv(sm_df, smap_cache)
 } else { sm_df <- read_csv(smap_cache, show_col_types = FALSE) }
 sm_df <- sm_df |>
-  mutate(island = stringr::str_replace_all(island, "[\u02BB\u02BC\u2018\u2019]", "'"))
+  mutate(island = stringr::str_replace_all(island, "[ʻʼ‘’]", "'"))
 
 # ── 5. Livestock density (USDA NASS 2022 Census of Agriculture) ───────────
 livestock_cache <- here::here("data", "usda_nass_livestock_hi.csv")
@@ -2752,16 +2567,16 @@ if (!file.exists(livestock_cache)) {
     "O'ahu",    58.2,   # Honolulu County: 4,467 head / 76.7 km² ag land
     "Maui",     56.1,   # Maui County (Maui+Molokai+Lanai): 35,741 / 636.8 km²
     "Moloka'i", 56.1,
-    "L\u0101na'i", 56.1
+    "Lāna'i", 56.1
   )
   write_csv(livestock_by_island, livestock_cache)
 } else { livestock_by_island <- read_csv(livestock_cache, show_col_types = FALSE) }
 livestock_by_island <- livestock_by_island |>
-  mutate(island = stringr::str_replace_all(island, "[\u02BB\u02BC\u2018\u2019]", "'"))
+  mutate(island = stringr::str_replace_all(island, "[ʻʼ‘’]", "'"))
 
 # ── Join all new predictors to chem_with_discharge ────────────────────────
 island_norm <- c("oahu"="O'ahu","maui"="Maui","molokai"="Moloka'i",
-                 "lanai"="L\u0101na'i")
+                 "lanai"="Lāna'i")
 
 add_island_col <- function(df) {
   df |> dplyr::mutate(island = island_norm[normalize_name(mokupuni)])
@@ -3039,7 +2854,7 @@ The model correctly identified the water type for `r oob_acc`% of sites — `r o
 
 ---
 
-# Landscape predictability — Claim 4
+# Landscape predictability 
 
 If cesspools are genuinely contributing nutrients to the coast during storm events, watersheds with more cesspools per square kilometre should show higher post-storm nutrient levels. We test this by averaging nutrient concentrations per traditional watershed (ahupuaʻa) and comparing against cesspool density.
 
@@ -3048,6 +2863,7 @@ If cesspools are genuinely contributing nutrients to the coast during storm even
 #| fig-height: 5
 #| eval: true
 #| echo: false
+#| include: false
 #| fig-cap: "Watersheds with more cesspools per square kilometre had higher post-storm nitrogen concentrations. Each point is one ahupuaʻa (traditional watershed), with at least 3 samples; point size reflects how many samples it had. Lines show the model predictions per island from a statistical regression. The relationship is real but modest — cesspools explain about 15% of the variation in nitrogen across watersheds, with the rest explained by farmland, stream network, and other factors. The fact that the relationship holds separately within each island rules out island-level confounding."
 
 
@@ -3093,14 +2909,14 @@ ggplot(ahupuaa_df,
            label = sprintf("R² = %.2f, p = %.3f", r2_cp, p_cp),
            hjust = 1.05, vjust = 1.5, size = 3, color = "gray30") +
   scale_color_manual(values = island_pal, name = NULL) +
-  scale_size_continuous(name = "Samples\nper ahupua\u02BBa", range = c(1.5, 6),
+  scale_size_continuous(name = "Samples\nper ahupuaʻa", range = c(1.5, 6),
                         breaks = c(3, 5, 10, 20)) +
   scale_x_log10(labels = scales::label_number(drop0trailing = TRUE)) +
   scale_y_log10(labels = scales::label_number(drop0trailing = TRUE)) +
   labs(
     x        = "Cesspool density (per km², log)",
     y        = "Mean NO₃+NO₂ (µmol/L, log)",
-    subtitle = "Each point = one ahupua\u02BBa (n \u2265 3 samples). Lines = island-level model predictions."
+    subtitle = "Each point = one ahupuaʻa (n ≥ 3 samples). Lines = island-level model predictions."
   ) +
   theme_minimal(base_size = 11) +
   theme(panel.grid.minor = element_blank(), legend.position = "right",
@@ -3187,401 +3003,10 @@ p_ag <- rf_base_joined %>%
   theme(panel.grid.minor = element_blank(), legend.position = "none",
         plot.subtitle = element_text(size = 9, color = "gray40"))
 
-p_ag | p_cess_cat
+p_ag / p_cess_cat
 ggsave(here("output","cesspool_Ag_NN.png"), width = 8, height = 6)
 ```
 
-# Analytical roadmap — public datasets by manuscript claim
-
-This section documents the publicly available datasets that support each manuscript claim, with reproducible data-access code. All chunks use `eval: false` so they are preserved as a roadmap without executing on render. Cache outputs to `data/` before running analyses.
-
----
-
-## Claim 1 · Spatially coherent coastal disturbance
-
-**Goal:** Establish that the Kona Low produced an anomalously large, island-wide rainfall pulse — not routine local rain — and that NCEP precipitation spatial patterns match the nutrient hotspot geography.
-
-**What's already cached:**
-
-- `hawaii_ncep_janjun_cache.csv` — NCEP gridded daily precipitation, Jan–Jun 2026; covers storm peak (~Mar 14). Use to map storm-total rainfall and overlay against kriged NO₃+NO₂.
-- `hawaii_rainfall_cache.csv` — CHIRPS daily precipitation, 2013–Feb 2026; use to compute a 10-year historical baseline and express Mar 2026 as a return-interval anomaly.
-- `hawaii_chlorophyll_cache.rds` / `hawaii_chlorophyll_monthly_cache.rds` — VIIRS coastal chlorophyll, Feb–Jun 2026 (~85% cloud-masked but post-storm bloom still visible). Biological response corroborating nutrient enrichment.
-
-**Planned analyses:**
-
-```{r}
-#| label: claim1-storm-anomaly
-
-# Compute mean island-wide daily precip from CHIRPS historical baseline,
-# then compare Mar 14–22, 2026 NCEP storm totals to historical percentile.
-# Produces: storm anomaly map + return-interval estimate per island.
-
-ncep     <- read_csv("hawaii_ncep_janjun_cache.csv", show_col_types = FALSE)
-chirps   <- read_csv("hawaii_rainfall_cache.csv",    show_col_types = FALSE)
-
-# Historical March daily mean per grid cell (CHIRPS 2013–2026)
-hist_march <- chirps |>
-  filter(lubridate::month(date) == 3) |>
-  group_by(island, latitude, longitude) |>
-  summarise(mean_precip = mean(precip, na.rm = TRUE),
-            sd_precip   = sd(precip,   na.rm = TRUE), .groups = "drop")
-
-# Storm-total precipitation March 10–25 2026 from NCEP
-storm_total <- ncep |>
-  filter(date >= as.Date("2026-03-10"), date <= as.Date("2026-03-25")) |>
-  group_by(island, latitude, longitude) |>
-  summarise(storm_precip_mm = sum(precip_mmday, na.rm = TRUE), .groups = "drop")
-
-# Z-score anomaly relative to historical March totals
-# (combine chirps baseline stats with storm totals, matched by island)
-```
-
-```{r}
-#| label: claim1-chlorophyll-timeseries
-
-# Plot mean daily coastal chlorophyll per island, Feb–Jun 2026,
-# with Kona Low window annotated. Compares pre-storm baseline to post-storm bloom.
-
-chla <- readRDS("hawaii_chlorophyll_cache.rds")
-
-storm_window <- data.frame(
-  xmin = as.Date("2026-03-10"), xmax = as.Date("2026-03-25"),
-  ymin = -Inf, ymax = Inf
-)
-
-chla |>
-  filter(island %in% c("Oahu", "Maui", "Molokai", "Lanai")) |>
-  group_by(island, date) |>
-  summarise(mean_chla = mean(chlor_a, na.rm = TRUE), .groups = "drop") |>
-  ggplot(aes(x = date, y = mean_chla, color = island)) +
-  geom_rect(data = storm_window,
-            aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-            inherit.aes = FALSE, fill = "steelblue", alpha = 0.15) +
-  geom_line(na.rm = TRUE) +
-  scale_y_log10() +
-  facet_wrap(~island, ncol = 1) +
-  labs(x = NULL, y = expression("Chlorophyll-a (mg m"^{-3}*")"),
-       title = "Coastal chlorophyll response to Kona Low",
-       caption = "Blue band = storm window (Mar 10\u201325, 2026). Verify dates before publication.")
-```
-
----
-
-## Claim 2 · Distinct chemical fingerprints
-
-**Goal:** Show that the storm created spatially distinct nutrient signatures — not a single uniform pulse — and that differences in stoichiometry (N:P, Si:N) reflect underlying watershed land use and geology.
-
-**Needed datasets:**
-
-1. **NOAA C-CAP (Coastal Change Analysis Program) land cover — Hawaii, 30 m**
-   - Distinguishes: agriculture, impervious/urban, wetland, native forest, developed open space
-   - URL: <https://coast.noaa.gov/ccapftp/>
-   - Product: 2016 Hawaii C-CAP (most recent island-wide coverage)
-   - Access: direct download GeoTIFF, or via `FedData::get_ccap()` (note: requires polygon AOI)
-
-2. **USGS Hawaii geology (1:250,000)**
-   - Basalt lava age and permeability control silica weathering rates → explains Si:N variation between young Kona-side lava and older windward slopes
-   - URL: <https://www.sciencebase.gov/catalog/item/5888bf4fe4b0d9e9b5dc5e1c>
-   - File: `hi_geo_ageliths.zip` (shapefile)
-
-```{r}
-#| label: claim2-nutrient-ratios
-
-# Compute molar N:P and Si:N ratios per sample and map their spatial variation.
-# Redfield ratio reference lines: N:P = 16, Si:N = 1.
-# Divergence from Redfield reveals source signatures.
-
-chem <- read_csv("data/clean_chemdata.csv", show_col_types = FALSE) |>
-  filter(!is.na(island)) |>
-  mutate(
-    NP_ratio  = NO3NO2 / PO4,
-    SiN_ratio = SiO2   / NO3NO2
-  )
-
-# Scatter: N:P vs Si:N, colored by island + labeled reference lines
-ggplot(chem |> filter(!is.na(NP_ratio), !is.na(SiN_ratio)),
-       aes(x = SiN_ratio, y = NP_ratio, color = island)) +
-  geom_hline(yintercept = 16,  linetype = "dashed", color = "gray50") +  # Redfield N:P
-  geom_vline(xintercept = 1,   linetype = "dashed", color = "gray50") +  # Si:N = 1
-  geom_point(alpha = 0.5, size = 1.6) +
-  scale_x_log10() + scale_y_log10() +
-  labs(x = "Si:N (molar)", y = "N:P (molar)",
-       caption = "Dashed lines = Redfield ratio references (N:P = 16; Si:N = 1)")
-```
-
-<!-- C-CAP download and per-ahupuaa extraction are now fully implemented in the
-     ccap-landcover-cache chunk earlier in this document. Results are cached to
-     data/ccap_ahupuaa_summary.csv and joined into rf_df_qmd automatically. -->
-
----
-
-## Claim 3 · Increased watershed–coast connectivity
-
-**Goal:** Directly measure storm runoff by pulling USGS stream gauge discharge records for Oʻahu and Maui. Peak discharge on March 14–15 corroborates the nutrient–salinity dilution signal and closes the mechanistic chain: rainfall → discharge → coastal salinity drop → nutrient enrichment.
-
-**Needed dataset: USGS NWIS stream discharge**
-
-- Package: `dataRetrieval` (CRAN)
-- Parameter code: `00060` (discharge, ft³/s)
-- Daily values (`readNWISdv`) or instantaneous (`readNWISuv` for 15-min data during storm)
-
-```{r}
-#| label: claim3-gauge-discovery
-#| eval: false
-# Find all active Hawaii stream gauges with discharge data
-hi_gauges <- whatNWISsites(
-  stateCd       = "HI",
-  parameterCd   = "00060",
-  hasDataTypeCd = "dv"
-)
-
-# Focus: Oahu and Maui gauges
-hi_gauges |>
-  filter(stringr::str_detect(station_nm, regex("oahu|maui|wailuku|manoa|nuuanu|waimea|iao",
-                                               ignore_case = TRUE))) |>
-  select(site_no, station_nm, dec_lat_va, dec_long_va, drain_area_va)
-```
-
-```{r}
-#| label: claim3-discharge-pull
-#| eval: false
-#| include: false
-# Pull daily discharge for key gauges, Jan–Apr 2026.
-# Known active Oahu gauges (verify currency with whatNWISsites above):
-#   16211600 — Manoa Stream at Manoa   (urban/residential watershed)
-#   16240500 — Nuuanu Reservoir (urban)
-#   16330000 — Waimea River (rural/agricultural)
-# Known Maui gauges:
-#   16400000 — Wailuku River at Kahului
-#   16508000 — Waihee River
-
-gauge_ids <- c("16211600", "16240500", "16330000",  # Oahu
-               "16400000", "16508000")               # Maui
-
-discharge_raw <- readNWISdv(
-  siteNumbers  = gauge_ids,
-  parameterCd  = "00060",
-  startDate    = "2026-01-01",
-  endDate      = "2026-04-15"
-) |>
-  renameNWISColumns()
-
-# Save immediately
-saveRDS(discharge_raw, "data/usgs_discharge_cache.rds")
-
-# Quick plot — discharge over time with storm window
-storm_window <- data.frame(xmin = as.Date("2026-03-10"), xmax = as.Date("2026-03-25"))
-discharge_raw |>
-  ggplot(aes(x = Date, y = Flow, color = site_no)) +
-  geom_rect(data = storm_window,
-            aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
-            inherit.aes = FALSE, fill = "steelblue", alpha = 0.15) +
-  geom_line(na.rm = TRUE) +
-  scale_y_log10() +
-  facet_wrap(~site_no, scales = "free_y", ncol = 1) +
-  labs(x = NULL, y = "Discharge (ft³/s)")
-```
-
-```{r}
-#| label: claim3-nwis-wq-note
-#| eval: false
-#| include: false
-# NOTE (July 2026): The USGS NWIS discrete water-quality service ("qw") has been
-# retired. readNWISqw() and readNWISdata(service="qw") no longer work.
-# Use the Water Quality Portal instead — query USGS sites by site number via WQP:
-#
-#   readWQPdata(siteid = paste0("USGS-", c("16211600","16400000","16508000")),
-#               characteristicName = c("Nitrate + Nitrite","Phosphate","Silica"),
-#               startDateLo = "2010-01-01", startDateHi = "2026-04-30")
-#
-# This returns discrete grab samples collected at the gauges during both
-# baseflow and storm conditions, allowing direct storm amplification estimates.
-```
-
-```{r}
-#| label: claim3-discharge-vs-nutrients
-#| eval: false
-#| include: false
-# After pulling discharge: compare peak storm discharge per watershed
-# to mean nutrient concentration at sampling sites within that watershed.
-# Requires joining gauge sites to ahupuaʻa assignments (by spatial proximity).
-# Expects: discharge_raw saved above, chem with ahupuaa column
-
-discharge <- readRDS("data/usgs_discharge_cache.rds") |>
-  renameNWISColumns()
-
-# Peak discharge in storm window per gauge
-peak_q <- discharge |>
-  filter(Date >= as.Date("2026-03-10"), Date <= as.Date("2026-03-25")) |>
-  group_by(site_no) |>
-  summarise(peak_discharge_cfs = max(Flow, na.rm = TRUE), .groups = "drop")
-
-# TODO: spatial join gauge locations to ahupuaʻa, then join to mean nutrient
-# loading per ahupuaʻa from chem data
-```
-
----
-
-## Claim 4 · Predictability from landscape structure
-
-**Goal:** Show that spatial variation in nutrient concentrations is predictable from pre-existing landscape features (cesspool density, impervious cover, watershed area, stream density). A simple regression or random forest of nutrient loading ~ landscape predictors would make this quantitative.
-
-**What's already available:**
-
-- `data/cesspool_by_ahupuaa.csv` — cesspool count and density per ahupuaʻa (already in use)
-- `data/sample_cesspool_distances.csv` — distance from each sample to nearest cesspool
-
-**Needed: NOAA C-CAP (see Claim 2 above) + USGS NHDPlus stream network**
-
-```{r}
-#| label: claim4-nhd-download
-#| eval: false
-#| include: false
-# Download NHDPlus (National Hydrography Dataset) for Hawaii.
-# Use to compute: stream density (km/km²) per ahupuaʻa watershed.
-# Dense stream networks = more efficient nutrient routing to coast.
-# Package: nhdplusTools
-
-# Hawaii is in USGS Region 20 (Pacific Islands)
-# Download NHDPlus HR for Hawaii
-hi_nhd_url <- "https://prd-tnm.s3.amazonaws.com/StagedProducts/Hydrography/NHDPlusHR/Beta/GDB/NHDPLUS_H_2001_HU4_GDB.zip"
-# Alternative: use nhdplusTools::get_nhdplus() with AOI polygon
-
-ahupuaa_sf <- sf::st_read("data/ahupuaa_boundaries.geojson", quiet = TRUE)
-
-# Get flowlines within Oahu bounding box as a test
-oahu_bbox <- ahupuaa_sf |>
-  dplyr::filter(stringr::str_detect(mokupuni, regex("oahu", ignore_case = TRUE))) |>
-  sf::st_bbox() |>
-  sf::st_as_sfc() |>
-  sf::st_as_sf()
-
-flowlines <- nhdplusTools::get_nhdplus(AOI = oahu_bbox, realization = "flowline")
-saveRDS(flowlines, "data/nhd_oahu_flowlines.rds")
-```
-
-```{r}
-#| label: claim4-landscape-regression
-#| eval: false
-#| include: false
-# Regression: mean NO3+NO2 per ahupuaʻa ~ cesspool_density + pct_impervious
-# + stream_density + watershed_area
-# Requires: ccap_by_ahupuaa.csv (from Claim 2) and nhd stream density (above)
-
-chem_aug <- read_csv("data/clean_chemdata.csv", show_col_types = FALSE) |>
-  filter(!is.na(island)) |>
-  left_join(read_csv("data/ahupuaa_cache.csv",      show_col_types = FALSE), by = "sample_id") |>
-  left_join(read_csv("data/cesspool_by_ahupuaa.csv", show_col_types = FALSE) |>
-              select(ahupuaa, moku, cesspool_density_per_km2),
-            by = c("ahupuaa", "moku"))
-
-# Mean nutrient loading per ahupuaʻa
-ahupuaa_nutrients <- chem_aug |>
-  group_by(island, ahupuaa, moku, cesspool_density_per_km2) |>
-  summarise(
-    mean_NO3NO2  = mean(NO3NO2,  na.rm = TRUE),
-    mean_PO4     = mean(PO4,     na.rm = TRUE),
-    n_samples    = n(),
-    .groups = "drop"
-  ) |>
-  filter(n_samples >= 3)  # only ahupuaʻa with enough samples
-
-# Simple log-log regression (add ccap and nhd predictors when available)
-lm(log1p(mean_NO3NO2) ~ log1p(cesspool_density_per_km2), data = ahupuaa_nutrients) |>
-  summary()
-```
-
----
-
-## Claim 5 · community science enabled detection
-
-**Goal:** Quantify the monitoring gap — show that conventional water quality monitoring in Hawaiʻi would not have captured this event at the spatial or temporal resolution needed. Two lines of evidence: (1) spatial coverage comparison, (2) sampling timing relative to storm.
-
-**Needed dataset: EPA Water Quality Portal (WQP)**
-
-- Package: `dataRetrieval` (same package as USGS NWIS)
-- Function: `readWQPdata()` — returns all water quality records for a state/date range
-- Coverage: includes Hawaii DOH, NOAA, EPA BEACH Act, university monitoring programs
-
-```{r}
-#| label: claim5-wqp-query
-#| eval: false
-#| include: false
-# Query all Hawaii coastal nutrient samples from WQP in the 60 days
-# surrounding the storm. Compare: how many samples? At how many unique sites?
-# How close to shore? How soon after the storm?
-
-wqp_hi <- readWQPdata(
-  statecode      = "US:15",          # Hawaii FIPS
-  characteristicName = c("Nitrate", "Nitrate + Nitrite", "Phosphate",
-                         "Silica", "Specific conductance"),
-  startDateLo    = "2026-02-01",
-  startDateHi    = "2026-05-01"
-)
-
-# Cache immediately — API calls can be slow
-saveRDS(wqp_hi, "data/wqp_hawaii_cache.rds")
-
-# Summary: how many unique sites, samples, and dates near storm window?
-wqp_hi |>
-  mutate(date = as.Date(ActivityStartDate)) |>
-  summarise(
-    n_samples      = n(),
-    n_sites        = n_distinct(MonitoringLocationIdentifier),
-    n_storm_window = sum(between(date, as.Date("2026-03-10"), as.Date("2026-04-15")),
-                         na.rm = TRUE)
-  )
-```
-
-```{r}
-#| label: claim5-coverage-map
-#| eval: false
-#| include: false
-# Map conventional monitoring sites (WQP) vs community science sites (chem)
-# to visualize the spatial coverage gap.
-# Expects: wqp_hi cached above
-
-wqp_hi   <- readRDS("data/wqp_hawaii_cache.rds")
-chem     <- read_csv("data/clean_chemdata.csv", show_col_types = FALSE)
-ahupuaa  <- sf::st_read("data/ahupuaa_boundaries.geojson", quiet = TRUE)
-
-# WQP sites as sf
-wqp_sf <- wqp_hi |>
-  distinct(MonitoringLocationIdentifier, .keep_all = TRUE) |>
-  filter(!is.na(LongitudeMeasure), !is.na(LatitudeMeasure)) |>
-  sf::st_as_sf(coords = c("LongitudeMeasure", "LatitudeMeasure"), crs = 4326) |>
-  mutate(source = "Conventional monitoring")
-
-# community science sites as sf
-cs_sf <- chem |>
-  filter(!is.na(longitude), !is.na(latitude)) |>
-  sf::st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
-  mutate(source = "community science (this study)")
-
-
-# Hawaii land for background
-hi_land <- ahupuaa |>
-  dplyr::filter(stringr::str_detect(mokupuni,
-    regex("oahu|maui|molokai|lanai", ignore_case = TRUE))) |>
-  sf::st_union() |> sf::st_as_sf()
-
-# Combined map
-bind_rows(
-  wqp_sf |> select(source, geometry),
-  cs_sf  |> select(source, geometry)
-) |>
-  ggplot() +
-  geom_sf(data = hi_land, fill = "gray80", color = "gray50", linewidth = 0.3) +
-  geom_sf(aes(color = source, size = source), alpha = 0.7) +
-  scale_color_manual(values = c("Conventional monitoring"   = "firebrick",
-                                "community science (this study)" = "#1565C0")) +
-  scale_size_manual(values  = c("Conventional monitoring"   = 2.5,
-                                "community science (this study)" = 1.0)) +
-  facet_wrap(~source) +
-  theme_minimal() +
-  theme(legend.position = "none", axis.text = element_blank()) +
-  labs(title = "Spatial monitoring coverage: conventional vs. community science")
-```
 
 ---
 
