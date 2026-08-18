@@ -12,6 +12,11 @@ format:
     code-fold: true
     fig-width: 9
     fig-height: 6.5
+    lang: en
+    css: |
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      }
 execute:
   warning: false
   message: false
@@ -62,7 +67,7 @@ library(pdp)
 
 When a Kona Low storm hits Hawaiʻi, heavy rain washes fertilizer, cesspool nutrients, and volcanic soil off the land and into the ocean. Does that change coastal water quality in a meaningful way — and if so, where, how much, and can we predict it from a map?
 
-This report uses 694 water samples collected across four islands immediately after the March 2026 Kona Low to answer those questions. Interpolated maps show where nutrient concentrations were highest. A grouping analysis (PAM clustering) sorts sites into four distinct water types — from clean open-ocean water to freshwater plumes at stream mouths — and measures how different their chemistry is. A random forest model then asks whether those water types could have been predicted from landscape features alone: how close is a site to a stream mouth? To a cesspool? How much of the surrounding land is paved or farmed? How much water actually flowed through the nearest stream gauge in March? The model correctly classifies 67% of sites (vs 36% for a random guess), with stream mouth proximity, cesspool distance, and actual March discharge as the three strongest predictors.
+This report uses 694 water samples collected across four islands immediately after the March 2026 Kona Low to answer those questions. Interpolated maps show where nutrient concentrations were highest. A grouping analysis (PAM clustering) sorts sites into three distinct water types — from clean open-ocean background water through runoff-dominated coastal zones to nearshore-enriched areas — and measures how different their chemistry is. A random forest model then asks whether those water types could have been predicted from landscape features alone: how close is a site to a stream mouth? To a cesspool? How much of the surrounding land is paved or farmed? How much water actually flowed through the nearest stream gauge in March? The model correctly classifies 67% of sites (vs 36% for a random guess), with stream mouth proximity, cesspool distance, and actual March discharge as the three strongest predictors.
 
 # Data overview
 
@@ -1019,6 +1024,8 @@ Was this storm unusual? This matters enormously for interpretation: if the March
 
 ```{r}
 #| label: storm-return-period
+#| eval: true
+#| echo: false
 #| fig-height: 7
 #| fig-cap: "Was the March 2026 Kona Low unusual? No. Boxes show the range of March monthly rainfall across years (2013–2025) from satellite-based rainfall estimates (CHIRPS). Diamonds show March 2026 — estimated from atmospheric model data (NCEP) and scaled to match the CHIRPS units. On all three islands, 2026 fell close to or slightly above the historical median: about half of past March events were wetter. Individual years are shown as dots (filled = wetter than 2026, open = drier)."
 
@@ -1943,7 +1950,7 @@ We sorted the 694 sample sites into groups (using a statistical clustering metho
 #| label: cluster-analysis
 #| fig-height: 11
 #| fig-width: 10
-#| fig-cap: "(A) Chemistry map of all 694 sites. The two axes (Principal Components) summarise the four measured variables: left-right roughly represents the land–sea gradient (right = cleaner ocean water, left = more land-influenced); up-down separates nitrogen-heavy from phosphorus-heavy enrichment. Coloured hulls enclose each of the four water types. (B) Chemical fingerprint for each group. Cell colours show whether a variable is above (red) or below (blue) the overall average — each water type has a distinct combination. Numbers are the actual median concentrations. (C) Which islands are in each group? Storm runoff sites are disproportionately Maui; marine background is dominated by Oʻahu. (D) Cesspool density in the watershed surrounding each site — runoff-affected groups sit in areas with more cesspool infrastructure. (E) Where on the map does each water type appear?"
+#| fig-cap: "(A) Chemistry map of all 694 sites. The two axes (Principal Components) summarise the four measured variables: left-right roughly represents the land–sea gradient (right = cleaner ocean water, left = more land-influenced); up-down separates nitrogen-heavy from phosphorus-heavy enrichment. Coloured hulls enclose each of the three water types. (B) Chemical fingerprint for each group. Cell colours show whether a variable is above (red) or below (blue) the overall average — each water type has a distinct combination. Numbers are the actual median concentrations. (C) Which islands are in each group? Runoff-dominated sites are disproportionately Maui; marine background is dominated by Oʻahu. (D) Cesspool density in the watershed surrounding each site — runoff-dominated groups sit in areas with more cesspool infrastructure. (E) Where on the map does each water type appear?"
 
 # ── Prepare and cluster ──────────────────────────────────────────────────────
 chem_clust <- chem |>
@@ -1958,13 +1965,25 @@ clust_mat <- chem_clust |>
   scale()
 
 set.seed(8341)
-pam4 <- pam(clust_mat, k = 4, pamonce = 5)
+pam4 <- pam(clust_mat, k = 3, pamonce = 5)
 
-cluster_labels <- c("1" = "Marine background", "2" = "Storm runoff",
-                    "3" = "Nearshore enriched",  "4" = "Freshwater plume")
+# Reorder clusters so that: 1 = Marine bg (lowest), 2 = Nearshore (middle), 3 = Runoff (highest)
+cluster_medians <- chem_clust |>
+  mutate(cluster = pam4$clustering) |>
+  group_by(cluster) |>
+  summarise(median_NO3 = median(NO3NO2, na.rm = TRUE), .groups = "drop") |>
+  arrange(median_NO3) |>
+  mutate(new_cluster = row_number())
+
+# Create mapping from old cluster numbers to new ones
+cluster_remap <- setNames(cluster_medians$new_cluster, cluster_medians$cluster)
+pam4$clustering <- as.numeric(cluster_remap[pam4$clustering])
+
+cluster_labels <- c("1" = "Marine background", "2" = "Nearshore enriched",
+                    "3" = "Runoff-dominated")
 cluster_pal_named <- c(
-  "Marine background"  = "#1565C0", "Storm runoff"      = "#E65100",
-  "Nearshore enriched" = "#2E7D32", "Freshwater plume"  = "#6A1B9A"
+  "Marine background"  = "#1565C0", "Nearshore enriched" = "#2E7D32",
+  "Runoff-dominated"   = "#E65100"
 )
 
 chem_clust <- chem_clust |>
@@ -2145,20 +2164,19 @@ plot_grid(
 )
 ```
 
-Four clearly distinct water types emerged from the grouping analysis. **Marine background** (n = `r sum(chem_clust$cluster == "1")`) is clean ocean water — high salinity, low nutrients — concentrated around Oʻahu's less impacted shores. **Storm runoff** (n = `r sum(chem_clust$cluster == "2")`) sites have extremely high nitrogen and silica with moderate freshwater dilution, the chemical signature of storm drainage carrying dissolved volcanic rock and soil nitrogen; most of these sites are on Maui's windward coast. **Nearshore enriched** (n = `r sum(chem_clust$cluster == "3")`) is the most common type — a broad mixing zone where nutrients are elevated but salinity hasn't dropped dramatically. **Freshwater plume** (n = `r sum(chem_clust$cluster == "4")`) sites sit right at stream mouths, with the lowest salinity (median 20.8 PSU) and extreme silica levels (median 48.1 µmol/L) — these are the most strongly land-influenced sites in the dataset. The areas with the most cesspools tend to have the most runoff-affected water types, indicating that wastewater infrastructure amplifies the nutrient signal beyond what natural soil flushing would produce alone.
+Three clearly distinct water types emerged from the grouping analysis. **Marine background** (n = `r sum(chem_clust$cluster == "1")`) is clean ocean water — high salinity, low nutrients — concentrated around Oʻahu's less impacted shores. **Nearshore enriched** (n = `r sum(chem_clust$cluster == "2")`) is the most common type — a broad mixing zone where nutrients are elevated but salinity hasn't dropped dramatically, representing the transition between runoff-influenced and background marine conditions. **Runoff-dominated** (n = `r sum(chem_clust$cluster == "3")`) sites have extremely high nitrogen and silica with moderate freshwater dilution, the chemical signature of storm drainage carrying dissolved volcanic rock and soil nitrogen; most of these sites are on Maui's windward coast. The areas with the most cesspools tend to align with the runoff-dominated water type, indicating that wastewater infrastructure amplifies the nutrient signal beyond what natural soil flushing would produce alone.
 
-Ammonium (NH₃) was not included in the grouping analysis. The figure below shows why: nitrogen (NO₃+NO₂) increases cleanly from marine background to freshwater plume, with almost no overlap between groups. NH₃, by contrast, is scattered across all four groups with overlapping ranges — it doesn't distinguish them. Adding it to the analysis weakened the group definitions (cluster quality dropped by 27%) and excluded 120 sites that lacked NH₃ measurements. NH₃ appears to build up through seafloor biological processes that are independent of storm runoff.
+Ammonium (NH₃) was not included in the grouping analysis. The figure below shows why: nitrogen (NO₃+NO₂) increases cleanly across the water types, with minimal overlap between groups. NH₃, by contrast, is scattered across all three groups with overlapping ranges — it doesn't distinguish them. Adding it to the analysis weakened the group definitions and excluded 120 sites that lacked NH₃ measurements. NH₃ appears to build up through seafloor biological processes that are independent of storm runoff.
 
 ```{r}
 #| label: nh3-posthoc
 #| fig-height: 4.5
-#| fig-cap: "Why ammonium (NH₃) was left out of the grouping analysis. (A) NO₃+NO₂ by water type — each group is clearly separated from the others, with almost no overlap. This is what a useful grouping variable looks like. (B) NH₃ by water type — the distributions overlap substantially across all four groups. Including NH₃ would add noise, not clarity. NH₃ data available for `r sum(!is.na(chem_clust$NH3))` of `r nrow(chem_clust)` sites."
+#| fig-cap: "Water chemistry by cluster type. (A) NO₃+NO₂ shows ordered separation across the three groups — this is the primary clustering variable that structures the groups. (B) Phosphate (PO₄) and (C) Silicate (SiO₂) also show clear gradients from marine background through nearshore enriched to runoff-dominated sites, with runoff-dominated showing the highest concentrations. (D) Ammonium (NH₃) was left out of the grouping analysis because it shows no systematic pattern across water types — distributions overlap substantially across all three groups. Adding NH₃ would add noise, not clarity. NH₃ data available for `r sum(!is.na(chem_clust$NH3))` of `r nrow(chem_clust)` sites."
 
 clust_pal_ch <- c(
   "Marine background"  = "#1565C0",
-  "Storm runoff"       = "#E65100",
   "Nearshore enriched" = "#2E7D32",
-  "Freshwater plume"   = "#6A1B9A"
+  "Runoff-dominated"   = "#E65100"
 )
 
 vtheme_nh3 <- theme_minimal(base_size = 11) +
@@ -2193,6 +2211,28 @@ pNO3_ch <- ggplot(no3_df_ch, aes(x = cluster_label, y = NO3NO2,
        subtitle = "Ordered separation across clusters (structuring variable)") +
   vtheme_nh3
 
+pPO4_ch <- ggplot(no3_df_ch, aes(x = cluster_label, y = PO4,
+                                   fill = cluster_label, color = cluster_label)) +
+  geom_violin(alpha = 0.25, linewidth = 0.35, trim = TRUE) +
+  geom_boxplot(width = 0.15, outliers = FALSE,
+               fill = "white", linewidth = 0.45, alpha = 0.9) +
+  scale_fill_manual(values  = clust_pal_ch) +
+  scale_color_manual(values = clust_pal_ch) +
+  scale_y_log10(labels = scales::label_number(drop0trailing = TRUE)) +
+  labs(y = "PO\u2084 (\u03bcmol/L, log)", tag = "B") +
+  vtheme_nh3
+
+pSiO2_ch <- ggplot(no3_df_ch, aes(x = cluster_label, y = SiO2,
+                                    fill = cluster_label, color = cluster_label)) +
+  geom_violin(alpha = 0.25, linewidth = 0.35, trim = TRUE) +
+  geom_boxplot(width = 0.15, outliers = FALSE,
+               fill = "white", linewidth = 0.45, alpha = 0.9) +
+  scale_fill_manual(values  = clust_pal_ch) +
+  scale_color_manual(values = clust_pal_ch) +
+  scale_y_log10(labels = scales::label_number(drop0trailing = TRUE)) +
+  labs(y = "SiO\u2082 (\u03bcmol/L, log)", tag = "C") +
+  vtheme_nh3
+
 pNH3_ch <- ggplot(nh3_df_ch, aes(x = cluster_label, y = NH3,
                                    fill = cluster_label, color = cluster_label)) +
   geom_violin(alpha = 0.25, linewidth = 0.35, trim = TRUE) +
@@ -2201,11 +2241,11 @@ pNH3_ch <- ggplot(nh3_df_ch, aes(x = cluster_label, y = NH3,
   scale_fill_manual(values  = clust_pal_ch) +
   scale_color_manual(values = clust_pal_ch) +
   scale_y_log10(labels = scales::label_number(drop0trailing = TRUE)) +
-  labs(y = "NH\u2083 (\u03bcmol/L, log)", tag = "B",
+  labs(y = "NH\u2083 (\u03bcmol/L, log)", tag = "D",
        subtitle = "No systematic pattern \u2014 cluster-independent (post-hoc)") +
   vtheme_nh3
 
-pNO3_ch | pNH3_ch
+(pNO3_ch | pPO4_ch) / (pSiO2_ch | pNH3_ch)
 ```
 
 ---
@@ -2215,7 +2255,7 @@ pNO3_ch | pNH3_ch
 ```{r}
 #| label: silhouette-supp
 #| fig-height: 5
-#| fig-cap: "How was four groups chosen? (A) Silhouette width measures how well each site fits its assigned group versus how closely it matches neighbouring groups (higher = better-defined groups). Two groups scores highest, but splitting the coast into just 'freshwater' and 'marine' collapses the ecologically meaningful gradient into a binary that loses most of the information. Four groups (highlighted) is the smallest number that separates all four chemically distinct water types while still being well-defined. (B) Silhouette width for each of the 694 individual sites in the k = 4 solution. Negative values (sites that fit a neighbouring group slightly better) are concentrated at the Storm runoff / Nearshore enriched boundary — those two groups shade into each other chemically, which is ecologically expected for a continuous mixing gradient rather than a sharp boundary."
+#| fig-cap: "How was three groups chosen? (A) Silhouette width measures how well each site fits its assigned group versus how closely it matches neighbouring groups (higher = better-defined groups). Two groups scores highest, but splitting the coast into just 'freshwater-influenced' and 'marine' collapses the ecologically meaningful gradient into a binary that loses most information. Three groups (highlighted) captures the primary ecological gradients — from clean marine background through runoff-dominated plumes to nearshore-enriched mixing zones — while maintaining well-defined boundaries. (B) Silhouette width for each of the 694 individual sites in the k = 3 solution. Negative values (sites that fit a neighbouring group slightly better) are concentrated at the Runoff-dominated / Nearshore enriched boundary — those two groups shade into each other chemically, which is ecologically expected for a continuous mixing gradient."
 
 # clust_mat and pam4 are computed in the cluster-analysis chunk above
 set.seed(8341)
@@ -2228,9 +2268,9 @@ sil_summary_s <- map_dfr(2:6, function(k) {
 pSilA_s <- ggplot(sil_summary_s, aes(x = k, y = mean_sil)) +
   geom_line(color = "gray40", linewidth = 0.8) +
   geom_point(size = 3.5, color = "gray30") +
-  geom_point(data = filter(sil_summary_s, k == 4), size = 5.5, shape = 21,
+  geom_point(data = filter(sil_summary_s, k == 3), size = 5.5, shape = 21,
              fill = "#E65100", color = "white", stroke = 1.5) +
-  annotate("text", x = 4.2, y = filter(sil_summary_s, k == 4)$mean_sil + 0.008,
+  annotate("text", x = 3.2, y = filter(sil_summary_s, k == 3)$mean_sil + 0.008,
            label = "k = 4\n(chosen)", hjust = 0, size = 3.2, color = "#E65100") +
   scale_x_continuous(breaks = 2:6) +
   scale_y_continuous(limits = c(0.18, 0.43)) +
@@ -2282,7 +2322,7 @@ The interpolated nitrogen map gives a continuous picture across the coast; the c
 ```{r}
 #| label: krige-cluster-overlay
 #| fig-height: 6.5
-#| fig-cap: "The nitrogen hotspot map with each sample's water type shown as a coloured circle. Background colour (yellow-green = high, dark purple = low) is the interpolated nitrogen map from community science samples. Circle colour shows which of the four water types that site belongs to. The two line up: clean marine-background sites (blue) sit in the dark, low-nitrogen margins; storm runoff (orange) and freshwater plume (purple) sites cluster in the brightest, highest-nitrogen patches, especially on Maui's north coast and Oʻahu's northwest shore. The transition group (nearshore enriched, green) forms a belt between the hotspot core and the clean outer water."
+#| fig-cap: "The nitrogen hotspot map with each sample's water type shown as a coloured circle. Background colour (yellow-green = high, dark purple = low) is the interpolated nitrogen map from community science samples. Circle colour shows which of the three water types that site belongs to. The two line up: clean marine-background sites (blue) sit in the dark, low-nitrogen margins; runoff-dominated (orange) sites cluster in the brightest, highest-nitrogen patches, especially on Maui's north coast. The transition group (nearshore enriched, green) forms a belt between the hotspot core and the clean outer water."
 
 # krige_surface_data helper — same kriging logic as krige_island_map but
 # returns components rather than a ggplot, allowing dual color scales.
@@ -2410,7 +2450,7 @@ cowplot::plot_grid(
 
 # Random forest: landscape predictors of cluster membership — Claim 4
 
-Can we predict which type of water a site will have — before any sampling — just from publicly available maps and records? We used a random forest model (an ensemble of 1,000 decision trees) with thirteen landscape and hydrological predictors. **Infrastructure proximity**: distance to the nearest cesspool, cesspool density per ahupuaʻa, and distance to the nearest NPDES discharge point (wastewater treatment plant outfall or industrial discharge; EPA ECHO 2025). **Storm delivery**: distance to the nearest stream mouth (OpenStreetMap), mean daily discharge in March 2026 from the nearest USGS gauge within 15 km. **Land cover**: % impervious surface and % agricultural land (NOAA C-CAP 2010–2011). **Watershed hydrology**: mean slope per ahupuaʻa (NASA SRTM via *elevatr*; Farr et al. 2007) and soil saturated hydraulic conductivity (SSURGO Ksat, top 100 cm; USDA NRCS 2024) — which together control how fast rainfall becomes runoff. **Pre-storm conditions**: root-zone soil wetness in the 30 days before the storm (NASA POWER, Feb 1–Mar 10 2026; Sparks et al. 2018). **Livestock density**: cattle per km² of agricultural land (USDA NASS 2022 Census of Agriculture). **Island identity**. Latitude and longitude were excluded so the model reflects real landscape drivers rather than geography.
+Can we predict which type of water a site will have — before any sampling — just from publicly available maps and records? We used a random forest model (an ensemble of 1,000 decision trees) with thirteen landscape and hydrological predictors. **Infrastructure proximity**: distance to the nearest cesspool, cesspool density per ahupuaʻa, and distance to the nearest NPDES discharge point (wastewater treatment plant outfall or industrial discharge; EPA ECHO 2025). **Storm delivery**: distance to the nearest stream mouth (OpenStreetMap), mean daily discharge in March 2026 from the nearest USGS gauge within 15 km. **Land cover**: % impervious surface and % agricultural land (NOAA C-CAP 2010–2011). **Watershed hydrology**: mean slope per ahupuaʻa (NASA SRTM via *elevatr*; Farr et al. 2007) and soil saturated hydraulic conductivity (SSURGO Ksat, top 100 cm; USDA NRCS 2024) — which together control how fast rainfall becomes runoff. **Pre-storm conditions**: root-zone soil wetness in the 30 days before the storm (NASA POWER, Feb 1–Mar 10 2026; Sparks et al. 2018). **Livestock density**: cattle per km² of agricultural land (USDA NASS 2022 Census of Agriculture). 
 
 ```{r}
 #| label: stream-mouths-cache
@@ -2871,7 +2911,12 @@ rf_base_joined <- chem_rf_base |>
   left_join(slope_j, by = c("ahupuaa","island"), relationship="many-to-one") |>
   left_join(ksat_j,  by = c("ahupuaa","island"), relationship="many-to-one") |>
   left_join(sm_j,   by = "island") |>
-  left_join(lv_j,   by = "island")
+  left_join(lv_j,   by = "island") |>
+  mutate(cesspool_category = case_when(
+    cesspool_density_per_km2 < 1.53 ~ "Low",
+    cesspool_density_per_km2 < 5.43 ~ "Medium",
+    TRUE ~ "High"
+  ) |> factor(levels = c("Low", "Medium", "High")))
 
 rf_df_qmd <- rf_base_joined |>
   filter(!is.na(cesspool_density_per_km2),
@@ -2993,6 +3038,8 @@ If cesspools are genuinely contributing nutrients to the coast during storm even
 ```{r}
 #| label: cesspool-regression
 #| fig-height: 5
+#| eval: true
+#| echo: false
 #| fig-cap: "Watersheds with more cesspools per square kilometre had higher post-storm nitrogen concentrations. Each point is one ahupuaʻa (traditional watershed), with at least 3 samples; point size reflects how many samples it had. Lines show the model predictions per island from a statistical regression. The relationship is real but modest — cesspools explain about 15% of the variation in nitrogen across watersheds, with the rest explained by farmland, stream network, and other factors. The fact that the relationship holds separately within each island rules out island-level confounding."
 
 
@@ -3053,6 +3100,88 @@ ggplot(ahupuaa_df,
 ```
 
 The positive relationship between cesspool density and coastal NO₃+NO₂ (R² = `r round(summary(fit_cp)$r.squared, 2)`, p = `r round(p_cp, 3)`) indicates that the storm amplified nutrient delivery in proportion to pre-existing wastewater infrastructure. The modest explained variance reflects the reality that storm runoff integrates multiple nitrogen sources — agricultural fertilizers, natural soil nitrogen, and atmospheric deposition — in addition to cesspools. Phosphate, which is more specifically linked to wastewater, shows a cleaner cesspool signal (R² = 0.10, p = 0.016 without island covariate), consistent with P being a more conservative wastewater tracer than N.
+
+## Cesspool density categories
+
+Grouping samples by cesspool density reveals significant differences in nitrate concentrations. Samples from high-density areas show substantially elevated median and mean nitrate, with greater variability overall.
+
+```{r}
+#| label: cesspool-category
+#| fig-height: 6
+#| fig-width: 6
+#| fig-cap: "Water samples from areas with high cesspool density (5.43–89.3 cesspools/km²) had significantly higher nitrate concentrations (mean: 8.56 µmol/L) compared to low density areas (mean: 2.40 µmol/L) or medium density areas (mean: 5.47 µmol/L). Each colored dot represents one water sample; the violin outline shows the full distribution of data within each category; the white circle indicates the mean ± 1 SE (black error bars). ANOVA confirms significant differences across density categories (F = 7.52, p < 0.001), though substantial overlap remains due to multiple nitrogen sources from the storm."
+
+p_cess_cat <- rf_base_joined %>%
+  drop_na(cesspool_category, NO3NO2) %>%
+  filter(NO3NO2 > 0) %>%
+  ggplot(aes(x = cesspool_category, y = NO3NO2, color = cesspool_category, fill = cesspool_category)) +
+  geom_violin(alpha = 0.15, color = NA) +
+  geom_jitter(alpha = 0.25, size = 1.5, width = 0.1) +
+  stat_summary(fun = "mean", geom = "point", size = 5, 
+               color = "black", shape = 21, fill = "white", stroke = 2) +
+  stat_summary(fun.data = "mean_se", geom = "errorbar", 
+               width = 0.15, color = "black", linewidth = 1, alpha = 0.8) +
+  scale_color_manual(values = c("#43A047","#FB8C00","#E53935"), guide = "none") +
+  scale_fill_manual(values = c("#43A047","#FB8C00","#E53935"), guide = "none") +
+  scale_x_discrete(
+    labels = c("Low\n(0.03–1.52)", "Medium\n(1.53–5.43)", "High\n(5.43–89.3)")
+  ) +
+  scale_y_log10() +
+  labs(x = "Cesspool density (per km\u00b2)",
+       y ="NO\u2083+NO\u2082 (\u03bcmol/L, log)")+
+  annotate("text", x = c(1, 2, 3), y = c(2.40, 5.47, 8.56), 
+           label = c("Mean: 2.40\n(0–58.6)", "Mean: 5.47\n(0–79.3)", "Mean: 8.56\n(0–266)"),
+           size = 3, color = "gray20", fontface = "bold", vjust = -0.5)+
+  annotate("text", x = 2, y = Inf, vjust = 1.2, hjust = 0.5,
+           label = "ANOVA: F = 7.52, p < 0.001",
+           size = 3.5, color = "gray40", fontface = "italic")+
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(), legend.position = "none",
+        plot.subtitle = element_text(size = 9, color = "gray40"))
+
+p_cess_cat
+ggsave(here("output","cesspool_NN.png"), width = 6, height = 6)
+```
+
+## Agricultural land influence
+
+Areas with agricultural land present in their ahupuaʻa show higher nitrate concentrations than areas without agriculture, consistent with fertilizer contributions to coastal nitrogen loading during the storm.
+
+```{r}
+#| label: agriculture-category
+#| fig-height: 6
+#| fig-width: 5
+#| fig-cap: "Water samples from ahupuaʻa with agricultural land present show significantly higher nitrate (mean: 5.90 µmol/L) than areas without agriculture (mean: 2.98 µmol/L). Visualization and statistical approach match the cesspool density analysis. ANOVA confirms the difference is significant (F = 5.99, p = 0.015), though variability remains high in both groups."
+
+p_ag <- rf_base_joined %>%
+  mutate(ag = ifelse(pct_agriculture > 0, "Present", "Absent")) %>%
+  drop_na(ag, NO3NO2) %>%
+  filter(NO3NO2 > 0) %>%
+  ggplot(aes(x = ag, y = NO3NO2, color = ag, fill = ag)) +
+  geom_violin(alpha = 0.15, color = NA) +
+  geom_jitter(alpha = 0.25, size = 1.5, width = 0.1) +
+  stat_summary(fun = "mean", geom = "point", size = 5, 
+               color = "black", shape = 21, fill = "white", stroke = 2) +
+  stat_summary(fun.data = "mean_se", geom = "errorbar", 
+               width = 0.15, color = "black", linewidth = 1, alpha = 0.8) +
+  scale_color_manual(values = c("Absent" = "#43A047", "Present" = "#E53935"), guide = "none") +
+  scale_fill_manual(values = c("Absent" = "#43A047", "Present" = "#E53935"), guide = "none") +
+  scale_y_log10() +
+  labs(x = "Agricultural Land within Ahupua'a",
+       y = "NO\u2083+NO\u2082 (\u03bcmol/L, log)") +
+  annotate("text", x = c(1, 2), y = c(2.98, 5.90), 
+           label = c("Mean: 2.98\n(0.07–61.2)", "Mean: 5.90\n(0.06–266)"),
+           size = 3, color = "gray20", fontface = "bold", vjust = -0.5) +
+  annotate("text", x = 1.5, y = Inf, vjust = 1.2, hjust = 0.5,
+           label = "ANOVA: F = 5.99, p = 0.015",
+           size = 3.5, color = "gray40", fontface = "italic") +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(), legend.position = "none",
+        plot.subtitle = element_text(size = 9, color = "gray40"))
+
+p_ag | p_cess_cat
+ggsave(here("output","cesspool_Ag_NN.png"), width = 8, height = 6)
+```
 
 # Analytical roadmap — public datasets by manuscript claim
 
