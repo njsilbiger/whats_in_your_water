@@ -2935,6 +2935,15 @@ Grouping samples by cesspool density reveals significant differences in nitrate 
 #| fig-width: 6
 #| fig-cap: "Water samples from areas with high cesspool density (5.43–89.3 cesspools/km²) had significantly higher nitrate concentrations (mean: 8.56 µmol/L) compared to low density areas (mean: 2.40 µmol/L) or medium density areas (mean: 5.47 µmol/L). Each colored dot represents one water sample; the violin outline shows the full distribution of data within each category; the white circle indicates the mean ± 1 SE (black error bars). ANOVA confirms significant differences across density categories (F = 7.52, p < 0.001), though substantial overlap remains due to multiple nitrogen sources from the storm."
 
+top_cess <- rf_base_joined |>
+  filter(!is.na(cesspool_category), NO3NO2 > 0, !is.na(ahupuaa)) |>
+  group_by(ahupuaa, island, cesspool_category) |>
+  summarise(median_NN = median(NO3NO2, na.rm = TRUE), .groups = "drop") |>
+  group_by(cesspool_category) |>
+  slice_max(median_NN, n = 3) |>
+  ungroup() |>
+  mutate(label = paste0(ahupuaa, " – ", island))
+
 p_cess_cat <- rf_base_joined %>%
   drop_na(cesspool_category, NO3NO2) %>%
   filter(NO3NO2 > 0) %>%
@@ -2961,7 +2970,28 @@ p_cess_cat <- rf_base_joined %>%
            size = 3.5, color = "gray40", fontface = "italic")+
   theme_minimal(base_size = 11) +
   theme(panel.grid.minor = element_blank(), legend.position = "none",
-        plot.subtitle = element_text(size = 9, color = "gray40"))
+        plot.subtitle = element_text(size = 9, color = "gray40")) 
+  # geom_label_repel(
+  #   data          = filter(top_cess, ahupuaa != "Malaekahana"),
+  #   aes(x = cesspool_category, y = median_NN, label = label),
+  #   inherit.aes   = FALSE,
+  #   size          = 2.5, label.size = 0.2,
+  #   color         = "gray15", fill = alpha("white", 0.85),
+  #   direction     = "y", nudge_x = 0.35,
+  #   segment.color = "gray60", segment.size = 0.3,
+  #   min.segment.length = 0.1, max.overlaps = 20
+  # ) +
+  # geom_label_repel(
+  #   data          = filter(top_cess, ahupuaa == "Malaekahana"),
+  #   aes(x = cesspool_category, y = median_NN, label = label),
+  #   inherit.aes   = FALSE,
+  #   size          = 2.5, label.size = 0.5,
+  #   color         = "#7B1FA2", fill = "#F3E5F5",
+  #   fontface      = "bold",
+  #   direction     = "y", nudge_x = 0.35,
+  #   segment.color = "#7B1FA2", segment.size = 0.5,
+  #   min.segment.length = 0.1, max.overlaps = 20
+  # )
 
 p_cess_cat
 ggsave(here("output","cesspool_NN.png"), width = 6, height = 6)
@@ -2975,38 +3005,523 @@ Areas with agricultural land present in their ahupuaʻa show higher nitrate conc
 #| label: agriculture-category
 #| fig-height: 6
 #| fig-width: 5
-#| fig-cap: "Water samples from ahupuaʻa with agricultural land present show significantly higher nitrate (mean: 5.90 µmol/L) than areas without agriculture (mean: 2.98 µmol/L). Visualization and statistical approach match the cesspool density analysis. ANOVA confirms the difference is significant (F = 5.99, p = 0.015), though variability remains high in both groups."
+#| fig-cap: "Nitrate concentrations rise with the percentage of agricultural land in the surrounding ahupuaʻa. Sites with no agriculture (mean: 2.98 µmol/L) and medium coverage (>0–<5%; mean: 3.90 µmol/L) are broadly similar, while high agricultural coverage (≥5%; mean: 9.34 µmol/L) shows substantially elevated nitrogen. ANOVA confirms significant differences across groups (F = 7.09, p < 0.001)."
 
-p_ag <- rf_base_joined %>%
-  mutate(ag = ifelse(pct_agriculture > 0, "Present", "Absent")) %>%
-  drop_na(ag, NO3NO2) %>%
-  filter(NO3NO2 > 0) %>%
-  ggplot(aes(x = ag, y = NO3NO2, color = ag, fill = ag)) +
+top_ag <- rf_base_joined |>
+  filter(!is.na(pct_agriculture), NO3NO2 > 0, !is.na(ahupuaa)) |>
+  mutate(ag3 = case_when(
+    pct_agriculture == 0   ~ "Absent",
+    pct_agriculture < 0.05 ~ "Medium",
+    TRUE                   ~ "High"
+  ),
+  ag3 = factor(ag3, levels = c("Absent", "Medium", "High"))) |>
+  group_by(ahupuaa, island, ag3) |>
+  summarise(median_NN = median(NO3NO2, na.rm = TRUE), .groups = "drop") |>
+  group_by(ag3) |>
+  slice_max(median_NN, n = 3) |>
+  ungroup() |>
+  mutate(label = paste0(ahupuaa, " – ", island))
+
+p_ag <- rf_base_joined |>
+  filter(!is.na(pct_agriculture), NO3NO2 > 0) |>
+  mutate(ag3 = case_when(
+    pct_agriculture == 0   ~ "Absent",
+    pct_agriculture < 0.05 ~ "Medium",
+    TRUE                   ~ "High"
+  ),
+  ag3 = factor(ag3, levels = c("Absent", "Medium", "High"))) |>
+  ggplot(aes(x = ag3, y = NO3NO2, color = ag3, fill = ag3)) +
   geom_violin(alpha = 0.15, color = NA) +
   geom_jitter(alpha = 0.25, size = 1.5, width = 0.1) +
-  stat_summary(fun = "mean", geom = "point", size = 5, 
+  stat_summary(fun = "mean", geom = "point", size = 5,
                color = "black", shape = 21, fill = "white", stroke = 2) +
-  stat_summary(fun.data = "mean_se", geom = "errorbar", 
+  stat_summary(fun.data = "mean_se", geom = "errorbar",
                width = 0.15, color = "black", linewidth = 1, alpha = 0.8) +
-  scale_color_manual(values = c("Absent" = "#43A047", "Present" = "#E53935"), guide = "none") +
-  scale_fill_manual(values = c("Absent" = "#43A047", "Present" = "#E53935"), guide = "none") +
+  scale_color_manual(
+    values = c("Absent" = "#43A047", "Medium" = "#FB8C00", "High" = "#E53935"),
+    guide  = "none"
+  ) +
+  scale_fill_manual(
+    values = c("Absent" = "#43A047", "Medium" = "#FB8C00", "High" = "#E53935"),
+    guide  = "none"
+  ) +
+  scale_x_discrete(labels = c(
+    "Absent" = "Absent\n0%",
+    "Medium" = "Medium\n>0–<5%",
+    "High"   = "High\n≥5%"
+  )) +
   scale_y_log10() +
-  labs(x = "Agricultural Land within Ahupua'a",
+  labs(x = expression("Agricultural land (% of ahupua"*"'a"*")"),
        y = expression(NO[3]+NO[2]~"("*mu*"mol/L, log)")) +
-  annotate("text", x = c(1, 2), y = c(2.98, 5.90), 
-           label = c("Mean: 2.98\n(0.07–61.2)", "Mean: 5.90\n(0.06–266)"),
+  annotate("text", x = c(1, 2, 3), y = c(2.98, 3.90, 9.34),
+           label = c("Mean: 2.98\n(0.06–61.2)", "Mean: 3.90\n(0.06–137)",
+                     "Mean: 9.34\n(0.06–266)"),
            size = 3, color = "gray20", fontface = "bold", vjust = -0.5) +
-  annotate("text", x = 1.5, y = Inf, vjust = 1.2, hjust = 0.5,
-           label = "ANOVA: F = 5.99, p = 0.015",
+  annotate("text", x = 2, y = Inf, vjust = 1.2, hjust = 0.5,
+           label = "ANOVA: F = 7.09, p < 0.001",
            size = 3.5, color = "gray40", fontface = "italic") +
   theme_minimal(base_size = 11) +
   theme(panel.grid.minor = element_blank(), legend.position = "none",
-        plot.subtitle = element_text(size = 9, color = "gray40"))
+        plot.subtitle = element_text(size = 9, color = "gray40")) +
+  geom_label_repel(
+    data          = filter(top_ag, ahupuaa != "Malaekahana"),
+    aes(x = ag3, y = median_NN, label = label),
+    inherit.aes   = FALSE,
+    size          = 2.5, label.size = 0.2,
+    color         = "gray15", fill = alpha("white", 0.85),
+    direction     = "y", nudge_x = 0.35,
+    segment.color = "gray60", segment.size = 0.3,
+    min.segment.length = 0.1, max.overlaps = 20
+  ) +
+  geom_label_repel(
+    data          = filter(top_ag, ahupuaa == "Malaekahana"),
+    aes(x = ag3, y = median_NN, label = label),
+    inherit.aes   = FALSE,
+    size          = 2.5, label.size = 0.5,
+    color         = "#7B1FA2", fill = "#F3E5F5",
+    fontface      = "bold",
+    direction     = "y", nudge_x = 0.35,
+    segment.color = "#7B1FA2", segment.size = 0.5,
+    min.segment.length = 0.1, max.overlaps = 20
+  )
 
 p_ag / p_cess_cat
 ggsave(here("output","cesspool_Ag_NN.png"), width = 8, height = 6)
 ```
 
+### Agricultural land cover by ahupuaʻa
+
+```{r}
+#| label: ag-land-map
+#| fig-height: 7
+#| fig-width: 7
+#| fig-cap: "Agricultural land cover (% of ahupuaʻa area) across the four study islands. Dark blue outlines indicate ahupuaʻa with community science water quality samples collected during the March 2026 Kona Low. Central Maui and the western end of Molokaʻi carry the highest agricultural footprints — the same areas that appear as nitrate hotspots in the kriging maps. Source: NOAA Coastal Change Analysis Program (C-CAP) High-Resolution Land Cover, Hawaiʻi 2010–2011 (NOAA Office for Coastal Management, 2014–2015; coast.noaa.gov/ccapftp)."
+
+island_extents <- list(
+  "O\u02BBahu"    = c(xmin = -158.32, xmax = -157.60, ymin = 21.22, ymax = 21.75),
+  "Maui"          = c(xmin = -156.72, xmax = -155.96, ymin = 20.54, ymax = 21.05),
+  "Moloka\u02BBi" = c(xmin = -157.35, xmax = -156.70, ymin = 21.04, ymax = 21.25),
+  "L\u0101na\u02BBi" = c(xmin = -157.07, xmax = -156.81, ymin = 20.73, ymax = 20.93)
+)
+
+ccap_ag <- read_csv("data/ccap_ahupuaa_summary.csv", show_col_types = FALSE) |>
+  select(ahupuaa, pct_agriculture) |>
+  distinct(ahupuaa, .keep_all = TRUE)
+
+ag_sf_map <- ahupuaa_raw |>
+  filter(mokupuni %in% names(island_extents)) |>
+  left_join(ccap_ag, by = "ahupuaa") |>
+  mutate(ag_pct = pct_agriculture * 100,
+         island = mokupuni)
+
+cs_ahupuaa <- chem |>
+  filter(!is.na(ahupuaa)) |>
+  distinct(ahupuaa)
+
+ag_sf_sampled <- ag_sf_map |>
+  filter(ahupuaa %in% cs_ahupuaa$ahupuaa)
+
+plot_island_ag <- function(isl) {
+  ext <- island_extents[[isl]]
+  ggplot(filter(ag_sf_map, island == isl)) +
+    geom_sf(aes(fill = ag_pct), color = "white", linewidth = 0.15) +
+    geom_sf(data = filter(ag_sf_sampled, island == isl),
+            fill = NA, color = "#1A237E", linewidth = 0.55) +
+    scale_fill_gradientn(
+      colours  = c("#f7fcf0", "#74c476", "#238b45", "#8B4513"),
+      na.value = "gray88",
+      name     = "Agricultural\nland (%)",
+      limits   = c(0, 70), oob = scales::squish,
+      breaks   = c(0, 10, 25, 50),
+      labels   = c("0", "10", "25", "\u226550")
+    ) +
+    coord_sf(xlim = ext[c("xmin","xmax")], ylim = ext[c("ymin","ymax")]) +
+    labs(title = isl) +
+    theme_void(base_size = 10) +
+    theme(plot.title      = element_text(face = "bold", size = 10, hjust = 0.5),
+          legend.position = "none")
+}
+
+legend_ag <- cowplot::get_legend(
+  plot_island_ag("Maui") +
+    # Add a dummy point to capture the outline in the legend
+    geom_sf(data = filter(ag_sf_sampled, island == "Maui")[1, ],
+            aes(color = "Sampled ahupua\u02BBa"),
+            fill = NA, linewidth = 0.55, show.legend = TRUE) +
+    scale_color_manual(values = c("Sampled ahupua\u02BBa" = "#1A237E"),
+                       name = NULL) +
+    guides(fill  = guide_colorbar(order = 1,
+                                  barheight = unit(8, "lines"),
+                                  barwidth  = unit(0.8, "lines"),
+                                  title.position = "top"),
+           color = guide_legend(order = 2,
+                                override.aes = list(linewidth = 1.2,
+                                                    fill = NA))) +
+    theme(legend.position   = "right",
+          legend.key.height = unit(8, "lines"),
+          legend.title      = element_text(size = 9),
+          legend.text       = element_text(size = 8),
+          legend.box        = "vertical")
+)
+
+ag_maps <- (plot_island_ag("O\u02BBahu")    | plot_island_ag("Maui")) /
+           (plot_island_ag("Moloka\u02BBi") | plot_island_ag("L\u0101na\u02BBi"))
+
+cowplot::plot_grid(ag_maps, legend_ag, ncol = 2, rel_widths = c(1, 0.15))
+ggsave(here("output","ag_land.png"), width = 12, height = 8 )
+```
+
+### Cesspool density by ahupuaʻa
+
+```{r}
+#| label: cesspool-density-map
+#| fig-height: 7
+#| fig-width: 7
+#| fig-cap: "Cesspool density (cesspools per km² of ahupuaʻa area) across the four study islands. Dark blue outlines indicate ahupuaʻa with community science water quality samples collected during the March 2026 Kona Low. Lānaʻi has no cesspool layer in the Hawaiʻi GIS system and is shown in grey throughout. Colour is capped at 50 cesspools/km² (squished). Source: Hawaiʻi Statewide GIS Program — HCPT Cesspools (Layer 32; geodata.hawaii.gov), supplemented with OSDS Class-I systems for Molokaʻi (Layer 23)."
+
+cess_data <- read_csv("data/cesspool_by_ahupuaa.csv", show_col_types = FALSE) |>
+  select(ahupuaa, cesspool_density_per_km2) |>
+  distinct(ahupuaa, .keep_all = TRUE)
+
+cess_sf_map <- ahupuaa_raw |>
+  filter(mokupuni %in% names(island_extents)) |>
+  left_join(cess_data, by = "ahupuaa") |>
+  mutate(island = mokupuni)
+
+cess_sf_sampled <- cess_sf_map |>
+  filter(ahupuaa %in% cs_ahupuaa$ahupuaa)
+
+plot_island_cess <- function(isl) {
+  ext <- island_extents[[isl]]
+  ggplot(filter(cess_sf_map, island == isl)) +
+    geom_sf(aes(fill = cesspool_density_per_km2), color = "white", linewidth = 0.15) +
+    geom_sf(data = filter(cess_sf_sampled, island == isl),
+            fill = NA, color = "#1A237E", linewidth = 0.55) +
+    scale_fill_gradientn(
+      colours  = c("#fff5eb", "#fdd0a2", "#fd8d3c", "#d94801", "#7F0000"),
+      na.value = "gray88",
+      name     = "Cesspools\nper km\u00b2",
+      limits   = c(0, 50), oob = scales::squish,
+      breaks   = c(0, 10, 25, 50),
+      labels   = c("0", "10", "25", "\u226550")
+    ) +
+    coord_sf(xlim = ext[c("xmin","xmax")], ylim = ext[c("ymin","ymax")]) +
+    labs(title = isl) +
+    theme_void(base_size = 10) +
+    theme(plot.title      = element_text(face = "bold", size = 10, hjust = 0.5),
+          legend.position = "none")
+}
+
+legend_cess <- cowplot::get_legend(
+  plot_island_cess("Maui") +
+    geom_sf(data = filter(cess_sf_sampled, island == "Maui")[1, ],
+            aes(color = "Sampled ahupua\u02BBa"),
+            fill = NA, linewidth = 0.55, show.legend = TRUE) +
+    scale_color_manual(values = c("Sampled ahupua\u02BBa" = "#1A237E"), name = NULL) +
+    guides(fill  = guide_colorbar(order = 1,
+                                  barheight = unit(8, "lines"),
+                                  barwidth  = unit(0.8, "lines"),
+                                  title.position = "top"),
+           color = guide_legend(order = 2,
+                                override.aes = list(linewidth = 1.2, fill = NA))) +
+    theme(legend.position   = "right",
+          legend.key.height = unit(8, "lines"),
+          legend.title      = element_text(size = 9),
+          legend.text       = element_text(size = 8),
+          legend.box        = "vertical")
+)
+
+cess_maps <- (plot_island_cess("O\u02BBahu")    | plot_island_cess("Maui")) /
+             (plot_island_cess("Moloka\u02BBi") | plot_island_cess("L\u0101na\u02BBi"))
+
+cowplot::plot_grid(cess_maps, legend_cess, ncol = 2, rel_widths = c(1, 0.15))
+ggsave(here("output","cesspool_all.png"), width = 12, height = 8 )
+```
+
+### Soil permeability (SSURGO Ksat) by ahupuaʻa
+
+```{r}
+#| label: ksat-map
+#| fig-height: 7
+#| fig-width: 7
+#| fig-cap: "Saturated hydraulic conductivity (Ksat) by ahupuaʻa — a measure of how quickly water (and dissolved nutrients or cesspool effluent) moves through the soil. Higher values indicate more permeable soils where groundwater recharge is rapid and contaminant filtration is minimal. Dark blue outlines indicate ahupuaʻa with community science water quality samples. Colour is capped at 100 µm/s. Source: USDA-NRCS SSURGO (Soil Survey Geographic Database); Ksat values are area-weighted means of representative horizon values (ksat_r) across all soil map units within each ahupuaʻa."
+
+ksat_data <- read_csv("data/ahupuaa_ksat.csv", show_col_types = FALSE) |>
+  select(ahupuaa, mean_ksat_um_s) |>
+  distinct(ahupuaa, .keep_all = TRUE)
+
+ksat_sf_map <- ahupuaa_raw |>
+  filter(mokupuni %in% names(island_extents)) |>
+  left_join(ksat_data, by = "ahupuaa") |>
+  mutate(island = mokupuni)
+
+ksat_sf_sampled <- ksat_sf_map |>
+  filter(ahupuaa %in% cs_ahupuaa$ahupuaa)
+
+plot_island_ksat <- function(isl) {
+  ext <- island_extents[[isl]]
+  ggplot(filter(ksat_sf_map, island == isl)) +
+    geom_sf(aes(fill = mean_ksat_um_s), color = "white", linewidth = 0.15) +
+    geom_sf(data = filter(ksat_sf_sampled, island == isl),
+            fill = NA, color = "#1A237E", linewidth = 0.55) +
+    scale_fill_gradientn(
+      colours  = c("#F0F4FF", "#90CAF9", "#1565C0", "#0D47A1", "#01002E"),
+      na.value = "gray88",
+      name     = "Ksat\n(\u03bcm/s)",
+      limits   = c(0, 100), oob = scales::squish,
+      breaks   = c(0, 25, 50, 100),
+      labels   = c("0", "25", "50", "\u2265100")
+    ) +
+    coord_sf(xlim = ext[c("xmin","xmax")], ylim = ext[c("ymin","ymax")]) +
+    labs(title = isl) +
+    theme_void(base_size = 10) +
+    theme(plot.title      = element_text(face = "bold", size = 10, hjust = 0.5),
+          legend.position = "none")
+}
+
+legend_ksat <- cowplot::get_legend(
+  plot_island_ksat("Maui") +
+    geom_sf(data = filter(ksat_sf_sampled, island == "Maui")[1, ],
+            aes(color = "Sampled ahupua\u02BBa"),
+            fill = NA, linewidth = 0.55, show.legend = TRUE) +
+    scale_color_manual(values = c("Sampled ahupua\u02BBa" = "#1A237E"), name = NULL) +
+    guides(fill  = guide_colorbar(order = 1,
+                                  barheight = unit(8, "lines"),
+                                  barwidth  = unit(0.8, "lines"),
+                                  title.position = "top"),
+           color = guide_legend(order = 2,
+                                override.aes = list(linewidth = 1.2, fill = NA))) +
+    theme(legend.position   = "right",
+          legend.key.height = unit(8, "lines"),
+          legend.title      = element_text(size = 9),
+          legend.text       = element_text(size = 8),
+          legend.box        = "vertical")
+)
+
+ksat_maps <- (plot_island_ksat("O\u02BBahu")    | plot_island_ksat("Maui")) /
+             (plot_island_ksat("Moloka\u02BBi") | plot_island_ksat("L\u0101na\u02BBi"))
+
+cowplot::plot_grid(ksat_maps, legend_ksat, ncol = 2, rel_widths = c(1, 0.15))
+ggsave(here("output","Ksat_all.png"), width = 12, height = 8 )
+```
+
+### Composite cesspool conversion priority
+
+```{r}
+#| label: cesspool-priority-map
+#| fig-height: 7
+#| fig-width: 7.5
+#| fig-cap: "Composite cesspool conversion priority by ahupuaʻa. Background colour (yellow–dark red) is a 0–100 priority score: the mean of three percentile-ranked variables — cesspool density (HCPT), soil permeability (SSURGO Ksat), and observed median NO₃+NO₂. For ahupuaʻa without water quality samples the score is the mean of cesspool density and Ksat ranks only. Overlaid circles show individual community science water samples coloured by NO₃+NO₂ concentration (log scale, plasma palette); high-nitrate samples sitting in dark-red polygons confirm that the structural risk is being expressed as observed enrichment. Dark blue outlines show sampled ahupuaʻa. Critical-tier ahupuaʻa (score ≥ 90) are concentrated on Maui's south coast and Oʻahu's leeward corridor — areas combining high cesspool density, highly permeable volcanic soils, and measured nitrate enrichment."
+
+priority_base <- cess_sf_map |>
+  st_drop_geometry() |>
+  distinct(ahupuaa, island, .keep_all = TRUE) |>
+  select(ahupuaa, island, cesspool_density_per_km2) |>
+  left_join(
+    ksat_sf_map |> st_drop_geometry() |>
+      distinct(ahupuaa, .keep_all = TRUE) |>
+      select(ahupuaa, mean_ksat_um_s),
+    by = "ahupuaa"
+  ) |>
+  left_join(
+    chem |> filter(!is.na(NO3NO2), !is.na(ahupuaa)) |>
+      group_by(ahupuaa) |>
+      summarise(median_NN = median(NO3NO2, na.rm = TRUE), .groups = "drop"),
+    by = "ahupuaa"
+  ) |>
+  mutate(
+    cess_rank = percent_rank(replace_na(cesspool_density_per_km2, 0)),
+    ksat_rank = percent_rank(replace_na(mean_ksat_um_s, 0)),
+    nn_rank   = percent_rank(replace_na(median_NN, 0)),
+    priority  = case_when(
+      !is.na(median_NN) ~ (cess_rank + ksat_rank + nn_rank) / 3,
+      TRUE              ~ (cess_rank + ksat_rank) / 2
+    ) * 100
+  )
+
+priority_sf <- ahupuaa_raw |>
+  filter(mokupuni %in% names(island_extents)) |>
+  distinct(ahupuaa, .keep_all = TRUE) |>
+  left_join(priority_base |> select(-island), by = "ahupuaa") |>
+  mutate(island = mokupuni)
+
+chem_pts <- chem |>
+  filter(!is.na(latitude), !is.na(longitude), !is.na(NO3NO2)) |>
+  mutate(island = recode(island,
+    "O'ahu"    = "O\u02BBahu",
+    "Moloka'i" = "Moloka\u02BBi",
+    "L\u0101na'i" = "L\u0101na\u02BBi"
+  )) |>
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
+
+plot_island_priority <- function(isl) {
+  ext  <- island_extents[[isl]]
+  poly <- priority_sf |> filter(island == isl)
+  pts  <- chem_pts |> filter(island == isl)
+  ggplot(poly) +
+    geom_sf(aes(fill = priority), color = "white", linewidth = 0.15) +
+    geom_sf(data = filter(cess_sf_sampled, island == isl),
+            fill = NA, color = "#1A237E", linewidth = 0.45, alpha = 0.6) +
+    geom_sf(data = pts, aes(color = log1p(NO3NO2)),
+            size = 1.8, shape = 21, fill = NA, stroke = 0.8, alpha = 0.85) +
+    scale_fill_gradientn(
+      colours  = c("#FFF9C4", "#FFCC02", "#F57C00", "#C62828", "#4A0000"),
+      na.value = "gray88",
+      name     = "Priority\nscore",
+      limits   = c(0, 100), breaks = c(0, 25, 50, 75, 100)
+    ) +
+    scale_color_viridis_c(
+      option = "plasma",
+      name   = expression(NO[3]+NO[2]~"(log)"),
+      limits = c(0, log1p(10)), oob = scales::squish
+    ) +
+    coord_sf(xlim = ext[c("xmin","xmax")], ylim = ext[c("ymin","ymax")]) +
+    labs(title = isl) +
+    theme_void(base_size = 10) +
+    theme(plot.title      = element_text(face = "bold", size = 10, hjust = 0.5),
+          legend.position = "none")
+}
+
+legend_priority <- cowplot::get_legend(
+  plot_island_priority("Maui") +
+    guides(
+      fill  = guide_colorbar(order = 1, barheight = unit(6, "lines"),
+                             barwidth = unit(0.8, "lines"), title.position = "top"),
+      color = guide_colorbar(order = 2, barheight = unit(6, "lines"),
+                             barwidth = unit(0.8, "lines"), title.position = "top")
+    ) +
+    theme(legend.position = "right", legend.box = "vertical",
+          legend.title    = element_text(size = 8.5),
+          legend.text     = element_text(size = 7.5))
+)
+
+priority_maps <-
+  (plot_island_priority("O\u02BBahu")    | plot_island_priority("Maui")) /
+  (plot_island_priority("Moloka\u02BBi") | plot_island_priority("L\u0101na\u02BBi"))
+
+cowplot::plot_grid(priority_maps, legend_priority, ncol = 2, rel_widths = c(1, 0.18))
+ggsave(here("output","cesspool_priority.png"), width = 12, height = 8 )
+```
+
+### Agricultural land × impervious surface interaction
+
+```{r}
+#| label: ag-imperv-tile
+#| fig-height: 5.5
+#| fig-width: 7
+#| fig-cap: "Median NO₃+NO₂ concentration across combinations of agricultural land cover (columns) and impervious surface cover (rows). Empty cells reflect combinations that are essentially absent from the data — high agricultural cover and high impervious cover rarely co-occur (ρ = −0.33). The peak concentration (2.91 µmol/L, n = 102) occurs in High ag × Medium impervious ahupuaʻa, likely representing agricultural land with farm access roads and packing infrastructure that concentrate and route runoff coastward. Conversely, Medium ag × High impervious (0.67 µmol/L, n = 152) is among the lowest — dense suburban development with modest agriculture produces less nitrate enrichment, possibly because the agricultural footprint is small (residential gardens) and impervious surfaces intercept and dilute stormwater before it reaches sampling sites."
+
+tile_ag_imperv <- rf_base_joined |>
+  filter(!is.na(NO3NO2), NO3NO2 > 0,
+         !is.na(pct_agriculture), !is.na(pct_impervious)) |>
+  mutate(
+    ag_bin = cut(pct_agriculture,
+                 breaks = c(-Inf, 0, 0.05, Inf),
+                 labels = c("Absent\n0%", "Medium\n>0\u2013<5%", "High\n\u22655%")),
+    imperv_bin = cut(pct_impervious,
+                     breaks = c(0, 0.05, 0.15, 0.35, Inf),
+                     labels = c("Low\n(<5%)", "Medium\n(5\u201315%)",
+                                "High\n(15\u201335%)", "Very high\n(>35%)"),
+                     include.lowest = TRUE)
+  ) |>
+  group_by(ag_bin, imperv_bin) |>
+  summarise(median_NN = median(NO3NO2, na.rm = TRUE),
+            n         = n(), .groups = "drop")
+
+ggplot(tile_ag_imperv, aes(x = ag_bin, y = imperv_bin, fill = median_NN)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  geom_text(aes(label = sprintf("%.2f\nn = %d", median_NN, n)),
+            size = 3, lineheight = 1.2, color = "gray15") +
+  scale_fill_gradientn(
+    colours  = c("#FFFDE7", "#FFD54F", "#F57F17", "#B71C1C"),
+    na.value = "gray92",
+    name     = expression(NO[3]+NO[2]~"median\n("*mu*"mol/L)"),
+    limits   = c(0, 3), oob = scales::squish,
+    breaks   = c(0, 1, 2, 3),
+    labels   = c("0", "1", "2", "\u22653")
+  ) +
+  scale_y_discrete(limits = rev) +
+  labs(
+    x        = "Agricultural land cover",
+    y        = "Impervious surface cover",
+    title    = expression(NO[3]+NO[2]~"by agricultural land \u00d7 impervious surface"),
+    subtitle = "Median concentration per cell  \u00b7  n = water samples  \u00b7  empty cells = combination absent in data"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid        = element_blank(),
+    axis.text.x       = element_text(size = 9, lineheight = 1.2),
+    axis.text.y       = element_text(size = 9, lineheight = 1.2, hjust = 1),
+    plot.title        = element_text(size = 11),
+    plot.subtitle     = element_text(size = 8.5, color = "gray40"),
+    legend.title      = element_text(size = 9),
+    legend.key.height = unit(2, "lines")
+  )
+ggsave(here("output","Ag_imperv.png"), width = 8, height = 5)
+```
+
+### Cesspool density × soil permeability interaction
+
+```{r}
+#| label: ksat-cess-tile
+#| fig-height: 5.5
+#| fig-width: 7
+#| fig-cap: "Median NO₃+NO₂ concentration across combinations of cesspool density (columns) and soil permeability (rows). Each cell shows the median concentration and number of water samples. Soil permeability acts as an amplifier: the three low-to-high Ksat rows show broadly similar, low concentrations (0.6–1.6 µmol/L) regardless of cesspool density, while the very high permeability row (>50 µm/s) shows dramatically elevated concentrations (5–12 µmol/L) across all cesspool density categories. This suggests that it is the combination of even moderate cesspool presence with highly permeable volcanic soils — which allow rapid unfiltered transport of effluent to coastal groundwater — that most strongly drives nearshore nitrate enrichment."
+
+tile_df <- rf_base_joined |>
+  filter(!is.na(NO3NO2), NO3NO2 > 0,
+         !is.na(cesspool_density_per_km2),
+         !is.na(mean_ksat_um_s)) |>
+  mutate(
+    cess_bin = cut(cesspool_density_per_km2,
+                   breaks = c(0, 1.52, 5.43, 89.3),
+                   labels = c("Low\n(0\u20131.5/km\u00b2)",
+                              "Medium\n(1.5\u20135.4/km\u00b2)",
+                              "High\n(>5.4/km\u00b2)"),
+                   include.lowest = TRUE),
+    ksat_bin = cut(mean_ksat_um_s,
+                   breaks = c(0, 6, 14, 50, Inf),
+                   labels = c("Low\n(<6 \u03bcm/s)",
+                              "Medium\n(6\u201314 \u03bcm/s)",
+                              "High\n(14\u201350 \u03bcm/s)",
+                              "Very high\n(>50 \u03bcm/s)"),
+                   include.lowest = TRUE)
+  ) |>
+  filter(!is.na(cess_bin)) |>
+  group_by(cess_bin, ksat_bin) |>
+  summarise(median_NN = median(NO3NO2, na.rm = TRUE),
+            n         = n(), .groups = "drop")
+
+ggplot(tile_df, aes(x = cess_bin, y = ksat_bin, fill = median_NN)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  geom_text(aes(label = sprintf("%.1f\nn = %d", median_NN, n)),
+            size = 3, lineheight = 1.2, color = "gray15") +
+  scale_fill_gradientn(
+    colours  = c("#FFFDE7", "#FFD54F", "#F57F17", "#B71C1C"),
+    name     = expression(NO[3]+NO[2]~"median\n("*mu*"mol/L)"),
+    limits   = c(0, 12), oob = scales::squish,
+    breaks   = c(0, 3, 6, 9, 12),
+    labels   = c("0", "3", "6", "9", "\u226512")
+  ) +
+  scale_y_discrete(limits = rev) +
+  labs(
+    x        = "Cesspool density",
+    y        = "Soil permeability (Ksat)",
+    title    = expression(NO[3]+NO[2]~"concentration by cesspool density \u00d7 soil permeability"),
+    subtitle = "Median concentration per cell \u00b7 n = number of water samples"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid    = element_blank(),
+    axis.text.x   = element_text(size = 9, lineheight = 1.2),
+    axis.text.y   = element_text(size = 9, lineheight = 1.2, hjust = 1),
+    plot.title    = element_text(size = 11),
+    plot.subtitle = element_text(size = 8.5, color = "gray40"),
+    legend.title  = element_text(size = 9),
+    legend.key.height = unit(2, "lines")
+  )
+ggsave(here("output","cesspool_ksat.png"), width = 8, height = 5)
+```
 
 ---
 
