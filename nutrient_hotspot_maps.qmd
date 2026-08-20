@@ -2947,13 +2947,22 @@ top_cess <- rf_base_joined |>
 p_cess_cat <- rf_base_joined %>%
   drop_na(cesspool_category, NO3NO2) %>%
   filter(NO3NO2 > 0) %>%
+  mutate(cesspool_category = factor(cesspool_category, levels = c("Low","Medium","High"))) %>%
   ggplot(aes(x = cesspool_category, y = NO3NO2, color = cesspool_category, fill = cesspool_category)) +
   geom_violin(alpha = 0.15, color = NA) +
   geom_jitter(alpha = 0.25, size = 1.5, width = 0.1) +
-  stat_summary(fun = "mean", geom = "point", size = 5, 
+  stat_summary(fun = function(y) 10^mean(log10(y[y > 0])), geom = "point", size = 5, 
                color = "black", shape = 21, fill = "white", stroke = 2) +
-  stat_summary(fun.data = "mean_se", geom = "errorbar", 
-               width = 0.15, color = "black", linewidth = 1, alpha = 0.8) +
+  stat_summary(
+    fun.data = function(y) {
+      y <- y[y > 0]
+      log_y <- log10(y)
+      m <- mean(log_y)
+      se <- sd(log_y) / sqrt(length(log_y))
+      data.frame(y = 10^m, ymin = 10^(m - se), ymax = 10^(m + se))
+    },
+    geom = "errorbar", width = 0.15, color = "black", linewidth = 1, alpha = 0.8
+  ) +
   scale_color_manual(values = c("#43A047","#FB8C00","#E53935"), guide = "none") +
   scale_fill_manual(values = c("#43A047","#FB8C00","#E53935"), guide = "none") +
   scale_x_discrete(
