@@ -103,6 +103,13 @@ chem <- read_csv("data/clean_chemdata.csv", show_col_types = FALSE) |>
   left_join(
     read_csv("data/cesspool_buffer_counts.csv", show_col_types = FALSE),
     by = "sample_id"
+  ) |>
+  # Wave fetch: mean unobstructed distance to land across 8 compass directions
+  # (proxy for coastal wave exposure and water residence time)
+  left_join(
+    read_csv("data/wave_fetch.csv", show_col_types = FALSE) |>
+      select(sample_id, fetch_mean_km, fetch_min_km),
+    by = "sample_id"
   )
 ```
 
@@ -2757,14 +2764,14 @@ rf_df_qmd <- rf_base_joined |>
          !is.na(log_discharge_cfs)) |>
   mutate(
     across(c(mean_slope_deg, mean_ksat_um_s, log_dist_outfall,
-             mean_gwetroot, cattle_per_km2, n_cess_500m, n_cess_1km),
+             cattle_per_km2, n_cess_1km, fetch_mean_km),
            \(x) if_else(is.na(x), median(x, na.rm = TRUE), x))
   ) |>
   transmute(
     cluster_label,
-    log_n_cess_500m       = log1p(n_cess_500m),
     log_n_cess_1km        = log1p(n_cess_1km),
     log_dist_cesspool     = log1p(dist_to_nearest_cesspool_m),
+    log_fetch_mean        = log1p(fetch_mean_km),
     log_dist_stream_mouth = log1p(dist_to_stream_mouth_m),
     log_discharge_cfs,
     pct_impervious,
@@ -2772,7 +2779,6 @@ rf_df_qmd <- rf_base_joined |>
     mean_slope_deg,
     log_ksat              = log1p(mean_ksat_um_s),
     log_dist_outfall,
-    mean_gwetroot,
     log_cattle_km2        = log1p(cattle_per_km2)
   ) |>
   filter(!is.na(cluster_label), !is.na(log_n_cess_1km),
@@ -2784,7 +2790,10 @@ rf_df_int <- rf_df_qmd |>
   mutate(
     cess_x_ksat  = log_n_cess_1km * log_ksat,
     imp_x_ag     = pct_impervious * sqrt_ag,
-    dist_x_slope = log_dist_stream_mouth * mean_slope_deg
+    dist_x_slope = log_dist_stream_mouth * mean_slope_deg,
+    disc_x_ag    = log_discharge_cfs * sqrt_ag,
+    disc_x_cess  = log_discharge_cfs * log_n_cess_1km,
+    imp_x_slope  = pct_impervious * mean_slope_deg
   ) %>%
   mutate(cluster_label = factor(cluster_label, levels = c("Marine background","Nearshore enriched","Runoff-dominated")))
 
@@ -2802,42 +2811,68 @@ oob_acc_int <- round((1 - rf_fit_int$prediction.error) * 100, 1)
 null_acc    <- round(max(table(rf_df_int$cluster_label)) / nrow(rf_df_int) * 100, 1)
 
 label_map <- c(
-  "log_n_cess_500m"       = "Cesspools within\n500 m (count, log)",
-  "log_n_cess_1km"        = "Cesspools within\n1 km (count, log)",
-  "log_dist_cesspool"     = "Dist. to nearest\ncesspool (log m)",
-  "log_dist_stream_mouth" = "Dist. to nearest\nstream mouth (log m)",
-  "log_discharge_cfs"     = "March discharge\n(log cfs)",
-  "pct_impervious"        = "% Impervious surface\n(C-CAP)",
-  "sqrt_ag"               = "% Agriculture\n(C-CAP, sqrt)",
-  "mean_slope_deg"        = "Watershed slope\n(SRTM, deg)",
-  "log_ksat"              = "Soil permeability\n(SSURGO Ksat, log µm/s)",
-  "log_dist_outfall"      = "Dist. to nearest\nNPDES outfall (log m)",
-  "mean_gwetroot"         = "Pre-storm soil moisture\n(NASA POWER, Feb–Mar10)",
-  "log_cattle_km2"        = "Livestock density\n(NASS 2022, log head/km²)",
-  "cess_x_ksat"           = "Cesspools (1 km) \u00d7 Ksat\n(interaction)",
-  "dist_x_slope"          = "Stream mouth dist. × Slope\n(interaction)"
+  "log_n_cess_1km"        = "Cesspool density (1 km radius)",
+  "log_dist_cesspool"     = "Distance to nearest cesspool",
+  "log_dist_stream_mouth" = "Stream mouth proximity",
+  "log_fetch_mean"        = "Coastal wave exposure",
+  "log_discharge_cfs"     = "Storm discharge",
+  "pct_impervious"        = "Impervious surface cover",
+  "sqrt_ag"               = "Agricultural land cover",
+  "mean_slope_deg"        = "Watershed slope",
+  "log_ksat"              = "Soil permeability",
+  "log_dist_outfall"      = "Distance to wastewater outfall",
+  "log_cattle_km2"        = "Livestock density",
+  "cess_x_ksat"           = "Cesspool density \u00d7 soil permeability",
+  "imp_x_ag"              = "Impervious \u00d7 agricultural cover",
+  "dist_x_slope"          = "Stream proximity \u00d7 watershed slope",
+  "disc_x_ag"             = "Storm discharge \u00d7 agricultural cover",
+  "disc_x_cess"           = "Storm discharge \u00d7 cesspool density",
+  "imp_x_slope"           = "Impervious cover \u00d7 watershed slope"
+)
+
+anthropogenic_labels <- c(
+  "Cesspool density (1 km radius)",
+  "Distance to nearest cesspool",
+  "Impervious surface cover",
+  "Agricultural land cover",
+  "Distance to wastewater outfall",
+  "Livestock density",
+  "Cesspool density \u00d7 soil permeability",
+  "Impervious \u00d7 agricultural cover",
+  "Storm discharge \u00d7 agricultural cover",
+  "Storm discharge \u00d7 cesspool density",
+  "Impervious cover \u00d7 watershed slope"
 )
 
 imp_df <- enframe(rf_fit_int$variable.importance, name = "predictor", value = "importance") |>
   mutate(
     predictor  = recode(predictor, !!!label_map),
-    importance = importance / max(importance)
+    importance = importance / max(importance),
+    driver     = if_else(predictor %in% anthropogenic_labels,
+                         "Anthropogenic", "Natural / physical")
   ) |>
   arrange(importance)
 
-pImp_qmd <- ggplot(imp_df, aes(x = importance, y = reorder(predictor, importance))) +
-  geom_col(fill = "#37474F", width = 0.65) +
+pImp_qmd <- ggplot(imp_df, aes(x = importance, y = reorder(predictor, importance),
+                                fill = driver)) +
+  geom_col(width = 0.65) +
   geom_text(aes(label = round(importance, 2)), hjust = -0.15, size = 3.2) +
-  scale_x_continuous(limits = c(0, 1.15), expand = c(0, 0)) +
-  labs(x = "Relative importance (permutation, normalised)", y = NULL,
+  scale_x_continuous(limits = c(0, 1.18), expand = c(0, 0)) +
+  scale_fill_manual(
+    values = c("Anthropogenic" = "#BF360C", "Natural / physical" = "#37474F"),
+    name   = NULL
+  ) +
+  labs(x = "Relative permutation importance (normalised)", y = NULL,
        title = "A  Variable importance",
        subtitle = sprintf("OOB accuracy = %.1f%%  (null = %.1f%%)",
                           oob_acc_int, null_acc)) +
   theme_minimal(base_size = 11) +
   theme(panel.grid.minor   = element_blank(),
         panel.grid.major.y = element_blank(),
-        plot.title    = element_text(face = "bold", size = 11),
-        plot.subtitle = element_text(size = 9, color = "gray40"))
+        plot.title         = element_text(face = "bold", size = 11),
+        plot.subtitle      = element_text(size = 9, color = "gray40"),
+        legend.position    = "bottom",
+        legend.text        = element_text(size = 9))
 
 conf_df_qmd <- as.data.frame(rf_fit_int$confusion.matrix) |>
   rename(true_label = true, n = Freq) |>
