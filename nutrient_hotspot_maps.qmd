@@ -110,6 +110,19 @@ chem <- read_csv("data/clean_chemdata.csv", show_col_types = FALSE) |>
     read_csv("data/wave_fetch.csv", show_col_types = FALSE) |>
       select(sample_id, fetch_mean_km, fetch_min_km),
     by = "sample_id"
+  ) |>
+  # WW3 significant wave height: PacIOOS Hawaii regional model (0.05°, hourly)
+  # hs_mean_m   = mean Hs at nearest ocean grid point during full sampling window
+  # hs_at_collection_m = Hs at nearest grid point and time of sample collection
+  left_join(
+    read_csv("data/sample_waveheight.csv", show_col_types = FALSE),
+    by = "sample_id"
+  ) |>
+  # Population density per ahupuaʻa (US Census ACS 2022, areal interpolation)
+  left_join(
+    read_csv("data/pop_density_ahupuaa.csv", show_col_types = FALSE) |>
+      select(ahupuaa, island, pop_density_km2),
+    by = c("ahupuaa", "island")
   )
 ```
 
@@ -2764,7 +2777,8 @@ rf_df_qmd <- rf_base_joined |>
          !is.na(log_discharge_cfs)) |>
   mutate(
     across(c(mean_slope_deg, mean_ksat_um_s, log_dist_outfall,
-             cattle_per_km2, n_cess_1km, fetch_mean_km),
+             cattle_per_km2, n_cess_1km, fetch_mean_km,
+             hs_mean_m, hs_at_collection_m, pop_density_km2),
            \(x) if_else(is.na(x), median(x, na.rm = TRUE), x))
   ) |>
   transmute(
@@ -2772,6 +2786,9 @@ rf_df_qmd <- rf_base_joined |>
     log_n_cess_1km        = log1p(n_cess_1km),
     log_dist_cesspool     = log1p(dist_to_nearest_cesspool_m),
     log_fetch_mean        = log1p(fetch_mean_km),
+    hs_mean_m,
+    hs_at_collection_m,
+    log_pop_density       = log1p(pop_density_km2),
     log_dist_stream_mouth = log1p(dist_to_stream_mouth_m),
     log_discharge_cfs,
     pct_impervious,
@@ -2814,7 +2831,10 @@ label_map <- c(
   "log_n_cess_1km"        = "Cesspool density (1 km radius)",
   "log_dist_cesspool"     = "Distance to nearest cesspool",
   "log_dist_stream_mouth" = "Stream mouth proximity",
-  "log_fetch_mean"        = "Coastal wave exposure",
+  "log_fetch_mean"        = "Coastal wave exposure (fetch)",
+  "hs_mean_m"             = "Significant wave height (storm mean)",
+  "hs_at_collection_m"    = "Significant wave height (at sampling)",
+  "log_pop_density"       = "Population density",
   "log_discharge_cfs"     = "Storm discharge",
   "pct_impervious"        = "Impervious surface cover",
   "sqrt_ag"               = "Agricultural land cover",
@@ -2837,6 +2857,7 @@ anthropogenic_labels <- c(
   "Agricultural land cover",
   "Distance to wastewater outfall",
   "Livestock density",
+  "Population density",
   "Cesspool density \u00d7 soil permeability",
   "Impervious \u00d7 agricultural cover",
   "Storm discharge \u00d7 agricultural cover",
