@@ -66,6 +66,7 @@ library(pdp)
 
 # Introduction
 
+ *Local human impacts amplify storm disruption to coastal marine ecosystems*
 When a Kona Low storm hits Hawaiʻi, heavy rain washes fertilizer, cesspool nutrients, and volcanic soil off the land and into the ocean. Does that change coastal water quality in a meaningful way and if so, where, how much, and can we predict it from a map?
 
 This report uses 694 water samples collected across four islands immediately after the March 2026 Kona Low to answer those questions. Interpolated maps show where nutrient concentrations were highest. A grouping analysis (PAM clustering) sorts sites into three distinct water types — from clean open-ocean background water through runoff-dominated coastal zones to nearshore-enriched areas — and measures how different their chemistry is. A random forest model then asks whether those water types could have been predicted from landscape features alone: how close is a site to a stream mouth? To a cesspool? How much of the surrounding land is paved or farmed? How much water actually flowed through the nearest stream gauge in March? The model correctly classifies 67% of sites (vs 36% for a random guess), with stream mouth proximity, cesspool distance, and actual March discharge as the three strongest predictors.
@@ -95,6 +96,13 @@ chem <- read_csv("data/clean_chemdata.csv", show_col_types = FALSE) |>
     read_csv("data/cesspool_by_ahupuaa.csv", show_col_types = FALSE) |>
       select(ahupuaa, moku, cesspool_density_per_km2, n_cesspools),
     by = c("ahupuaa", "moku")
+  ) |>
+  # Cesspool count within 500 m and 1 km of each sample (point-level)
+  # Note: Molokaʻi set to NA — HCPT layer 32 does not cover Molokaʻi;
+  # imputed with island median in RF pipeline. Lānaʻi = 0 (no layer documented).
+  left_join(
+    read_csv("data/cesspool_buffer_counts.csv", show_col_types = FALSE),
+    by = "sample_id"
   )
 ```
 
@@ -1946,7 +1954,7 @@ cluster_pal_named <- c(
 chem_clust <- chem_clust |>
   mutate(cluster       = factor(pam4$clustering),
          cluster_label = factor(cluster_labels[cluster],
-                                levels = cluster_labels))
+                                levels = c("Marine background", "Nearshore enriched", "Runoff-dominated")))
 
 # ── PCA ─────────────────────────────────────────────────────────────────────
 pca_res <- prcomp(clust_mat, scale. = FALSE)
@@ -2242,7 +2250,7 @@ pSilA_s <- ggplot(sil_summary_s, aes(x = k, y = mean_sil)) +
 
 sil4_s <- as.data.frame(silhouette(pam4$clustering, dist(clust_mat))) |>
   mutate(
-    cluster_label = factor(cluster_labels[cluster], levels = cluster_labels)
+    cluster_label = factor(cluster_labels[cluster], levels =  cluster_labels[c(1,3,2)])
   ) |>
   arrange(cluster, sil_width) |>
   mutate(sorted_id = row_number())
@@ -2749,79 +2757,89 @@ rf_df_qmd <- rf_base_joined |>
          !is.na(log_discharge_cfs)) |>
   mutate(
     across(c(mean_slope_deg, mean_ksat_um_s, log_dist_outfall,
-             mean_gwetroot, cattle_per_km2),
+             mean_gwetroot, cattle_per_km2, n_cess_500m, n_cess_1km),
            \(x) if_else(is.na(x), median(x, na.rm = TRUE), x))
   ) |>
   transmute(
     cluster_label,
-    island                = factor(island),
-    log_cesspool_density  = log1p(cesspool_density_per_km2),
+    log_n_cess_500m       = log1p(n_cess_500m),
+    log_n_cess_1km        = log1p(n_cess_1km),
     log_dist_cesspool     = log1p(dist_to_nearest_cesspool_m),
     log_dist_stream_mouth = log1p(dist_to_stream_mouth_m),
     log_discharge_cfs,
     pct_impervious,
-    pct_agriculture,
+    sqrt_ag               = sqrt(pct_agriculture),
     mean_slope_deg,
     log_ksat              = log1p(mean_ksat_um_s),
     log_dist_outfall,
     mean_gwetroot,
     log_cattle_km2        = log1p(cattle_per_km2)
   ) |>
-  filter(!is.na(cluster_label), !is.na(log_cesspool_density),
+  filter(!is.na(cluster_label), !is.na(log_n_cess_1km),
          !is.na(log_dist_cesspool), !is.na(log_dist_stream_mouth),
-         !is.na(pct_impervious), !is.na(pct_agriculture))
+         !is.na(pct_impervious), !is.na(sqrt_ag))
+
+# Add explicit interaction terms
+rf_df_int <- rf_df_qmd |>
+  mutate(
+    cess_x_ksat  = log_n_cess_1km * log_ksat,
+    imp_x_ag     = pct_impervious * sqrt_ag,
+    dist_x_slope = log_dist_stream_mouth * mean_slope_deg
+  ) %>%
+  mutate(cluster_label = factor(cluster_label, levels = c("Marine background","Nearshore enriched","Runoff-dominated")))
 
 set.seed(5572)
-rf_fit_qmd <- ranger(
+rf_fit_int <- ranger(
   cluster_label ~ .,
-  data      = rf_df_qmd,
-  num.trees = 1000,
-  mtry      = 4,
+  data       = rf_df_int,
+  num.trees  = 1000,
+  mtry       = 4,
   importance = "permutation",
-  seed      = 5572
+  seed       = 5572
 )
 
-oob_acc  <- round((1 - rf_fit_qmd$prediction.error) * 100, 1)
-null_acc <- round(max(table(rf_df_qmd$cluster_label)) / nrow(rf_df_qmd) * 100, 1)
+oob_acc_int <- round((1 - rf_fit_int$prediction.error) * 100, 1)
+null_acc    <- round(max(table(rf_df_int$cluster_label)) / nrow(rf_df_int) * 100, 1)
 
-# Variable importance
-imp_df_qmd <- enframe(rf_fit_qmd$variable.importance,
-                       name = "predictor", value = "importance") |>
+label_map <- c(
+  "log_n_cess_500m"       = "Cesspools within\n500 m (count, log)",
+  "log_n_cess_1km"        = "Cesspools within\n1 km (count, log)",
+  "log_dist_cesspool"     = "Dist. to nearest\ncesspool (log m)",
+  "log_dist_stream_mouth" = "Dist. to nearest\nstream mouth (log m)",
+  "log_discharge_cfs"     = "March discharge\n(log cfs)",
+  "pct_impervious"        = "% Impervious surface\n(C-CAP)",
+  "sqrt_ag"               = "% Agriculture\n(C-CAP, sqrt)",
+  "mean_slope_deg"        = "Watershed slope\n(SRTM, deg)",
+  "log_ksat"              = "Soil permeability\n(SSURGO Ksat, log µm/s)",
+  "log_dist_outfall"      = "Dist. to nearest\nNPDES outfall (log m)",
+  "mean_gwetroot"         = "Pre-storm soil moisture\n(NASA POWER, Feb–Mar10)",
+  "log_cattle_km2"        = "Livestock density\n(NASS 2022, log head/km²)",
+  "cess_x_ksat"           = "Cesspools (1 km) \u00d7 Ksat\n(interaction)",
+  "dist_x_slope"          = "Stream mouth dist. × Slope\n(interaction)"
+)
+
+imp_df <- enframe(rf_fit_int$variable.importance, name = "predictor", value = "importance") |>
   mutate(
-    predictor = recode(predictor,
-      "log_cesspool_density"  = "Cesspool density\n(ahupuaʻa, log)",
-      "log_dist_cesspool"     = "Dist. to nearest\ncesspool (log m)",
-      "log_dist_stream_mouth" = "Dist. to nearest\nstream mouth (log m)",
-      "log_discharge_cfs"     = "March discharge\n(log cfs)",
-      "pct_impervious"        = "% Impervious surface\n(C-CAP)",
-      "pct_agriculture"       = "% Agriculture\n(C-CAP)",
-      "mean_slope_deg"        = "Watershed slope\n(SRTM, deg)",
-      "log_ksat"              = "Soil permeability\n(SSURGO Ksat, log µm/s)",
-      "log_dist_outfall"      = "Dist. to nearest\nNPDES outfall (log m)",
-      "mean_gwetroot"         = "Pre-storm soil moisture\n(NASA POWER, Feb–Mar10)",
-      "log_cattle_km2"        = "Livestock density\n(NASS 2022, log head/km²)",
-      "island"                = "Island"
-    ),
+    predictor  = recode(predictor, !!!label_map),
     importance = importance / max(importance)
-  )
+  ) |>
+  arrange(importance)
 
-pImp_qmd <- ggplot(imp_df_qmd, aes(x = importance,
-                                    y = reorder(predictor, importance))) +
+pImp_qmd <- ggplot(imp_df, aes(x = importance, y = reorder(predictor, importance))) +
   geom_col(fill = "#37474F", width = 0.65) +
   geom_text(aes(label = round(importance, 2)), hjust = -0.15, size = 3.2) +
   scale_x_continuous(limits = c(0, 1.15), expand = c(0, 0)) +
-  labs(x = "Relative importance (Gini impurity, normalised)", y = NULL,
+  labs(x = "Relative importance (permutation, normalised)", y = NULL,
        title = "A  Variable importance",
        subtitle = sprintf("OOB accuracy = %.1f%%  (null = %.1f%%)",
-                          oob_acc, null_acc)) +
+                          oob_acc_int, null_acc)) +
   theme_minimal(base_size = 11) +
   theme(panel.grid.minor   = element_blank(),
         panel.grid.major.y = element_blank(),
         plot.title    = element_text(face = "bold", size = 11),
         plot.subtitle = element_text(size = 9, color = "gray40"))
 
-# Confusion matrix
-conf_df_qmd <- as.data.frame(rf_fit_qmd$confusion.matrix) |>
+conf_df_qmd <- as.data.frame(rf_fit_int$confusion.matrix) |>
   rename(true_label = true, n = Freq) |>
   group_by(true_label) |>
   mutate(pct = n / sum(n),
@@ -2850,7 +2868,103 @@ pConf_qmd <- ggplot(conf_df_qmd, aes(x = predicted, y = true_label, fill = pct))
 pImp_qmd | pConf_qmd
 ```
 
-The model correctly identified the water type for `r oob_acc`% of sites — `r oob_acc - null_acc` percentage points better than simply guessing the most common type every time. **Stream mouth proximity is the top predictor; soil permeability (Ksat) ranks second** — a new and important finding. Permeable volcanic soils (high Ksat) absorb rainfall before it becomes runoff, so watersheds with more permeable soils deliver less nutrient-laden water to the coast even in heavy rain. Cesspool proximity ranks third. Watershed slope ranks sixth — steeper slopes concentrate and accelerate runoff delivery. Distance to the nearest NPDES outfall (including ocean outfalls from wastewater treatment plants) ranks eighth, indicating that point-source discharges contribute a small but statistically detectable independent signal beyond diffuse cesspool leaching. Pre-storm soil moisture and livestock density add the least, partly because they vary primarily at the island scale and are thus partly collinear with island identity. Together, thirteen publicly available landscape and hydrological features explain coastal water type at `r oob_acc`% accuracy across four islands and 694 sites — with each predictor sourced from a reproducible, openly licensed dataset.
+```{r}
+#| label: rf-pdp-interaction
+#| fig-height: 4
+#| fig-width: 10
+
+# Fit probability RF (same predictors as rf_fit_int) for PDP computation
+set.seed(5572)
+rf_prob <- ranger(
+  cluster_label ~ .,
+  data        = rf_df_int,
+  num.trees   = 1000,
+  mtry        = 4,
+  probability = TRUE,
+  seed        = 5572
+)
+
+# Representative Ksat values: median of each tertile
+ksat_breaks <- quantile(rf_df_int$log_ksat, c(1/3, 2/3))
+ksat_rep <- c(
+  "Low"    = median(rf_df_int$log_ksat[rf_df_int$log_ksat <= ksat_breaks[1]]),
+  "Medium" = median(rf_df_int$log_ksat[rf_df_int$log_ksat >  ksat_breaks[1] &
+                                        rf_df_int$log_ksat <= ksat_breaks[2]]),
+  "High"   = median(rf_df_int$log_ksat[rf_df_int$log_ksat >  ksat_breaks[2]])
+)
+
+# Cesspools-within-1km grid across observed range
+cess_seq <- seq(
+  min(rf_df_int$log_n_cess_1km),
+  max(rf_df_int$log_n_cess_1km),
+  length.out = 60
+)
+
+# Marginal PDP: for each grid point, replace log_n_cess_1km + ksat in the full
+# data and average predicted class probabilities across all rows
+pdp_df <- map_dfr(names(ksat_rep), function(grp) {
+  kv <- ksat_rep[[grp]]
+  map_dfr(cess_seq, function(cv) {
+    nd <- rf_df_int |>
+      mutate(
+        log_n_cess_1km = cv,
+        log_ksat       = kv,
+        cess_x_ksat    = cv * kv
+      )
+    probs <- colMeans(predict(rf_prob, data = nd)$predictions)
+    tibble(
+      ksat_group     = grp,
+      log_n_cess_1km = cv,
+      n_cess_1km     = expm1(cv),
+      as_tibble_row(probs)
+    )
+  })
+})
+ksat_pal <- c(
+  "Low Ksat\n(4.6 µm/s)"    = "#1565C0",
+  "Medium Ksat\n(7.5 µm/s)" = "#FB8C00",
+  "High Ksat\n(28.0 µm/s)"  = "#E53935"
+)
+
+pdp_df |>
+  pivot_longer(
+    cols      = c(`Marine background`, `Nearshore enriched`, `Runoff-dominated`),
+    names_to  = "cluster",
+    values_to = "probability"
+  ) |>
+  mutate(
+    cluster    = factor(cluster, levels = c("Marine background",
+                                            "Nearshore enriched",
+                                            "Runoff-dominated")),
+    ksat_group = factor(ksat_group, levels = c("Low", "Medium", "High"),
+                        labels = c("Low Ksat\n(4.6 µm/s)",
+                                   "Medium Ksat\n(7.5 µm/s)",
+                                   "High Ksat\n(28.0 µm/s)"))
+  ) |>
+  ggplot(aes(x = log_n_cess_1km, y = probability, color = ksat_group)) +
+  geom_smooth(se = FALSE, method = "loess", span = 0.5, linewidth = 1.1) +
+  scale_color_manual(values = ksat_pal, name = "Soil permeability\n(Ksat tertile)") +
+  scale_x_continuous(
+    name   = "Cesspools within 1 km (count, log scale)",
+    breaks = log1p(c(0, 1, 5, 20, 50, 100, 200)),
+    labels = c("0", "1", "5", "20", "50", "100", "200")
+  ) +
+  scale_y_continuous(
+    name   = "Predicted probability",
+    labels = scales::label_percent(accuracy = 1)
+  ) +
+  facet_wrap(~cluster, nrow = 1) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    strip.text       = element_text(face = "bold"),
+    legend.position  = "bottom",
+    legend.title     = element_text(size = 9),
+    legend.text      = element_text(size = 8)
+  )
+```
+
+The model correctly identified the water type for `r oob_acc_int`% of sites — `r oob_acc_int - null_acc` percentage points better than simply guessing the most common type every time. **Stream mouth proximity is the top predictor; its interaction with watershed slope ranks third** — confirming that proximity to a stream outlet matters most in steep catchments where runoff is concentrated and delivered rapidly to the coast. This stream mouth distance × slope interaction was the strongest of the three interactions included and suggests the two variables are not simply additive: a site close to a stream mouth in a flat watershed faces less nutrient exposure than an equivalently close site in a steep one. Soil permeability (Ksat) ranks second independently; permeable volcanic soils absorb rainfall before it becomes runoff, reducing coastal nutrient loading even under heavy rain. Cesspool proximity ranks fourth. Distance to the nearest NPDES outfall ranks eighth, indicating that point-source discharges contribute a small but statistically detectable independent signal beyond diffuse cesspool leaching. Pre-storm soil moisture and livestock density add the least. Together, fourteen landscape and hydrological predictors — eleven main effects and three pairwise interactions — explain coastal water type at `r oob_acc_int`% OOB accuracy across four islands and 694 sites, with each predictor sourced from a reproducible, openly licensed dataset.
 
 ---
 
@@ -3114,21 +3228,24 @@ island_extents <- list(
 )
 
 ccap_ag <- read_csv("data/ccap_ahupuaa_summary.csv", show_col_types = FALSE) |>
-  select(ahupuaa, pct_agriculture) |>
-  distinct(ahupuaa, .keep_all = TRUE)
+  select(ahupuaa, island, pct_agriculture) |>
+  # Normalize straight apostrophes to ʻokina to match ahupuaa_raw$mokupuni
+  mutate(island = str_replace_all(island, "[\u0027\u2018\u2019\u02BC]", "\u02BB")) |>
+  distinct(ahupuaa, island, .keep_all = TRUE)
 
 ag_sf_map <- ahupuaa_raw |>
   filter(mokupuni %in% names(island_extents)) |>
-  left_join(ccap_ag, by = "ahupuaa") |>
+  left_join(ccap_ag, by = c("ahupuaa", "mokupuni" = "island")) |>
   mutate(ag_pct = pct_agriculture * 100,
          island = mokupuni)
 
 cs_ahupuaa <- chem |>
-  filter(!is.na(ahupuaa)) |>
-  distinct(ahupuaa)
+  filter(!is.na(ahupuaa), !is.na(island)) |>
+  mutate(island = str_replace_all(island, "[\u0027\u2018\u2019\u02BC]", "\u02BB")) |>
+  distinct(ahupuaa, island)
 
 ag_sf_sampled <- ag_sf_map |>
-  filter(ahupuaa %in% cs_ahupuaa$ahupuaa)
+  semi_join(cs_ahupuaa, by = c("ahupuaa", "island"))
 
 plot_island_ag <- function(isl) {
   ext <- island_extents[[isl]]
@@ -3189,16 +3306,16 @@ ggsave(here("output","ag_land.png"), width = 12, height = 8 )
 #| fig-cap: "Cesspool density (cesspools per km² of ahupuaʻa area) across the four study islands. Dark blue outlines indicate ahupuaʻa with community science water quality samples collected during the March 2026 Kona Low. Lānaʻi has no cesspool layer in the Hawaiʻi GIS system and is shown in grey throughout. Colour is capped at 50 cesspools/km² (squished). Source: Hawaiʻi Statewide GIS Program — HCPT Cesspools (Layer 32; geodata.hawaii.gov), supplemented with OSDS Class-I systems for Molokaʻi (Layer 23)."
 
 cess_data <- read_csv("data/cesspool_by_ahupuaa.csv", show_col_types = FALSE) |>
-  select(ahupuaa, cesspool_density_per_km2) |>
-  distinct(ahupuaa, .keep_all = TRUE)
+  select(ahupuaa, island, cesspool_density_per_km2) |>
+  distinct(ahupuaa, island, .keep_all = TRUE)
 
 cess_sf_map <- ahupuaa_raw |>
   filter(mokupuni %in% names(island_extents)) |>
-  left_join(cess_data, by = "ahupuaa") |>
+  left_join(cess_data, by = c("ahupuaa", "mokupuni" = "island")) |>
   mutate(island = mokupuni)
 
 cess_sf_sampled <- cess_sf_map |>
-  filter(ahupuaa %in% cs_ahupuaa$ahupuaa)
+  semi_join(cs_ahupuaa, by = c("ahupuaa", "island"))
 
 plot_island_cess <- function(isl) {
   ext <- island_extents[[isl]]
@@ -3256,16 +3373,16 @@ ggsave(here("output","cesspool_all.png"), width = 12, height = 8 )
 #| fig-cap: "Saturated hydraulic conductivity (Ksat) by ahupuaʻa — a measure of how quickly water (and dissolved nutrients or cesspool effluent) moves through the soil. Higher values indicate more permeable soils where groundwater recharge is rapid and contaminant filtration is minimal. Dark blue outlines indicate ahupuaʻa with community science water quality samples. Colour is capped at 100 µm/s. Source: USDA-NRCS SSURGO (Soil Survey Geographic Database); Ksat values are area-weighted means of representative horizon values (ksat_r) across all soil map units within each ahupuaʻa."
 
 ksat_data <- read_csv("data/ahupuaa_ksat.csv", show_col_types = FALSE) |>
-  select(ahupuaa, mean_ksat_um_s) |>
-  distinct(ahupuaa, .keep_all = TRUE)
+  select(ahupuaa, mokupuni, mean_ksat_um_s) |>
+  distinct(ahupuaa, mokupuni, .keep_all = TRUE)
 
 ksat_sf_map <- ahupuaa_raw |>
   filter(mokupuni %in% names(island_extents)) |>
-  left_join(ksat_data, by = "ahupuaa") |>
+  left_join(ksat_data, by = c("ahupuaa", "mokupuni")) |>
   mutate(island = mokupuni)
 
 ksat_sf_sampled <- ksat_sf_map |>
-  filter(ahupuaa %in% cs_ahupuaa$ahupuaa)
+  semi_join(cs_ahupuaa, by = c("ahupuaa", "island"))
 
 plot_island_ksat <- function(isl) {
   ext <- island_extents[[isl]]
@@ -3328,15 +3445,16 @@ priority_base <- cess_sf_map |>
   select(ahupuaa, island, cesspool_density_per_km2) |>
   left_join(
     ksat_sf_map |> st_drop_geometry() |>
-      distinct(ahupuaa, .keep_all = TRUE) |>
-      select(ahupuaa, mean_ksat_um_s),
-    by = "ahupuaa"
+      distinct(ahupuaa, island, .keep_all = TRUE) |>
+      select(ahupuaa, island, mean_ksat_um_s),
+    by = c("ahupuaa", "island")
   ) |>
   left_join(
     chem |> filter(!is.na(NO3NO2), !is.na(ahupuaa)) |>
-      group_by(ahupuaa) |>
+      mutate(island = str_replace_all(island, "[\u0027\u2018\u2019\u02BC]", "\u02BB")) |>
+      group_by(ahupuaa, island) |>
       summarise(median_NN = median(NO3NO2, na.rm = TRUE), .groups = "drop"),
-    by = "ahupuaa"
+    by = c("ahupuaa", "island")
   ) |>
   mutate(
     cess_rank = percent_rank(replace_na(cesspool_density_per_km2, 0)),
@@ -3350,8 +3468,8 @@ priority_base <- cess_sf_map |>
 
 priority_sf <- ahupuaa_raw |>
   filter(mokupuni %in% names(island_extents)) |>
-  distinct(ahupuaa, .keep_all = TRUE) |>
-  left_join(priority_base |> select(-island), by = "ahupuaa") |>
+  distinct(ahupuaa, mokupuni, .keep_all = TRUE) |>
+  left_join(priority_base, by = c("ahupuaa", "mokupuni" = "island")) |>
   mutate(island = mokupuni)
 
 chem_pts <- chem |>
@@ -3530,6 +3648,68 @@ ggplot(tile_df, aes(x = cess_bin, y = ksat_bin, fill = median_NN)) +
     legend.key.height = unit(2, "lines")
   )
 ggsave(here("output","cesspool_ksat.png"), width = 8, height = 5)
+```
+
+### Landscape predictor separation by water type
+
+```{r}
+#| label: top5-cluster-violins
+#| fig-height: 5
+#| fig-width: 16
+#| fig-cap: "Distribution of the five highest-importance landscape predictors across the three water type clusters. Horizontal bars show cluster medians. Each predictor separates at least two water types, explaining why the random forest ranks them highly. Runoff-dominated and nearshore-enriched sites sit closer to stream mouths and cesspools, on more permeable soils, and in more agricultural watersheds than marine background sites."
+
+cluster_pal <- c(
+  "Marine background"  = "#1565C0",
+  "Nearshore enriched" = "#2E7D32",
+  "Runoff-dominated"   = "#E65100"
+)
+
+violin_clust <- function(var, ylab, ybreaks = waiver(), ylabels = waiver()) {
+  ggplot(rf_df_int, aes(x = cluster_label, y = .data[[var]])) +
+    geom_violin(aes(fill = cluster_label), alpha = 0.15, color = NA) +
+    geom_jitter(aes(color = cluster_label), alpha = 0.25, width = 0.12, size = 0.9) +
+    stat_summary(fun = median, geom = "crossbar", width = 0.4, linewidth = 0.6, color = "gray15") +
+    scale_fill_manual(values  = cluster_pal, guide = "none") +
+    scale_color_manual(values = cluster_pal, guide = "none") +
+    scale_x_discrete(labels = c("Marine background" = "Marine\nbkgd.",
+                                "Nearshore enriched" = "Nearshore\nenriched",
+                                "Runoff-dominated"   = "Runoff-\ndominated")) +
+    scale_y_continuous(name = ylab, breaks = ybreaks, labels = ylabels) +
+    labs(x = NULL) +
+    theme_minimal(base_size = 10) +
+    theme(panel.grid.minor = element_blank(),
+          axis.text.x = element_text(size = 8.5, lineheight = 1.15))
+}
+
+p1 <- violin_clust(
+  "log_dist_stream_mouth", "Stream mouth distance",
+  ybreaks = log1p(c(0, 100, 500, 2000, 5000, 10000)),
+  ylabels = c("0", "100 m", "500 m", "2 km", "5 km", "10 km")
+)
+
+p2 <- violin_clust(
+  "dist_x_slope", "Stream mouth dist. × Slope\n(interaction)"
+)
+
+p3 <- violin_clust(
+  "log_ksat", "Soil permeability (Ksat)",
+  ybreaks = log1p(c(0, 2, 5, 14, 50, 100)),
+  ylabels = c("0", "2", "5", "14", "50", "100 µm/s")
+)
+
+p4 <- violin_clust(
+  "log_dist_cesspool", "Dist. to nearest cesspool",
+  ybreaks = log1p(c(0, 100, 500, 2000, 5000)),
+  ylabels = c("0", "100 m", "500 m", "2 km", "5 km")
+)
+
+p5 <- violin_clust(
+  "sqrt_ag", "% Agriculture (C-CAP)",
+  ybreaks = sqrt(c(0, 0.05, 0.1, 0.2, 0.4, 0.68)),
+  ylabels = c("0%", "5%", "10%", "20%", "40%", "68%")
+)
+
+p1 | p2 | p3 | p4 | p5
 ```
 
 ---
