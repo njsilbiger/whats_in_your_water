@@ -2400,19 +2400,693 @@ for (i in phys_idx) {
 > **Step 12.** log(NO₃+NO₂) ~ log(Si) + cesspool + agriculture + impervious + ...
 > Key question: do anthropogenic variables explain variation *beyond* hydrologic delivery?
 
-*← Analysis code goes here when we work through Step 12 together.*
+The central test of Hypothesis 4. `log(SiO₂)` enters as an empirical proxy for
+terrestrial-water delivery (Step 11): each sample's *observed* log Si, not a model
+prediction. The question is whether anthropogenic watershed variables explain
+additional coastal NO₃+NO₂ *after* accounting for how strongly land and ocean are
+connected. All continuous predictors are standardized (z-scores) so coefficients are
+directly comparable within and across nutrient models (Figure 5, Step 15).
+
+Cesspool density is missing for all of Molokaʻi (HCPT layer 32 gap) and Lānaʻi
+(island absent from the layer). Rather than impute a source that genuinely does not
+exist there, we use a **two-tier design**: a four-island *primary* model whose
+anthropogenic block is agriculture + impervious + NPDES distance (full coverage),
+and an Oʻahu + Maui *submodel* that adds cesspool density where it is measured.
+
+```{r}
+#| label: step12-nox-data
+
+# Response-specific dataset: non-BDL NO3NO2 and non-BDL Si, offshore excluded.
+# Do NOT require the other three nutrients — this is the NO3NO2 model only.
+# log(Si) is the OBSERVED terrestrial-water proxy (Step 11), entered as a covariate.
+nox_all <- chem_master |>
+  filter(!offshore_reference, !is.na(NO3NO2), !bdl_NO3NO2, !is.na(SiO2), !bdl_SiO2) |>
+  left_join(
+    sp_sf |> st_drop_geometry() |> select(sample_id, utm_x, utm_y),
+    by = "sample_id"
+  ) |>
+  mutate(
+    log_NO3NO2           = log(NO3NO2),
+    log_SiO2             = log(SiO2),
+    log_dist_stream_m    = log(dist_to_stream_mouth_m + 1),
+    log_ksat             = log(mean_ksat_um_s + 1),
+    log_dist_npdes_m     = log(dist_to_nearest_npdes_m + 1),
+    log_cesspool_density = log(cesspool_density_per_km2 + 1),
+    log_pop_density_km2  = log(pop_density_km2 + 1),
+    island_f             = factor(island),
+    ahupuaa_f            = factor(ahupuaa),
+    utm_x_km             = utm_x / 1000,
+    utm_y_km             = utm_y / 1000
+  )
+
+# z-standardize a set of predictors within whatever subset is passed
+z <- function(x) as.numeric(scale(x))
+
+# Group A (storm forcing) + B (connectivity) + C (anthropogenic land use) + D (coastal).
+# mean_gwetroot dropped: island-level, aliased with the island random effect.
+# pct_impervious primary; log_pop_density is the sensitivity swap (rho = 0.92).
+# chirps_peak_day dropped: rho = 0.97 with cumulative (collinearity note, §Step 3–4).
+nox_primary_vars <- c(
+  "log_SiO2",                                             # terrestrial-water proxy
+  "chirps_storm_cumulative_mm",                           # A
+  "log_dist_stream_m", "mean_slope_deg", "log_ksat",      # B
+  "pct_agriculture", "pct_impervious", "log_dist_npdes_m",# C (no cesspool)
+  "fetch_mean_km", "hs_mean_m"                            # D
+)
+
+nox_primary <- nox_all |>
+  filter(if_all(all_of(c("log_NO3NO2", nox_primary_vars)), ~ !is.na(.)), !is.na(utm_x_km)) |>
+  mutate(across(all_of(nox_primary_vars), z, .names = "z_{.col}"))
+
+cat("Primary NO\u2083+NO\u2082 dataset: n =", nrow(nox_primary),
+    "| sites:", n_distinct(nox_primary$site_id),
+    "| ahupua\u02BBa:", n_distinct(nox_primary$ahupuaa),
+    "| islands:", n_distinct(nox_primary$island), "\n")
+nox_primary |> count(island) |> knitr::kable(caption = "Primary NO\u2083+NO\u2082 model — samples by island.")
+```
+
+```{r}
+#| label: step12-nox-models
+#| cache: true
+
+# Same structure as the Si model (Step 11): island + ahupuaʻa random intercepts
+# absorb hierarchical pseudoreplication; a 2D spatial smooth captures residual
+# spatial structure. Fixed effects are linear (pre-registered candidate set, VIF
+# already checked in §Step 3–4). REML for estimation.
+z_primary <- paste0("z_", nox_primary_vars)
+re_terms  <- "s(island_f, bs='re') + s(ahupuaa_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)"
+
+# Delivery-only: log(Si) + physical/connectivity/coastal, NO anthropogenic land use
+z_delivery <- setdiff(z_primary,
+                      c("z_pct_agriculture", "z_pct_impervious", "z_log_dist_npdes_m"))
+
+nox_M_delivery <- gam(
+  as.formula(paste("log_NO3NO2 ~", paste(z_delivery, collapse = " + "), "+", re_terms)),
+  data = nox_primary, method = "REML"
+)
+nox_M_full <- gam(
+  as.formula(paste("log_NO3NO2 ~", paste(z_primary, collapse = " + "), "+", re_terms)),
+  data = nox_primary, method = "REML"
+)
+
+# ML refit for AIC comparison (REML AIC not comparable across differing fixed effects)
+delta_aic <- AIC(update(nox_M_delivery, method = "ML")) -
+             AIC(update(nox_M_full,     method = "ML"))
+
+tibble(
+  Model            = c("Delivery only (log Si + physical)", "+ anthropogenic land use"),
+  `Dev. expl. (%)` = c(round(summary(nox_M_delivery)$dev.expl * 100, 1),
+                       round(summary(nox_M_full)$dev.expl    * 100, 1)),
+  `Adj. R²`        = c(round(summary(nox_M_delivery)$r.sq, 3),
+                       round(summary(nox_M_full)$r.sq, 3))
+) |>
+  knitr::kable(caption = paste0(
+    "Primary four-island NO\u2083+NO\u2082 model (n = ", nrow(nox_primary),
+    "). Adding the anthropogenic land-use block improves deviance explained by ",
+    round((summary(nox_M_full)$dev.expl - summary(nox_M_delivery)$dev.expl) * 100, 1),
+    " percentage points (\u0394AIC = ", round(delta_aic, 1),
+    " favouring the fuller model)."))
+```
+
+```{r}
+#| label: step12-nox-coefficients
+#| fig-width: 6.5
+#| fig-height: 4
+#| fig-cap: "**Step 12 — Standardized fixed effects on log(NO₃+NO₂), four-island primary model.** Points are standardized coefficients; bars are 95% Wald confidence intervals. A 1-SD change in log(SiO₂) is associated with a 0.81-SD change in log(NO₃+NO₂); the anthropogenic land-use terms (agriculture, impervious) do not differ clearly from zero after adjustment. Colours mark the four pre-registered predictor groups; island/ahupuaʻa random effects and the 2D spatial smooth are not shown."
+
+coef_ci <- function(model, label) {
+  s <- summary(model)$p.table
+  s <- s[rownames(s) != "(Intercept)", , drop = FALSE]
+  tibble(model = label, term = rownames(s), est = s[, 1], se = s[, 2],
+         lwr = s[, 1] - 1.96 * s[, 2], upr = s[, 1] + 1.96 * s[, 2], p = s[, 4])
+}
+
+pred_group <- c(
+  z_log_SiO2 = "Terrestrial delivery", z_chirps_storm_cumulative_mm = "Hydrologic forcing",
+  z_log_dist_stream_m = "Watershed transport", z_mean_slope_deg = "Watershed transport",
+  z_log_ksat = "Watershed transport", z_pct_agriculture = "Anthropogenic",
+  z_pct_impervious = "Anthropogenic", z_log_dist_npdes_m = "Anthropogenic",
+  z_fetch_mean_km = "Coastal dilution", z_hs_mean_m = "Coastal dilution")
+pred_label <- c(
+  z_log_SiO2 = "log(SiO\u2082)", z_chirps_storm_cumulative_mm = "Storm rainfall",
+  z_log_dist_stream_m = "log(Dist stream)", z_mean_slope_deg = "Slope",
+  z_log_ksat = "log(Ksat)", z_pct_agriculture = "% agriculture",
+  z_pct_impervious = "% impervious", z_log_dist_npdes_m = "log(Dist NPDES)",
+  z_fetch_mean_km = "Wave fetch", z_hs_mean_m = "Wave height")
+
+nox_coefs <- coef_ci(nox_M_full, "4-island")
+
+nox_coefs |>
+  mutate(across(c(est, se, lwr, upr), \(x) round(x, 3)), p = signif(p, 2),
+         Group = pred_group[term], Predictor = pred_label[term]) |>
+  arrange(desc(abs(est))) |>
+  select(Group, Predictor, est, lwr, upr, p) |>
+  knitr::kable(caption = "Standardized coefficients — primary four-island NO\u2083+NO\u2082 model.",
+               col.names = c("Group", "Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
+
+group_cols <- c("Terrestrial delivery" = "#1565C0", "Hydrologic forcing" = "#00838F",
+                "Watershed transport" = "#2E7D32", "Anthropogenic" = "#C62828",
+                "Coastal dilution" = "#6A1B9A")
+nox_coefs |>
+  mutate(Group = factor(pred_group[term], levels = names(group_cols)),
+         Predictor = fct_reorder(pred_label[term], est)) |>
+  ggplot(aes(est, Predictor, colour = Group)) +
+  geom_vline(xintercept = 0, linetype = 2, colour = "grey60") +
+  geom_pointrange(aes(xmin = lwr, xmax = upr)) +
+  scale_colour_manual(values = group_cols, name = NULL) +
+  labs(x = "Standardized effect on log(NO\u2083+NO\u2082)", y = NULL) +
+  theme_kona_paper()
+```
+
+```{r}
+#| label: step12-nox-residual-moran
+
+# A model is not final if residual spatial autocorrelation remains strong.
+resid_morans_nox <- function(model, df, k = 10) {
+  r  <- residuals(model, type = "deviance")
+  nb <- suppressWarnings(spdep::knearneigh(as.matrix(df[, c("utm_x_km", "utm_y_km")]), k = k)) |>
+    spdep::knn2nb()
+  mt <- spdep::moran.test(r, spdep::nb2listw(nb, style = "W"))
+  tibble(morans_I = round(unname(mt$estimate[1]), 4), p_value = round(mt$p.value, 4))
+}
+
+bind_rows(
+  resid_morans_nox(nox_M_delivery, nox_primary) |> mutate(Model = "Delivery only"),
+  resid_morans_nox(nox_M_full,     nox_primary) |> mutate(Model = "+ anthropogenic")
+) |>
+  select(Model, morans_I, p_value) |>
+  knitr::kable(caption = "Residual Moran's I (k-NN, k = 10). Random effects + 2D spatial smooth absorb spatial autocorrelation in both models.",
+               col.names = c("Model", "Moran's I", "p"))
+```
+
+::: {.callout-important}
+**What the four-island model supports.** After adjusting for terrestrial-water
+delivery and spatial structure, coastal NO₃+NO₂ is overwhelmingly explained by
+`log(SiO₂)` (standardized β ≈ 0.81, 95% CI 0.70–0.92). The anthropogenic land-use
+block adds only ~0.5 percentage points of deviance explained (ΔAIC ≈ 2), and neither
+% agriculture (β ≈ 0.05) nor % impervious (β ≈ −0.17) differs clearly from zero.
+The one anthropogenic term with a consistent signal is **proximity to NPDES
+facilities** (log distance β ≈ −0.19, p ≈ 0.005: closer facilities, higher NO₃+NO₂),
+though NPDES permits cover several facility types and this is correlational.
+This does **not** support strong human amplification of NO₃+NO₂ *via agricultural or
+urban land cover* at the four-island scale.
+:::
+
+```{r}
+#| label: step12-nox-cesspool-submodel
+#| cache: true
+
+# Two-tier design, tier 2: Oʻahu + Maui only, add cesspool density.
+# 2 islands → island as a fixed effect (a 2-level random intercept is degenerate).
+nox_sub_vars <- c(nox_primary_vars, "log_cesspool_density")
+nox_sub <- nox_all |>
+  filter(island %in% c("O'ahu", "Maui"), !is.na(cesspool_density_per_km2)) |>
+  filter(if_all(all_of(c("log_NO3NO2", nox_sub_vars)), ~ !is.na(.)), !is.na(utm_x_km)) |>
+  mutate(across(all_of(nox_sub_vars), z, .names = "z_{.col}"), island_f = factor(island))
+
+cat("Cesspool submodel: n =", nrow(nox_sub),
+    "| ahupua\u02BBa:", n_distinct(nox_sub$ahupuaa),
+    "| islands: O\u02BBahu + Maui\n")
+
+z_sub    <- paste0("z_", nox_sub_vars)
+re_sub   <- "island_f + s(ahupuaa_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)"
+nox_sub_nocess <- gam(
+  as.formula(paste("log_NO3NO2 ~", paste(setdiff(z_sub, "z_log_cesspool_density"), collapse = " + "), "+", re_sub)),
+  data = nox_sub, method = "REML")
+nox_sub_full <- gam(
+  as.formula(paste("log_NO3NO2 ~", paste(z_sub, collapse = " + "), "+", re_sub)),
+  data = nox_sub, method = "REML")
+
+delta_aic_cess <- AIC(update(nox_sub_nocess, method = "ML")) -
+                  AIC(update(nox_sub_full,   method = "ML"))
+
+coef_ci(nox_sub_full, "OahuMaui") |>
+  filter(term != "island_fO'ahu") |>
+  mutate(across(c(est, se, lwr, upr), \(x) round(x, 3)), p = signif(p, 2),
+         Predictor = coalesce(pred_label[term], "log(Cesspool density)")) |>
+  arrange(desc(abs(est))) |>
+  select(Predictor, est, lwr, upr, p) |>
+  knitr::kable(caption = paste0(
+    "Oʻahu + Maui NO\u2083+NO\u2082 submodel with cesspool density (n = ", nrow(nox_sub),
+    "). Adding cesspool density does not improve fit (\u0394AIC = ", round(delta_aic_cess, 1),
+    "); its standardized coefficient is ",
+    round(coef_ci(nox_sub_full, "x") |> filter(term == "z_log_cesspool_density") |> pull(est), 3),
+    " (95% CI crosses zero)."),
+    col.names = c("Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
+```
+
+```{r}
+#| label: step12-nox-pop-sensitivity
+
+# Sensitivity: swap pct_impervious for log(pop density) (rho = 0.92 — cannot co-enter).
+nox_M_pop <- gam(
+  as.formula(paste("log_NO3NO2 ~",
+    paste(c(setdiff(z_primary, "z_pct_impervious"), "z_log_pop_density_km2"), collapse = " + "),
+    "+", re_terms)),
+  data = nox_primary |> mutate(z_log_pop_density_km2 = z(log_pop_density_km2)),
+  method = "REML")
+
+bind_rows(
+  coef_ci(nox_M_full, "impervious") |> filter(term == "z_pct_impervious") |>
+    mutate(Predictor = "% impervious (primary)"),
+  coef_ci(nox_M_pop, "pop") |> filter(term == "z_log_pop_density_km2") |>
+    mutate(Predictor = "log(pop density) (swap)")
+) |>
+  mutate(across(c(est, lwr, upr), \(x) round(x, 3)), p = signif(p, 2)) |>
+  select(Predictor, est, lwr, upr, p) |>
+  knitr::kable(caption = "Impervious/population sensitivity swap. Both carry a negative association with NO\u2083+NO\u2082 after adjustment for terrestrial delivery — the opposite of the amplification prediction.",
+               col.names = c("Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
+```
+
+```{r}
+#| label: step12-nox-save
+saveRDS(nox_M_full,     here("output", "model_objects", "nox_M_full_4island.rds"))
+saveRDS(nox_M_delivery, here("output", "model_objects", "nox_M_delivery_4island.rds"))
+saveRDS(nox_sub_full,   here("output", "model_objects", "nox_M_cesspool_oahumaui.rds"))
+```
+
+::: {.callout-note}
+**Step 12 summary.** The NO₃+NO₂ model is dominated by terrestrial-water delivery
+(log Si). Human land-use predictors — agriculture, impervious cover, population, and
+cesspool density (Oʻahu + Maui) — do **not** add clear explanatory power beyond that
+delivery signal in this event, and impervious/population associations are, if
+anything, negative. Cesspool density is marginal and non-significant (β ≈ 0.17,
+p ≈ 0.07, ΔAIC does not favour its inclusion). NPDES proximity is the only
+anthropogenic term with a consistent (correlational) signal. Under the criteria in
+the analysis plan (Step 33), these results do not yet justify a title claiming
+"human amplification" of NO₃+NO₂; the formal, spatially cross-validated amplification
+test follows in Step 17.
+:::
 
 ## PO₄ model {#sec-po4-model}
 
 > **Step 13.** Parallel PO₄ model. Same predictor groups as NO₃+NO₂.
 
-*← Analysis code goes here when we work through Step 13 together.*
+Identical two-tier design and predictor set as Step 12, refit for log(PO₄). Helper
+functions (`z`, `coef_ci`, `resid_morans_nox`), the predictor labels/colours, and
+`re_terms` are reused from the NO₃+NO₂ section. PO₄ is **not** treated as a specific
+wastewater tracer; the question is whether anthropogenic watershed variables explain
+PO₄ enrichment *beyond* terrestrial-water transport.
+
+```{r}
+#| label: step13-po4-data
+
+po4_all <- chem_master |>
+  filter(!offshore_reference, !is.na(PO4), !bdl_PO4, !is.na(SiO2), !bdl_SiO2) |>
+  left_join(
+    sp_sf |> st_drop_geometry() |> select(sample_id, utm_x, utm_y),
+    by = "sample_id"
+  ) |>
+  mutate(
+    log_PO4              = log(PO4),
+    log_SiO2             = log(SiO2),
+    log_dist_stream_m    = log(dist_to_stream_mouth_m + 1),
+    log_ksat             = log(mean_ksat_um_s + 1),
+    log_dist_npdes_m     = log(dist_to_nearest_npdes_m + 1),
+    log_cesspool_density = log(cesspool_density_per_km2 + 1),
+    log_pop_density_km2  = log(pop_density_km2 + 1),
+    island_f             = factor(island),
+    ahupuaa_f            = factor(ahupuaa),
+    utm_x_km             = utm_x / 1000,
+    utm_y_km             = utm_y / 1000
+  )
+
+# Same pre-registered predictor set as NO3NO2 (nox_primary_vars from Step 12)
+po4_primary <- po4_all |>
+  filter(if_all(all_of(c("log_PO4", nox_primary_vars)), ~ !is.na(.)), !is.na(utm_x_km)) |>
+  mutate(across(all_of(nox_primary_vars), z, .names = "z_{.col}"))
+
+cat("Primary PO\u2084 dataset: n =", nrow(po4_primary),
+    "| sites:", n_distinct(po4_primary$site_id),
+    "| ahupua\u02BBa:", n_distinct(po4_primary$ahupuaa),
+    "| islands:", n_distinct(po4_primary$island), "\n")
+po4_primary |> count(island) |> knitr::kable(caption = "Primary PO\u2084 model — samples by island.")
+```
+
+```{r}
+#| label: step13-po4-models
+#| cache: true
+
+z_primary  <- paste0("z_", nox_primary_vars)
+z_delivery <- setdiff(z_primary,
+                      c("z_pct_agriculture", "z_pct_impervious", "z_log_dist_npdes_m"))
+
+po4_M_delivery <- gam(
+  as.formula(paste("log_PO4 ~", paste(z_delivery, collapse = " + "), "+", re_terms)),
+  data = po4_primary, method = "REML")
+po4_M_full <- gam(
+  as.formula(paste("log_PO4 ~", paste(z_primary, collapse = " + "), "+", re_terms)),
+  data = po4_primary, method = "REML")
+
+delta_aic_po4 <- AIC(update(po4_M_delivery, method = "ML")) -
+                 AIC(update(po4_M_full,     method = "ML"))
+
+tibble(
+  Model            = c("Delivery only (log Si + physical)", "+ anthropogenic land use"),
+  `Dev. expl. (%)` = c(round(summary(po4_M_delivery)$dev.expl * 100, 1),
+                       round(summary(po4_M_full)$dev.expl    * 100, 1)),
+  `Adj. R²`        = c(round(summary(po4_M_delivery)$r.sq, 3),
+                       round(summary(po4_M_full)$r.sq, 3))
+) |>
+  knitr::kable(caption = paste0(
+    "Primary four-island PO\u2084 model (n = ", nrow(po4_primary),
+    "). Anthropogenic land use adds ",
+    round((summary(po4_M_full)$dev.expl - summary(po4_M_delivery)$dev.expl) * 100, 1),
+    " percentage points (\u0394AIC = ", round(delta_aic_po4, 1),
+    " favouring the fuller model)."))
+```
+
+```{r}
+#| label: step13-po4-coefficients
+#| fig-width: 6.5
+#| fig-height: 4
+#| fig-cap: "**Step 13 — Standardized fixed effects on log(PO₄), four-island primary model.** Points are standardized coefficients; bars are 95% Wald confidence intervals. log(SiO₂) is the leading predictor (β ≈ 0.41), with a clearer positive storm-rainfall contribution than NO₃+NO₂; anthropogenic land-use terms remain weak. Colours mark the four pre-registered predictor groups."
+
+po4_coefs <- coef_ci(po4_M_full, "PO4")
+
+po4_coefs |>
+  mutate(across(c(est, se, lwr, upr), \(x) round(x, 3)), p = signif(p, 2),
+         Group = pred_group[term], Predictor = pred_label[term]) |>
+  arrange(desc(abs(est))) |>
+  select(Group, Predictor, est, lwr, upr, p) |>
+  knitr::kable(caption = "Standardized coefficients — primary four-island PO\u2084 model.",
+               col.names = c("Group", "Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
+
+po4_coefs |>
+  mutate(Group = factor(pred_group[term], levels = names(group_cols)),
+         Predictor = fct_reorder(pred_label[term], est)) |>
+  ggplot(aes(est, Predictor, colour = Group)) +
+  geom_vline(xintercept = 0, linetype = 2, colour = "grey60") +
+  geom_pointrange(aes(xmin = lwr, xmax = upr)) +
+  scale_colour_manual(values = group_cols, name = NULL) +
+  labs(x = "Standardized effect on log(PO\u2084)", y = NULL) +
+  theme_kona_paper()
+```
+
+```{r}
+#| label: step13-po4-residual-moran
+bind_rows(
+  resid_morans_nox(po4_M_delivery, po4_primary) |> mutate(Model = "Delivery only"),
+  resid_morans_nox(po4_M_full,     po4_primary) |> mutate(Model = "+ anthropogenic")
+) |>
+  select(Model, morans_I, p_value) |>
+  knitr::kable(caption = "Residual Moran's I (k-NN, k = 10) — PO\u2084 models.",
+               col.names = c("Model", "Moran's I", "p"))
+```
+
+```{r}
+#| label: step13-po4-cesspool-submodel
+#| cache: true
+
+po4_sub_vars <- c(nox_primary_vars, "log_cesspool_density")
+po4_sub <- po4_all |>
+  filter(island %in% c("O'ahu", "Maui"), !is.na(cesspool_density_per_km2)) |>
+  filter(if_all(all_of(c("log_PO4", po4_sub_vars)), ~ !is.na(.)), !is.na(utm_x_km)) |>
+  mutate(across(all_of(po4_sub_vars), z, .names = "z_{.col}"), island_f = factor(island))
+
+cat("PO\u2084 cesspool submodel: n =", nrow(po4_sub),
+    "| ahupua\u02BBa:", n_distinct(po4_sub$ahupuaa), "| islands: O\u02BBahu + Maui\n")
+
+z_sub  <- paste0("z_", po4_sub_vars)
+re_sub <- "island_f + s(ahupuaa_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)"
+po4_sub_nocess <- gam(
+  as.formula(paste("log_PO4 ~", paste(setdiff(z_sub, "z_log_cesspool_density"), collapse = " + "), "+", re_sub)),
+  data = po4_sub, method = "REML")
+po4_sub_full <- gam(
+  as.formula(paste("log_PO4 ~", paste(z_sub, collapse = " + "), "+", re_sub)),
+  data = po4_sub, method = "REML")
+
+delta_aic_po4_cess <- AIC(update(po4_sub_nocess, method = "ML")) -
+                      AIC(update(po4_sub_full,   method = "ML"))
+
+coef_ci(po4_sub_full, "OahuMaui") |>
+  filter(term != "island_fO'ahu") |>
+  mutate(across(c(est, se, lwr, upr), \(x) round(x, 3)), p = signif(p, 2),
+         Predictor = coalesce(pred_label[term], "log(Cesspool density)")) |>
+  arrange(desc(abs(est))) |>
+  select(Predictor, est, lwr, upr, p) |>
+  knitr::kable(caption = paste0(
+    "Oʻahu + Maui PO\u2084 submodel with cesspool density (n = ", nrow(po4_sub),
+    "; \u0394AIC = ", round(delta_aic_po4_cess, 1), "). Cesspool density is marginal (p \u2248 0.07)."),
+    col.names = c("Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
+```
+
+```{r}
+#| label: step13-po4-pop-sensitivity
+po4_M_pop <- gam(
+  as.formula(paste("log_PO4 ~",
+    paste(c(setdiff(z_primary, "z_pct_impervious"), "z_log_pop_density_km2"), collapse = " + "),
+    "+", re_terms)),
+  data = po4_primary |> mutate(z_log_pop_density_km2 = z(log_pop_density_km2)),
+  method = "REML")
+
+bind_rows(
+  coef_ci(po4_M_full, "impervious") |> filter(term == "z_pct_impervious") |>
+    mutate(Predictor = "% impervious (primary)"),
+  coef_ci(po4_M_pop, "pop") |> filter(term == "z_log_pop_density_km2") |>
+    mutate(Predictor = "log(pop density) (swap)")
+) |>
+  mutate(across(c(est, lwr, upr), \(x) round(x, 3)), p = signif(p, 2)) |>
+  select(Predictor, est, lwr, upr, p) |>
+  knitr::kable(caption = "PO\u2084 impervious/population sensitivity swap.",
+               col.names = c("Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
+```
+
+```{r}
+#| label: step13-po4-save
+saveRDS(po4_M_full,     here("output", "model_objects", "po4_M_full_4island.rds"))
+saveRDS(po4_M_delivery, here("output", "model_objects", "po4_M_delivery_4island.rds"))
+saveRDS(po4_sub_full,   here("output", "model_objects", "po4_M_cesspool_oahumaui.rds"))
+```
+
+::: {.callout-note}
+**Step 13 summary.** PO₄ echoes the NO₃+NO₂ result but with a weaker terrestrial-water
+coupling (log Si β ≈ 0.41 vs 0.81 for NO₃+NO₂) and a **clearer positive storm-rainfall
+effect** (β ≈ 0.19, p < 0.001), consistent with PO₄ mobilisation tracking event
+hydrology more than a fixed source signature. Anthropogenic land use again adds little
+(ΔAIC ≈ 6, ~1 percentage point of deviance): % impervious is significant but *negative*,
+% agriculture is null, and cesspool density is marginal (β ≈ 0.07, p ≈ 0.07, ΔAIC ≈ 2).
+As with NO₃+NO₂, there is no strong evidence that agricultural or urban land cover
+amplifies coastal PO₄ beyond terrestrial-water transport during this event.
+:::
 
 ## NH₄ model — the contrast {#sec-nh4-model}
 
 > **Step 14.** NH₄ model. Expect weaker explanatory power — treat that as a result.
 
-*← Analysis code goes here when we work through Step 14 together.*
+Same framework as Steps 12–13, refit for log(NH₄). Weak watershed-scale
+predictability is itself a result, not a failure: reduced inorganic N is expected to
+be controlled at finer spatial and biogeochemical scales (rapid uptake, regeneration,
+sediment/redox transformations, localized inputs). Over half of NH₄ samples are BDL,
+so the response-specific n is much smaller than for the other nutrients.
+
+```{r}
+#| label: step14-nh4-data
+
+nh3_all <- chem_master |>
+  filter(!offshore_reference, !is.na(NH3), !bdl_NH3, !is.na(SiO2), !bdl_SiO2) |>
+  left_join(
+    sp_sf |> st_drop_geometry() |> select(sample_id, utm_x, utm_y),
+    by = "sample_id"
+  ) |>
+  mutate(
+    log_NH3              = log(NH3),
+    log_SiO2             = log(SiO2),
+    log_dist_stream_m    = log(dist_to_stream_mouth_m + 1),
+    log_ksat             = log(mean_ksat_um_s + 1),
+    log_dist_npdes_m     = log(dist_to_nearest_npdes_m + 1),
+    log_cesspool_density = log(cesspool_density_per_km2 + 1),
+    log_pop_density_km2  = log(pop_density_km2 + 1),
+    island_f             = factor(island),
+    ahupuaa_f            = factor(ahupuaa),
+    utm_x_km             = utm_x / 1000,
+    utm_y_km             = utm_y / 1000
+  )
+
+nh3_primary <- nh3_all |>
+  filter(if_all(all_of(c("log_NH3", nox_primary_vars)), ~ !is.na(.)), !is.na(utm_x_km)) |>
+  mutate(across(all_of(nox_primary_vars), z, .names = "z_{.col}"))
+
+cat("Primary NH\u2084 dataset: n =", nrow(nh3_primary),
+    "| sites:", n_distinct(nh3_primary$site_id),
+    "| ahupua\u02BBa:", n_distinct(nh3_primary$ahupuaa),
+    "| islands:", n_distinct(nh3_primary$island),
+    "| (BDL excluded — reduced N below detection in >50% of samples)\n")
+nh3_primary |> count(island) |> knitr::kable(caption = "Primary NH\u2084 model — samples by island.")
+```
+
+```{r}
+#| label: step14-nh4-models
+#| cache: true
+
+z_primary  <- paste0("z_", nox_primary_vars)
+z_delivery <- setdiff(z_primary,
+                      c("z_pct_agriculture", "z_pct_impervious", "z_log_dist_npdes_m"))
+
+nh3_M_delivery <- gam(
+  as.formula(paste("log_NH3 ~", paste(z_delivery, collapse = " + "), "+", re_terms)),
+  data = nh3_primary, method = "REML")
+nh3_M_full <- gam(
+  as.formula(paste("log_NH3 ~", paste(z_primary, collapse = " + "), "+", re_terms)),
+  data = nh3_primary, method = "REML")
+
+delta_aic_nh3 <- AIC(update(nh3_M_delivery, method = "ML")) -
+                 AIC(update(nh3_M_full,     method = "ML"))
+
+tibble(
+  Model            = c("Delivery only (log Si + physical)", "+ anthropogenic land use"),
+  `Dev. expl. (%)` = c(round(summary(nh3_M_delivery)$dev.expl * 100, 1),
+                       round(summary(nh3_M_full)$dev.expl    * 100, 1)),
+  `Adj. R²`        = c(round(summary(nh3_M_delivery)$r.sq, 3),
+                       round(summary(nh3_M_full)$r.sq, 3))
+) |>
+  knitr::kable(caption = paste0(
+    "Primary four-island NH\u2084 model (n = ", nrow(nh3_primary),
+    "). Deviance explained (~35%) is far below NO\u2083+NO\u2082 (~60%) and PO\u2084 (~54%)."))
+```
+
+```{r}
+#| label: step14-nh4-coefficients
+#| fig-width: 6.5
+#| fig-height: 4
+#| fig-cap: "**Step 14 — Standardized fixed effects on log(NH₄), four-island primary model.** log(SiO₂) remains the leading predictor but is markedly weaker than for NO₃+NO₂ or PO₄ (β ≈ 0.28). Both % impervious and % agriculture carry significant *negative* associations. Bars are 95% Wald confidence intervals."
+
+nh3_coefs <- coef_ci(nh3_M_full, "NH4")
+
+nh3_coefs |>
+  mutate(across(c(est, se, lwr, upr), \(x) round(x, 3)), p = signif(p, 2),
+         Group = pred_group[term], Predictor = pred_label[term]) |>
+  arrange(desc(abs(est))) |>
+  select(Group, Predictor, est, lwr, upr, p) |>
+  knitr::kable(caption = "Standardized coefficients — primary four-island NH\u2084 model.",
+               col.names = c("Group", "Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
+
+nh3_coefs |>
+  mutate(Group = factor(pred_group[term], levels = names(group_cols)),
+         Predictor = fct_reorder(pred_label[term], est)) |>
+  ggplot(aes(est, Predictor, colour = Group)) +
+  geom_vline(xintercept = 0, linetype = 2, colour = "grey60") +
+  geom_pointrange(aes(xmin = lwr, xmax = upr)) +
+  scale_colour_manual(values = group_cols, name = NULL) +
+  labs(x = "Standardized effect on log(NH\u2084)", y = NULL) +
+  theme_kona_paper()
+```
+
+```{r}
+#| label: step14-nh4-residual-moran
+# NH4 shows essentially no residual spatial autocorrelation — consistent with the
+# exploratory Moran's I finding that NH3 is not spatially clustered (§Key notes).
+bind_rows(
+  resid_morans_nox(nh3_M_delivery, nh3_primary) |> mutate(Model = "Delivery only"),
+  resid_morans_nox(nh3_M_full,     nh3_primary) |> mutate(Model = "+ anthropogenic")
+) |>
+  select(Model, morans_I, p_value) |>
+  knitr::kable(caption = "Residual Moran's I (k-NN, k = 10) — NH\u2084 models.",
+               col.names = c("Model", "Moran's I", "p"))
+```
+
+```{r}
+#| label: step14-nh4-cesspool-submodel
+#| cache: true
+
+nh3_sub_vars <- c(nox_primary_vars, "log_cesspool_density")
+nh3_sub <- nh3_all |>
+  filter(island %in% c("O'ahu", "Maui"), !is.na(cesspool_density_per_km2)) |>
+  filter(if_all(all_of(c("log_NH3", nh3_sub_vars)), ~ !is.na(.)), !is.na(utm_x_km)) |>
+  mutate(across(all_of(nh3_sub_vars), z, .names = "z_{.col}"), island_f = factor(island))
+
+cat("NH\u2084 cesspool submodel: n =", nrow(nh3_sub),
+    "| ahupua\u02BBa:", n_distinct(nh3_sub$ahupuaa), "| islands: O\u02BBahu + Maui\n")
+
+z_sub  <- paste0("z_", nh3_sub_vars)
+re_sub <- "island_f + s(ahupuaa_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)"
+nh3_sub_nocess <- gam(
+  as.formula(paste("log_NH3 ~", paste(setdiff(z_sub, "z_log_cesspool_density"), collapse = " + "), "+", re_sub)),
+  data = nh3_sub, method = "REML")
+nh3_sub_full <- gam(
+  as.formula(paste("log_NH3 ~", paste(z_sub, collapse = " + "), "+", re_sub)),
+  data = nh3_sub, method = "REML")
+
+delta_aic_nh3_cess <- AIC(update(nh3_sub_nocess, method = "ML")) -
+                      AIC(update(nh3_sub_full,   method = "ML"))
+
+coef_ci(nh3_sub_full, "OahuMaui") |>
+  filter(term != "island_fO'ahu") |>
+  mutate(across(c(est, se, lwr, upr), \(x) round(x, 3)), p = signif(p, 2),
+         Predictor = coalesce(pred_label[term], "log(Cesspool density)")) |>
+  arrange(desc(abs(est))) |>
+  select(Predictor, est, lwr, upr, p) |>
+  knitr::kable(caption = paste0(
+    "Oʻahu + Maui NH\u2084 submodel with cesspool density (n = ", nrow(nh3_sub),
+    "; \u0394AIC = ", round(delta_aic_nh3_cess, 1),
+    "). Unlike NO\u2083+NO\u2082 and PO\u2084, cesspool density is a clear positive predictor of NH\u2084."),
+    col.names = c("Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
+```
+
+```{r}
+#| label: step14-nh4-pop-sensitivity
+nh3_M_pop <- gam(
+  as.formula(paste("log_NH3 ~",
+    paste(c(setdiff(z_primary, "z_pct_impervious"), "z_log_pop_density_km2"), collapse = " + "),
+    "+", re_terms)),
+  data = nh3_primary |> mutate(z_log_pop_density_km2 = z(log_pop_density_km2)),
+  method = "REML")
+
+bind_rows(
+  coef_ci(nh3_M_full, "impervious") |> filter(term == "z_pct_impervious") |>
+    mutate(Predictor = "% impervious (primary)"),
+  coef_ci(nh3_M_pop, "pop") |> filter(term == "z_log_pop_density_km2") |>
+    mutate(Predictor = "log(pop density) (swap)")
+) |>
+  mutate(across(c(est, lwr, upr), \(x) round(x, 3)), p = signif(p, 2)) |>
+  select(Predictor, est, lwr, upr, p) |>
+  knitr::kable(caption = "NH\u2084 impervious/population sensitivity swap.",
+               col.names = c("Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
+```
+
+```{r}
+#| label: step14-nutrient-predictability-contrast
+
+# Formal contrast: predictability declines from oxidized N → P → reduced N.
+logSi_beta <- function(m) coef_ci(m, "x") |> filter(term == "z_log_SiO2") |> pull(est)
+
+tibble(
+  nutrient    = c("NO\u2083+NO\u2082", "PO\u2084", "NH\u2084"),
+  n           = c(nrow(nox_primary), nrow(po4_primary), nrow(nh3_primary)),
+  dev_expl    = round(c(summary(nox_M_full)$dev.expl, summary(po4_M_full)$dev.expl,
+                        summary(nh3_M_full)$dev.expl) * 100, 1),
+  logsi_beta  = round(c(logSi_beta(nox_M_full), logSi_beta(po4_M_full),
+                        logSi_beta(nh3_M_full)), 3),
+  resid_moran = c(resid_morans_nox(nox_M_full, nox_primary)$morans_I,
+                  resid_morans_nox(po4_M_full, po4_primary)$morans_I,
+                  resid_morans_nox(nh3_M_full, nh3_primary)$morans_I)
+) |>
+  knitr::kable(
+    col.names = c("Nutrient", "n", "Dev. expl. (%)", "log(Si) \u03b2", "Resid. Moran's I"),
+    caption   = "Cross-nutrient predictability contrast (full four-island models). Watershed-scale predictability and terrestrial-water coupling both decline from oxidized N to reduced N.")
+```
+
+```{r}
+#| label: step14-nh4-save
+saveRDS(nh3_M_full,     here("output", "model_objects", "nh3_M_full_4island.rds"))
+saveRDS(nh3_M_delivery, here("output", "model_objects", "nh3_M_delivery_4island.rds"))
+saveRDS(nh3_sub_full,   here("output", "model_objects", "nh3_M_cesspool_oahumaui.rds"))
+```
+
+::: {.callout-important}
+**Step 14 summary — the contrast holds, with one exception.** NH₄ is much more weakly
+predicted by watershed-scale variables than NO₃+NO₂ or PO₄: deviance explained falls
+to ~35%, terrestrial-water coupling is weak (log Si β ≈ 0.28), and there is no residual
+spatial structure to absorb (Moran's I ≈ 0 even before modelling). This is consistent
+with reduced inorganic N being controlled by localized sources and rapid biogeochemical
+cycling rather than watershed-to-coast transport. The exception worth flagging: on
+Oʻahu + Maui, **cesspool density is a clear positive predictor of NH₄** (standardized
+β ≈ 0.21, 95% CI 0.07–0.34, p ≈ 0.003; ΔAIC ≈ 7 favouring its inclusion) — the only
+nutrient/predictor combination in Steps 12–14 that matches the human-amplification
+prediction. This is chemically plausible (reduced N dominates fresh effluent) but
+remains correlational and is confined to the two islands with cesspool data; it should
+be stated as consistent-with, not proof of, localized wastewater inputs.
+:::
 
 ---
 
