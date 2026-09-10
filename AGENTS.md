@@ -580,6 +580,14 @@ Checklist items:
 
 ---
 
+## Code Rules
+
+### All libraries must be loaded in the setup chunk
+
+Every `library()` call must appear in the single `packages` setup chunk at the top of `kona_low_nutrient_analysis.qmd` (or equivalent setup section in any new analysis document). Never place `library()` calls inside individual analysis chunks, even for packages that are only used once. If a new package is needed, add it to the setup chunk, not inline.
+
+---
+
 ## Language Rules
 
 ### Never use "citizen science" — always "community science"

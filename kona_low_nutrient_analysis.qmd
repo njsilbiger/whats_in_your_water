@@ -80,9 +80,17 @@ library(cluster)     # PAM clustering
 library(ranger)      # random forest
 library(broom)       # tidy model output
 library(infer)       # tidy inference
+library(car)         # VIF / regression diagnostics
 
-# Note: brms, sdmTMB, glmmTMB, mgcv, blockCV loaded in the sections
-# where they are first used to keep startup time reasonable.
+# ── Rainfall ──────────────────────────────────────────────────────────────────
+library(chirps)
+
+# ── Additional mapping ────────────────────────────────────────────────────────
+library(maptiles)
+library(tidyterra)
+library(ggspatial)
+library(rnaturalearth)
+library(rnaturalearthdata)
 ```
 
 ```{r}
@@ -552,8 +560,6 @@ chem_master <- chem_master |>
 #   chirps_peak_date           — date of maximum daily rainfall
 #   chirps_days_since_peak     — days from pixel peak to sample collection
 
-library(chirps)
-
 chirps_march_all <- readRDS(here("data", "chirps_march2026_daily_raw.rds"))
 
 unique_locs <- chem_master |>
@@ -624,9 +630,6 @@ write_csv(chem_master, here("data", "chem_master.csv"))
 #| fig-width: 9
 #| fig-height: 9
 #| fig-cap: "Figure 1. Sampling design and storm context. Four Hawaiian islands (Oʻahu, Maui, Molokaʻi, Lānaʻi) showing all unique coastal sampling sites (filled circles, coloured by island) and stream mouths (open white triangles, drawn on top; OpenStreetMap). Scale bars at bottom-left of each map panel. Pacific inset shows archipelago context. Bottom panels show 4-island mean daily rainfall (NCEP GDAS, upper) and daily discharge at three USGS key gauges (lower, log₁₀ scale) for March–April 2026 with aligned x-axes. All three gauges peaked March 13–14. Basemap: Esri World Imagery."
-
-library(maptiles); library(tidyterra); library(ggspatial)
-library(rnaturalearth); library(rnaturalearthdata)
 
 STREAM_COL <- "#00ACC1"   # bright teal — distinct from all island colours and satellite imagery
 
@@ -1273,8 +1276,6 @@ spearman |>
 
 ```{r}
 #| label: step3-vif-si-model
-
-library(car)
 
 # Si connectivity model: Groups A (drop peak day) + B + D, island as random effect
 si_df <- pred_df |>
