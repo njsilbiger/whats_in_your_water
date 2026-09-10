@@ -51,6 +51,21 @@ sensitivity with and without Molokaʻi. Once Molokaʻi is populated, revisit the
 design (cesspool submodels expand to three islands; consider cesspools in the primary
 models) and re-run Steps 12–15, 17, and 23; Lānaʻi remains uncovered.
 
+### Execution plan — DO TOMORROW (Plan b)
+
+Agreed division of labor: **you run the two data-ingest scripts; the assistant takes over
+from the buffer-count regeneration onward.**
+
+**You — manual (needs Google auth + large downloads):**
+- [ ] Run `01_load_clean_data.R` — Google Sheets auth (`gs4_auth(email = "silbiger@hawaii.edu")`) to refresh `df_clean`.
+- [ ] Run `02_download_cesspool_layers.R` — re-downloads ~82k HCPT points + Molokaʻi layer 23 (Class I filter already in place) → regenerates `data/cesspool_by_ahupuaa.csv` and `data/sample_cesspool_distances.csv` **with Molokaʻi rows**.
+- [ ] Sanity-check both CSVs now contain Molokaʻi rows (`mokupuni`/`island == "Molokaʻi"`) before handing off.
+
+**Assistant — after the above are done:**
+- [ ] Regenerate `data/cesspool_buffer_counts.csv` (`n_cess_500m`, `n_cess_1km`) from the combined point layer so Molokaʻi buffer counts are populated.
+- [ ] Rebuild the cesspool columns of `chem_master.csv` so Molokaʻi is no longer `NA`.
+- [ ] Re-run Steps 12–15, 17, 23; revisit the two-tier design (cesspool submodels expand to three islands; consider cesspools in the primary models); update every "Molokaʻi NA / Oʻahu + Maui only" callout, caption, and table.
+
 ---
 
 ## Analysis Framework: Extreme Rainfall, Watershed Connectivity, and Coastal Nutrient Exposure Across Hawaiʻi
@@ -402,6 +417,29 @@ M0 = random/spatial effects only → M1 = M0 + hydrology → M2 = M1 + watershed
 
 Compare using spatially structured cross-validation. Report: ΔR² or Bayesian R², ΔRMSE, ΔLOO/ELPD, coefficient/interaction uncertainty.
 
+**Suggested complementary approach — two-stage residuals.** Alongside the nested-model
+comparison, run a transparent residual analysis that isolates the anthropogenic signal
+*above and beyond terrestrial delivery*:
+
+1. **Stage 1 (delivery only):** model each log-nutrient on terrestrial-delivery predictors
+   only — log(Si) + hydrology/connectivity/coastal + island/ahupuaʻa random effects +
+   spatial smooth. Keep the hierarchical/spatial structure here so the residuals are not
+   spatially confounded.
+2. **Extract residuals:** the coastal nutrient variation *unexplained* by terrestrial-water
+   delivery (i.e. how nutrient-rich the delivered water is, net of how much is delivered).
+3. **Stage 2 (anthropogenic on residuals):** regress those residuals on the standardized
+   anthropogenic predictors (cesspool density / distance / buffer counts, % agriculture,
+   % impervious, NPDES distance, population). A non-zero, robust anthropogenic slope on the
+   residuals is direct evidence of enrichment beyond delivery.
+
+Use this mainly for interpretation and visualization (added-variable / partial-residual
+plots per predictor). Caveats to document: (a) it is equivalent in expectation to including
+the anthropogenic terms directly in the full model (Step 12), so treat it as a descriptive
+cross-check rather than a second independent test; (b) two-stage estimation understates
+uncertainty — either propagate Stage-1 uncertainty or report the residual analysis as
+descriptive and rely on the full-model CIs for inference; (c) validate anthropogenic effects
+with the same spatial CV used for Models A/B/C.
+
 The claim **"human land use amplifies extreme-event nutrient delivery"** should only appear in the title if Models B/C clearly outperform the physical-only model and relevant anthropogenic effects are robust. Otherwise use the safer title: **Watershed structure predicts coastal nutrient exposure following extreme rainfall**.
 
 ---
@@ -632,6 +670,28 @@ Checklist items:
 ### All libraries must be loaded in the setup chunk
 
 Every `library()` call must appear in the single `packages` setup chunk at the top of `kona_low_nutrient_analysis.qmd` (or equivalent setup section in any new analysis document). Never place `library()` calls inside individual analysis chunks, even for packages that are only used once. If a new package is needed, add it to the setup chunk, not inline.
+
+### Never put `\uxxxx` unicode escapes inside backtick-quoted names
+
+R accepts `\uxxxx` escapes **only inside strings**, never inside a backtick-quoted symbol
+or column name. A name that embeds a Greek letter / subscript / symbol via `\u` triggers a
+hard render failure: `\uxxxx sequences not supported inside backticks`. This has bitten the
+project once already (a `kable` column named with `\u03b2`).
+
+```r
+# BAD — unicode escape inside a backtick-quoted column name → render error
+tibble(`log(Si) \u03b2` = 0.8)
+
+# GOOD — plain ASCII data-frame names; pretty labels supplied as STRINGS at display time
+tibble(logsi_beta = 0.8) |>
+  knitr::kable(col.names = "log(Si) \u03b2")   # \u is fine here — it is inside a string
+```
+
+**Rule:** keep every data-frame/tibble/`mutate()`/`rename()` name in plain ASCII, and put
+β, subscripts (₃, ₂, ₄), µ, °, etc. only in **strings** — `kable(col.names = ...)`,
+`labs()`, `scale_*(name = ...)`, captions — or on the value side of a rename. The same
+applies to list element names and any other backtick-quoted identifier. When in doubt,
+name columns in ASCII and relabel at the display step.
 
 ---
 
