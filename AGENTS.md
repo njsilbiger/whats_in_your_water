@@ -817,6 +817,6 @@ Cached at: `data/aca_hawaii_coral.rds`, `data/aca_reef_kriged_NO3.rds`
 - **PAM clustering (k=3):** Marine background (n≈262), Nearshore enriched (n≈309), Runoff-dominated (n≈123). Seed: 8341.
 - **Random forest:** OOB accuracy varies (61–67%) vs ~36% null; seed 5572. Predictor set not finalized.
 - **Moran's I:** SiO₂ and NO₃ significantly clustered (watershed-driven); NH₃ not (biology-driven).
-- **Salinity thresholds:** Storm-influenced ≤ 32 PSU; Marine background > 34 PSU (canonical).
+- **Salinity thresholds:** Storm-influenced ≤ 34 PSU (any freshwater dilution); Marine background > 34 PSU. No samples excluded — the former middle zone (32–34 PSU) is included in the storm-influenced group.
 - **Kriging:** Ordinary kriging, log1p transform, spherical variogram, min_range = island_diagonal/5, 250 m grid, 3 km coastal band.
 - **Island palette:** O'ahu = #1565C0, Maui = #2E7D32, Moloka'i = #E65100, Lāna'i = #6A1B9A

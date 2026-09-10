@@ -85,6 +85,9 @@ library(car)         # VIF / regression diagnostics
 # ── Rainfall ──────────────────────────────────────────────────────────────────
 library(chirps)
 
+# ── Data ingest ───────────────────────────────────────────────────────────────
+library(readxl)
+
 # ── Additional mapping ────────────────────────────────────────────────────────
 library(maptiles)
 library(tidyterra)
@@ -903,14 +906,373 @@ invisible(NULL)   # suppress patchwork theme warning in output
 > **Step 7 (Figure 2).** Quantify the magnitude of nutrient enrichment.
 > Four-panel: NO₃+NO₂, PO₄, NH₄, Si — storm-influenced vs marine-background.
 
-*← Analysis code goes here when we work through Step 7 together.*
+```{r}
+#| label: step7-salinity-groups
+
+# Salinity threshold: marine background > 34 PSU (unaffected Hawaiian coastal water);
+# storm-influenced ≤ 34 PSU (any freshwater dilution signal). No samples excluded.
+fig2_df <- chem_master |>
+  mutate(
+    sal_group = if_else(Salinity > 34, "Marine background", "Storm-influenced"),
+    sal_group = factor(sal_group, levels = c("Storm-influenced", "Marine background"))
+  )
+
+# Sample sizes per group per nutrient
+fig2_df |>
+  group_by(sal_group) |>
+  summarise(
+    n_samples = n(),
+    n_NO3NO2  = sum(!is.na(NO3NO2)),
+    n_PO4     = sum(!is.na(PO4)),
+    n_NH3     = sum(!is.na(NH3)),
+    n_SiO2    = sum(!is.na(SiO2))
+  ) |>
+  knitr::kable(caption = "Samples per salinity group entering Figure 2.")
+```
+
+```{r}
+#| label: step7-bootstrap-fold
+
+# Bootstrap median fold enrichment: median(storm) / median(background)
+# 4,999 replicates; 95% percentile CI.
+set.seed(2847)
+
+boot_fold <- function(df, col, n_boot = 4999) {
+  storm <- df |> filter(sal_group == "Storm-influenced") |>
+    pull({{ col }}) |> na.omit()
+  bg    <- df |> filter(sal_group == "Marine background") |>
+    pull({{ col }}) |> na.omit()
+  obs   <- median(storm) / median(bg)
+  ci    <- replicate(n_boot, {
+    median(sample(storm, replace = TRUE)) / median(sample(bg, replace = TRUE))
+  })
+  tibble(
+    fold    = obs,
+    lo95    = quantile(ci, 0.025),
+    hi95    = quantile(ci, 0.975),
+    n_storm = length(storm),
+    n_bg    = length(bg)
+  )
+}
+
+fold_results <- bind_rows(
+  boot_fold(fig2_df, NO3NO2) |> mutate(nutrient_f = "NO[3]+NO[2]"),
+  boot_fold(fig2_df, PO4)    |> mutate(nutrient_f = "PO[4]"),
+  boot_fold(fig2_df, NH3)    |> mutate(nutrient_f = "NH[4]"),
+  boot_fold(fig2_df, SiO2)   |> mutate(nutrient_f = "SiO[2]")
+)
+
+fold_results |>
+  mutate(across(c(fold, lo95, hi95), \(x) round(x, 1))) |>
+  select(nutrient_f, fold, lo95, hi95, n_storm, n_bg) |>
+  knitr::kable(
+    col.names = c("Nutrient", "Fold", "95% CI lo", "95% CI hi", "n storm", "n background"),
+    caption   = "Median fold enrichment (storm / marine background) with 95% bootstrap CI."
+  )
+```
+
+```{r}
+#| label: fig2-nutrient-distributions
+#| fig-width: 8
+#| fig-height: 4.5
+#| fig-cap: "**Figure 2.** Coastal nutrient concentrations split by salinity group: storm-influenced (Sal ≤ 34 PSU; orange) and marine background (Sal > 34 PSU; blue). Each point is one sample (jittered); violins show the empirical distribution; bold crossbar is the median. Fold-enrichment annotation shows median(storm)/median(background) [95% bootstrap CI, n = 4,999 replicates]. BDL samples excluded from plot (NO₃+NO₂: n = 44; PO₄: n = 77; NH₄: n = 185; SiO₂: n = 27); medians are well above detection limits so fold-enrichment estimates are unaffected."
+
+# Factor levels for nutrient facets
+nutrient_lvls <- c("NO[3]+NO[2]", "PO[4]", "NH[4]", "SiO[2]")
+
+# Long format — one row per sample × nutrient.
+# BDL values are set to NA before pivoting: they sit at a fixed detection-limit
+# floor (NO3NO2 = 0.03, PO4 = 0.003, NH4 = 0.04, SiO2 = 0.005 umol/L) and
+# create an artificial cluster near zero on the log scale.
+# Medians are well above the detection limit in both groups, so removal does
+# not affect the fold-enrichment estimates.
+fig2_long <- fig2_df |>
+  mutate(
+    NO3NO2 = if_else(bdl_NO3NO2, NA_real_, NO3NO2),
+    PO4    = if_else(bdl_PO4,    NA_real_, PO4),
+    NH3    = if_else(bdl_NH3,    NA_real_, NH3),
+    SiO2   = if_else(bdl_SiO2,   NA_real_, SiO2)
+  ) |>
+  select(sample_id, sal_group, island, NO3NO2, PO4, NH3, SiO2) |>
+  pivot_longer(c(NO3NO2, PO4, NH3, SiO2),
+               names_to = "nutrient", values_to = "conc") |>
+  filter(!is.na(conc)) |>
+  mutate(
+    nutrient_f = factor(nutrient,
+                        levels = c("NO3NO2", "PO4", "NH3", "SiO2"),
+                        labels = nutrient_lvls)
+  )
+
+# Fold-enrichment labels, centered between groups (x = 1.5 on discrete axis)
+fold_annot <- fold_results |>
+  mutate(
+    nutrient_f = factor(nutrient_f, levels = nutrient_lvls),
+    label      = sprintf("%.1f\u00D7  [%.1f\u2013%.1f]", fold, lo95, hi95)
+  )
+
+# Group colours — Okabe-Ito colorblind-safe
+grp_cols <- c("Storm-influenced" = "#D55E00", "Marine background" = "#0072B2")
+
+ggplot(fig2_long, aes(x = sal_group, y = conc,
+                      fill = sal_group, colour = sal_group)) +
+  # Distribution
+  geom_violin(trim = TRUE, alpha = 0.18, linewidth = 0.35, width = 0.75) +
+  # Individual samples
+  geom_jitter(width = 0.08, alpha = 0.28, size = 0.75, stroke = 0) +
+  # Median crossbar
+  stat_summary(fun = median, geom = "crossbar",
+               width = 0.42, linewidth = 0.6, fatten = NULL,
+               colour = "gray10", fill = NA, show.legend = FALSE) +
+  # Fold-enrichment annotation
+  geom_text(
+    data        = fold_annot,
+    aes(label   = label),
+    x           = 1.5,
+    y           = Inf,
+    vjust       = 1.5,
+    size        = 2.7,
+    colour      = "gray20",
+    fontface    = "bold",
+    inherit.aes = FALSE
+  ) +
+  facet_wrap(~nutrient_f, scales = "free_y", nrow = 1,
+             labeller = label_parsed) +
+  scale_y_log10(
+    labels = \(x) formatC(x, format = "g", digits = 2)
+  ) +
+  scale_fill_manual(
+    values = grp_cols,
+    labels = c("Storm-influenced (Sal \u2264 34)", "Marine background (Sal > 34)")
+  ) +
+  scale_colour_manual(
+    values = grp_cols,
+    labels = c("Storm-influenced (Sal \u2264 34)", "Marine background (Sal > 34)")
+  ) +
+  scale_x_discrete(labels = c("Storm", "Marine")) +
+  labs(
+    x      = NULL,
+    y      = expression(Concentration~(µmol~L^{-1})),
+    fill   = NULL,
+    colour = NULL
+  ) +
+  # Note: x-axis "Storm" = Sal ≤ 34 PSU (all freshwater-diluted samples);
+  #       "Marine" = Sal > 34 PSU (unaffected coastal water). No samples excluded.
+  theme_kona_paper(base_size = 9) +
+  theme(
+    legend.position  = "bottom",
+    legend.direction = "horizontal",
+    legend.text      = element_text(size = 8),
+    strip.text       = element_text(size = 9.5),
+    axis.text.x      = element_text(size = 8)
+  ) +
+  guides(
+    fill   = guide_legend(override.aes = list(alpha = 0.5, size = 3)),
+    colour = "none"
+  )
+```
+
+```{r}
+#| label: fig2-save
+#| include: false
+
+save_fig(
+  last_plot(),
+  name   = "fig2_nutrient_distributions",
+  width  = 8,
+  height = 4.5
+)
+```
 
 ## Long-term Hui baseline comparison {#sec-hui-baseline}
 
 > **Step 8.** Load Hui o Ka Wai Ola data, compute station-specific historical baselines,
 > calculate fold-changes relative to pre-2026 medians.
 
-*← Analysis code goes here when we work through Step 8 together.*
+```{r}
+#| label: step8-load-hui
+
+# Read both Hui files with explicit NA strings to handle #N/A cells
+hui_s_raw <- read_excel(
+  here("data/background_nutrients/hui-south-maui-thru-2026-1st-quarter.0.xlsx"),
+  sheet = "data", na = c("", "NA", "#N/A")
+)
+hui_w_raw <- read_excel(
+  here("data/background_nutrients/hui-west-maui-thru-2026-1st-quarter.0.xlsx"),
+  sheet = "data", na = c("", "NA", "#N/A")
+)
+
+# Combine; coerce any remaining character columns to numeric
+hui_raw <- bind_rows(
+  hui_s_raw |> mutate(coast = "south"),
+  hui_w_raw |> mutate(coast = "west")
+) |>
+  mutate(across(c(Turbidity, NNN, Phosphate, Silicate, NH4), as.numeric))
+
+cat("Combined Hui: n =", nrow(hui_raw),
+    "| stations:", n_distinct(hui_raw$Station),
+    "| dates:", format(min(hui_raw$Date), "%Y-%m"),
+    "to", format(max(hui_raw$Date), "%Y-%m"), "\n")
+```
+
+```{r}
+#| label: step8-clean-convert
+
+# Unit conversions (µg/L → µmol/L) per AGENTS.md:
+#   NNN  ÷ 14.007  (µg N/L → µmol/L)
+#   NH4  ÷ 14.007  (µg N/L → µmol/L)
+#   Phosphate ÷ 30.974 (µg P/L → µmol/L)
+#   Silicate  ÷ 28.086 (µg Si/L → µmol/L)
+hui <- hui_raw |>
+  select(coast, Station, SiteName, Date, Lat, Long,
+         NNN, Phosphate, Silicate, NH4) |>
+  mutate(
+    year        = year(Date),
+    month       = month(Date),
+    ym          = floor_date(Date, "month"),
+    NO3NO2_umol = NNN       / 14.007,
+    PO4_umol    = Phosphate / 30.974,
+    SiO2_umol   = Silicate  / 28.086,
+    NH3_umol    = NH4       / 14.007
+  )
+
+# Missingness per nutrient
+hui |>
+  summarise(across(c(NO3NO2_umol, PO4_umol, SiO2_umol, NH3_umol),
+                   \(x) sum(is.na(x)))) |>
+  knitr::kable(caption = "Missing values per nutrient after unit conversion.")
+```
+
+```{r}
+#| label: step8-baselines
+
+# Station-specific historical baselines: pre-2026 median per station per nutrient.
+# Require ≥ 6 pre-2026 observations per station to include in fold-change calculation.
+MIN_HIST_N <- 6
+
+hui_hist <- hui |>
+  filter(year < 2026) |>
+  group_by(Station, coast) |>
+  summarise(
+    n_hist          = n(),
+    hist_NO3NO2     = if (sum(!is.na(NO3NO2_umol)) >= MIN_HIST_N) median(NO3NO2_umol, na.rm = TRUE) else NA_real_,
+    hist_PO4        = if (sum(!is.na(PO4_umol))    >= MIN_HIST_N) median(PO4_umol,    na.rm = TRUE) else NA_real_,
+    hist_SiO2       = if (sum(!is.na(SiO2_umol))   >= MIN_HIST_N) median(SiO2_umol,   na.rm = TRUE) else NA_real_,
+    hist_NH3        = if (sum(!is.na(NH3_umol))     >= MIN_HIST_N) median(NH3_umol,    na.rm = TRUE) else NA_real_,
+    .groups = "drop"
+  )
+
+cat("Stations with adequate history (n_hist ≥", MIN_HIST_N, "):",
+    sum(hui_hist$n_hist >= MIN_HIST_N), "of", nrow(hui_hist), "\n")
+cat("Stations qualifying per nutrient:\n")
+hui_hist |>
+  summarise(
+    NO3NO2 = sum(!is.na(hist_NO3NO2)),
+    PO4    = sum(!is.na(hist_PO4)),
+    SiO2   = sum(!is.na(hist_SiO2)),
+    NH3    = sum(!is.na(hist_NH3))
+  ) |>
+  print()
+```
+
+```{r}
+#| label: step8-fold-changes
+
+# Join baselines back and compute fold changes for every observation (all years)
+hui_fc <- hui |>
+  left_join(hui_hist |> select(-n_hist), by = c("Station", "coast")) |>
+  mutate(
+    fc_NO3NO2 = NO3NO2_umol / hist_NO3NO2,
+    fc_PO4    = PO4_umol    / hist_PO4,
+    fc_SiO2   = SiO2_umol   / hist_SiO2,
+    fc_NH3    = NH3_umol    / hist_NH3
+  )
+
+# Monthly median fold change across all qualifying stations
+hui_monthly <- hui_fc |>
+  group_by(year, month, ym) |>
+  summarise(
+    n_stations    = n_distinct(Station),
+    fc_NO3NO2_med = median(fc_NO3NO2, na.rm = TRUE),
+    fc_PO4_med    = median(fc_PO4,    na.rm = TRUE),
+    fc_SiO2_med   = median(fc_SiO2,   na.rm = TRUE),
+    fc_NH3_med    = median(fc_NH3,    na.rm = TRUE),
+    # raw medians for context
+    NO3NO2_med    = median(NO3NO2_umol, na.rm = TRUE),
+    PO4_med       = median(PO4_umol,    na.rm = TRUE),
+    SiO2_med      = median(SiO2_umol,   na.rm = TRUE),
+    NH3_med       = median(NH3_umol,    na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Join CHIRPS monthly rainfall
+chirps_monthly <- read_csv(here("data/chirps_maui_monthly_full.csv"),
+                            show_col_types = FALSE)
+
+hui_chirps <- hui_monthly |>
+  left_join(chirps_monthly |> select(ym, chirps_mm), by = "ym")
+
+# Snapshot of March 2026 vs overall medians
+hui_chirps |>
+  filter(year == 2026, month == 3) |>
+  select(ym, n_stations, chirps_mm,
+         fc_NO3NO2_med, fc_PO4_med, fc_SiO2_med, fc_NH3_med) |>
+  knitr::kable(digits = 2,
+               caption = "March 2026 monthly station-median fold changes vs station historical medians.")
+```
+
+```{r}
+#| label: step8-context-plot
+#| fig-width: 8
+#| fig-height: 5
+#| fig-cap: "**Step 8 context.** Top: Monthly Maui island-mean rainfall (CHIRPS, Jun 2016–Mar 2026). March 2026 (373 mm) is the highest month on record — more than 2× the second-wettest March (2021, 165 mm). Bottom: Hui o Ka Wai Ola station-median fold change relative to site-specific historical medians (pre-2026) for NO₃+NO₂ and SiO₂. Points = monthly values (n stations shown in top panel); orange triangle = March 2026. Fold change = 1 (dashed) indicates no departure from baseline."
+
+# Coerce ym to Date for consistent axis scaling
+chirps_plot <- chirps_monthly |>
+  mutate(is_storm = (year == 2026 & month == 3),
+         ym = as.Date(ym))
+
+hui_plot <- hui_chirps |>
+  filter(!is.na(fc_NO3NO2_med)) |>
+  mutate(is_storm = (year == 2026 & month == 3),
+         ym = as.Date(ym))
+
+# ── Panel A: rainfall time series ─────────────────────────────────────────────
+pA_hui <- ggplot(chirps_plot, aes(x = ym, y = chirps_mm)) +
+  geom_col(aes(fill = is_storm), width = 27, show.legend = FALSE) +
+  scale_fill_manual(values = c("FALSE" = "gray72", "TRUE" = "#D55E00")) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y",
+               expand = expansion(add = 20)) +
+  annotate("text", x = as.Date("2026-03-01"), y = 373,
+           label = "Mar 2026\n373 mm", vjust = -0.25, hjust = 0.5,
+           size = 2.7, colour = "#D55E00", fontface = "bold") +
+  labs(x = NULL, y = "Rainfall (mm/month)", tag = "A") +
+  theme_kona_paper(base_size = 9)
+
+# ── Panel B: fold-change time series for NO3NO2 and SiO2 ─────────────────────
+hui_fc_long <- hui_plot |>
+  select(ym, is_storm,
+         `NO[3]+NO[2]` = fc_NO3NO2_med,
+         `SiO[2]`      = fc_SiO2_med) |>
+  pivot_longer(c(`NO[3]+NO[2]`, `SiO[2]`),
+               names_to = "nutrient", values_to = "fold_change") |>
+  mutate(nutrient = factor(nutrient, levels = c("NO[3]+NO[2]", "SiO[2]")))
+
+pB_hui <- ggplot(hui_fc_long, aes(x = ym, y = fold_change, colour = nutrient)) +
+  geom_hline(yintercept = 1, linetype = "dashed", linewidth = 0.35, colour = "gray55") +
+  geom_line(linewidth = 0.45, alpha = 0.7) +
+  geom_point(data = \(d) filter(d, !is_storm), size = 1.2, alpha = 0.6) +
+  geom_point(data = \(d) filter(d, is_storm),
+             shape = 17, size = 3.5, show.legend = FALSE) +
+  facet_wrap(~nutrient, nrow = 1, labeller = label_parsed) +
+  scale_colour_manual(values = c("NO[3]+NO[2]" = "#1565C0", "SiO[2]" = "#2E7D32"),
+                      guide = "none") +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y",
+               expand = expansion(add = 20)) +
+  labs(x = NULL, y = "Fold change\n(monthly median / station baseline)", tag = "B") +
+  theme_kona_paper(base_size = 9)
+
+pA_hui / pB_hui + plot_layout(heights = c(1, 1.1))
+```
 
 ## Was 2026 statistically extreme? {#sec-extreme-test}
 
