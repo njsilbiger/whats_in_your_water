@@ -3364,12 +3364,14 @@ amp_cv <- bind_rows(
 
 amp_cv |>
   transmute(Model, n,
-            `CV R\u00b2` = round(R2, 3), RMSE = round(RMSE, 3),
-            MAE = round(MAE, 3), `Calib. slope` = round(calib, 3)) |>
-  knitr::kable(caption = paste0(
-    "Leave-one-ahupua\u02BBa-out spatial CV for NO\u2083+NO\u2082 (n = ", nrow(amp_d),
-    ", ", n_distinct(amp_d$ahupuaa), " folds). Adding anthropogenic predictors (Model B) ",
-    "improves out-of-sample R\u00b2 by ~0.01; the interaction model (C) overfits."))
+            cv_r2 = round(R2, 3), RMSE = round(RMSE, 3),
+            MAE = round(MAE, 3), calib_slope = round(calib, 3)) |>
+  knitr::kable(
+    col.names = c("Model", "n", "CV R\u00b2", "RMSE", "MAE", "Calib. slope"),
+    caption = paste0(
+      "Leave-one-ahupua\u02BBa-out spatial CV for NO\u2083+NO\u2082 (n = ", nrow(amp_d),
+      ", ", n_distinct(amp_d$ahupuaa), " folds). Adding anthropogenic predictors (Model B) ",
+      "improves out-of-sample R\u00b2 by ~0.01; the interaction model (C) overfits."))
 ```
 
 ::: {.callout-important}
