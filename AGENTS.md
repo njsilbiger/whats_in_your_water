@@ -6,6 +6,53 @@
 
 ---
 
+## ⚠ TOP-PRIORITY TASK — Acquire Molokaʻi cesspool coverage
+
+**Status: OPEN. Do this before finalizing any cesspool-related result, figure, or the title decision.**
+
+Molokaʻi currently has **no** cesspool data (all cesspool metrics `NA`), which forced the
+two-tier design (four-island primary models without cesspools + Oʻahu/Maui-only cesspool
+submodels). A Molokaʻi on-site sewage disposal (OSDS) layer is available and must be
+downloaded and integrated.
+
+**Source (Hawaiʻi Statewide GIS / DOH):**
+- Portal page: https://geoportal.hawaii.gov/datasets/d5dd71c0b4b0444080b2eadff3edbf77_23/explore
+- Item title: **"On-site Sewage Disposal Systems - Molokai"** (DOH source-water protection program, systems as of 2010; fields include approximate location, OSDS type, effluent, and nitrogen/phosphorus flux).
+- **ArcGIS REST endpoint:** `https://geodata.hawaii.gov/arcgis/rest/services/Infrastructure/MapServer/23`
+- Download via REST query (mirror `02_download_cesspool_layers.R`): `.../MapServer/23/query?where=1=1&outFields=*&f=geojson`. Cache raw to `data/molokai_osds_layer.geojson`.
+
+**KEY FINDING — the integration code already exists.** `02_download_cesspool_layers.R`
+already downloads layer 23, filters to **`class_i > 0` (Class I OSDS = cesspools /
+direct-discharge pits)**, and merges those points into the same combined point layer as
+the HCPT layer-32 points before computing ahupuaʻa density and sample distances. This is
+the canonical cesspool definition for the project — Class I, treated as points exactly
+like the HCPT layer (methodologically consistent with Oʻahu/Maui). The reason Molokaʻi is
+still `NA` is that the CSVs were **never regenerated** after this code was added (and the
+buffer-count step is separate). The task is therefore to **run the pipeline and rebuild
+downstream files**, not to write new download logic.
+
+**Processing (composite key `c("ahupuaa","mokupuni")` on every ahupuaʻa join):**
+1. Re-run `02_download_cesspool_layers.R` (Class I filter already in place) to regenerate `data/cesspool_by_ahupuaa.csv` (`cesspool_density_per_km2`, `n_cesspools`) and `data/sample_cesspool_distances.csv` (`dist_to_nearest_cesspool_m`) **with Molokaʻi rows**. Note this re-runs the 82k-point HCPT download and sources `01_load_clean_data.R` (Google Sheets auth).
+2. Regenerate `data/cesspool_buffer_counts.csv` (`n_cess_500m`, `n_cess_1km`) from the combined point layer so Molokaʻi buffer counts are populated (currently NA).
+3. Rebuild the cesspool columns of `chem_master.csv` so Molokaʻi is no longer `NA` (re-run the relevant `kona_low_nutrient_analysis.qmd` chunks).
+4. **Verify** the Class I filter still matches the layer's current schema (fields include `class_i..iv`, `type`, `osds_qty`, `n_flux`, `p_flux`; raw cached to `data/molokai_osds_layer.geojson`, 1,651 records / ~1,956 systems).
+
+**Downstream analyses to update once Molokaʻi cesspool data exist (all in `kona_low_nutrient_analysis.qmd`):**
+- Reconsider the **two-tier design**: with Molokaʻi covered, the cesspool submodels expand to three islands (Oʻahu, Maui, Molokaʻi); evaluate whether cesspools can enter the *primary* models directly. Lānaʻi remains uncovered.
+- Re-run the NO₃+NO₂ (Step 12), PO₄ (Step 13), NH₄ (Step 14) cesspool submodels; the Step 15 Figure 5 two-scope plot; the Step 17 amplification test + leave-one-ahupuaʻa-out CV (now able to include Molokaʻi, and possibly leave-one-island-out across three islands); the Step 23 cesspool-metric sensitivity.
+- Update every callout/caption/table that currently states "Molokaʻi NA" or "Oʻahu + Maui only."
+
+**Comparability caveat (must document):** the Molokaʻi Class I points come from a
+**different source and vintage** (DOH OSDS 2010) than the HCPT layer 32 used for
+Oʻahu/Maui, even though the pipeline treats both uniformly as points → density. Cross-island
+cesspool magnitude comparisons may still be affected by inventory completeness/vintage.
+Add a source/vintage indicator, prefer within-island relative metrics, and report a
+sensitivity with and without Molokaʻi. Once Molokaʻi is populated, revisit the two-tier
+design (cesspool submodels expand to three islands; consider cesspools in the primary
+models) and re-run Steps 12–15, 17, and 23; Lānaʻi remains uncovered.
+
+---
+
 ## Analysis Framework: Extreme Rainfall, Watershed Connectivity, and Coastal Nutrient Exposure Across Hawaiʻi
 
 ### Preferred title
@@ -642,7 +689,11 @@ Apply to both sides of the join when the source file's encoding is uncertain. Th
 
 ### Molokaʻi cesspool data status
 
-HCPT layer 32 does **not** cover Molokaʻi. All cesspool metrics for Molokaʻi are set to `NA` in `chem_master.csv`.
+HCPT layer 32 does **not** cover Molokaʻi, so all cesspool metrics for Molokaʻi are
+currently `NA` in `chem_master.csv`. **This is being superseded** — a Molokaʻi OSDS layer
+has been identified and must be downloaded and integrated (see the **TOP-PRIORITY TASK**
+section near the top of this file: `Infrastructure/MapServer/23`). Until that is done,
+Molokaʻi drops out of all cesspool submodels and the two-tier design applies.
 
 ---
 
@@ -676,8 +727,9 @@ Ahupuaʻa = traditional Hawaiian watershed polygons (~650 across 4 islands); pri
 | `data/sample_cesspool_distances.csv` | `dist_to_nearest_cesspool_m` per sample |
 | `data/cesspool_by_ahupuaa.csv` | `cesspool_density_per_km2`, `n_cesspools` per ahupuaʻa |
 | `data/cesspool_buffer_counts.csv` | `n_cess_500m`, `n_cess_1km` per sample |
+| `data/molokai_osds_layer.geojson` | Molokaʻi OSDS points (to be downloaded — see TOP-PRIORITY TASK) |
 
-Source: Hawaiʻi GIS (ArcGIS REST, layer 32). Note: Molokaʻi set to NA — HCPT layer 32 does not cover Molokaʻi; imputed with island median in RF pipeline. Lānaʻi = 0 (no layer documented).
+Source: Hawaiʻi GIS (ArcGIS REST, layer 32) for Oʻahu/Maui. Note: Molokaʻi currently set to NA — HCPT layer 32 does not cover Molokaʻi (imputed with island median in RF pipeline); **a Molokaʻi OSDS layer (`Infrastructure/MapServer/23`, DOH 2010) is pending integration — see TOP-PRIORITY TASK, note the cross-source comparability caveat.** Lānaʻi = 0 (no layer documented).
 
 Do not put multiple highly correlated cesspool metrics in the same inferential model without checking collinearity.
 

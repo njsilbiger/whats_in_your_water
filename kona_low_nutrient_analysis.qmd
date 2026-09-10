@@ -2432,6 +2432,7 @@ nox_all <- chem_master |>
     log_ksat             = log(mean_ksat_um_s + 1),
     log_dist_npdes_m     = log(dist_to_nearest_npdes_m + 1),
     log_cesspool_density = log(cesspool_density_per_km2 + 1),
+    log_dist_cesspool_m  = log(dist_to_nearest_cesspool_m + 1),
     log_pop_density_km2  = log(pop_density_km2 + 1),
     island_f             = factor(island),
     ahupuaa_f            = factor(ahupuaa),
@@ -2525,13 +2526,17 @@ pred_group <- c(
   z_log_SiO2 = "Terrestrial delivery", z_chirps_storm_cumulative_mm = "Hydrologic forcing",
   z_log_dist_stream_m = "Watershed transport", z_mean_slope_deg = "Watershed transport",
   z_log_ksat = "Watershed transport", z_pct_agriculture = "Anthropogenic",
-  z_pct_impervious = "Anthropogenic", z_log_dist_npdes_m = "Anthropogenic",
+  z_pct_impervious = "Anthropogenic",
+  z_log_cesspool_density = "Anthropogenic", z_log_dist_cesspool_m = "Anthropogenic",
+  z_log_dist_npdes_m = "Anthropogenic",
   z_fetch_mean_km = "Coastal dilution", z_hs_mean_m = "Coastal dilution")
 pred_label <- c(
   z_log_SiO2 = "log(SiO\u2082)", z_chirps_storm_cumulative_mm = "Storm rainfall",
   z_log_dist_stream_m = "log(Dist stream)", z_mean_slope_deg = "Slope",
   z_log_ksat = "log(Ksat)", z_pct_agriculture = "% agriculture",
-  z_pct_impervious = "% impervious", z_log_dist_npdes_m = "log(Dist NPDES)",
+  z_pct_impervious = "% impervious",
+  z_log_cesspool_density = "log(Cesspool density)", z_log_dist_cesspool_m = "log(Dist cesspool)",
+  z_log_dist_npdes_m = "log(Dist NPDES)",
   z_fetch_mean_km = "Wave fetch", z_hs_mean_m = "Wave height")
 
 nox_coefs <- coef_ci(nox_M_full, "4-island")
@@ -2596,9 +2601,10 @@ urban land cover* at the four-island scale.
 #| label: step12-nox-cesspool-submodel
 #| cache: true
 
-# Two-tier design, tier 2: Oʻahu + Maui only, add cesspool density.
+# Two-tier design, tier 2: Oʻahu + Maui only, add BOTH cesspool metrics.
+# Density and distance-to-nearest co-enter (r = -0.27, VIF < 1.5; §Step 3–4).
 # 2 islands → island as a fixed effect (a 2-level random intercept is degenerate).
-nox_sub_vars <- c(nox_primary_vars, "log_cesspool_density")
+nox_sub_vars <- c(nox_primary_vars, "log_cesspool_density", "log_dist_cesspool_m")
 nox_sub <- nox_all |>
   filter(island %in% c("O'ahu", "Maui"), !is.na(cesspool_density_per_km2)) |>
   filter(if_all(all_of(c("log_NO3NO2", nox_sub_vars)), ~ !is.na(.)), !is.na(utm_x_km)) |>
@@ -2611,7 +2617,7 @@ cat("Cesspool submodel: n =", nrow(nox_sub),
 z_sub    <- paste0("z_", nox_sub_vars)
 re_sub   <- "island_f + s(ahupuaa_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)"
 nox_sub_nocess <- gam(
-  as.formula(paste("log_NO3NO2 ~", paste(setdiff(z_sub, "z_log_cesspool_density"), collapse = " + "), "+", re_sub)),
+  as.formula(paste("log_NO3NO2 ~", paste(setdiff(z_sub, c("z_log_cesspool_density", "z_log_dist_cesspool_m")), collapse = " + "), "+", re_sub)),
   data = nox_sub, method = "REML")
 nox_sub_full <- gam(
   as.formula(paste("log_NO3NO2 ~", paste(z_sub, collapse = " + "), "+", re_sub)),
@@ -2623,15 +2629,13 @@ delta_aic_cess <- AIC(update(nox_sub_nocess, method = "ML")) -
 coef_ci(nox_sub_full, "OahuMaui") |>
   filter(term != "island_fO'ahu") |>
   mutate(across(c(est, se, lwr, upr), \(x) round(x, 3)), p = signif(p, 2),
-         Predictor = coalesce(pred_label[term], "log(Cesspool density)")) |>
+         Predictor = pred_label[term]) |>
   arrange(desc(abs(est))) |>
   select(Predictor, est, lwr, upr, p) |>
   knitr::kable(caption = paste0(
-    "Oʻahu + Maui NO\u2083+NO\u2082 submodel with cesspool density (n = ", nrow(nox_sub),
-    "). Adding cesspool density does not improve fit (\u0394AIC = ", round(delta_aic_cess, 1),
-    "); its standardized coefficient is ",
-    round(coef_ci(nox_sub_full, "x") |> filter(term == "z_log_cesspool_density") |> pull(est), 3),
-    " (95% CI crosses zero)."),
+    "Oʻahu + Maui NO\u2083+NO\u2082 submodel with both cesspool metrics (n = ", nrow(nox_sub),
+    "; \u0394AIC vs no-cesspool = ", round(delta_aic_cess, 1),
+    "). Cesspool density is positive but not significant here; distance-to-nearest is not significant."),
     col.names = c("Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
 ```
 
@@ -2704,6 +2708,7 @@ po4_all <- chem_master |>
     log_ksat             = log(mean_ksat_um_s + 1),
     log_dist_npdes_m     = log(dist_to_nearest_npdes_m + 1),
     log_cesspool_density = log(cesspool_density_per_km2 + 1),
+    log_dist_cesspool_m  = log(dist_to_nearest_cesspool_m + 1),
     log_pop_density_km2  = log(pop_density_km2 + 1),
     island_f             = factor(island),
     ahupuaa_f            = factor(ahupuaa),
@@ -2798,7 +2803,7 @@ bind_rows(
 #| label: step13-po4-cesspool-submodel
 #| cache: true
 
-po4_sub_vars <- c(nox_primary_vars, "log_cesspool_density")
+po4_sub_vars <- c(nox_primary_vars, "log_cesspool_density", "log_dist_cesspool_m")
 po4_sub <- po4_all |>
   filter(island %in% c("O'ahu", "Maui"), !is.na(cesspool_density_per_km2)) |>
   filter(if_all(all_of(c("log_PO4", po4_sub_vars)), ~ !is.na(.)), !is.na(utm_x_km)) |>
@@ -2810,7 +2815,7 @@ cat("PO\u2084 cesspool submodel: n =", nrow(po4_sub),
 z_sub  <- paste0("z_", po4_sub_vars)
 re_sub <- "island_f + s(ahupuaa_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)"
 po4_sub_nocess <- gam(
-  as.formula(paste("log_PO4 ~", paste(setdiff(z_sub, "z_log_cesspool_density"), collapse = " + "), "+", re_sub)),
+  as.formula(paste("log_PO4 ~", paste(setdiff(z_sub, c("z_log_cesspool_density", "z_log_dist_cesspool_m")), collapse = " + "), "+", re_sub)),
   data = po4_sub, method = "REML")
 po4_sub_full <- gam(
   as.formula(paste("log_PO4 ~", paste(z_sub, collapse = " + "), "+", re_sub)),
@@ -2822,12 +2827,13 @@ delta_aic_po4_cess <- AIC(update(po4_sub_nocess, method = "ML")) -
 coef_ci(po4_sub_full, "OahuMaui") |>
   filter(term != "island_fO'ahu") |>
   mutate(across(c(est, se, lwr, upr), \(x) round(x, 3)), p = signif(p, 2),
-         Predictor = coalesce(pred_label[term], "log(Cesspool density)")) |>
+         Predictor = pred_label[term]) |>
   arrange(desc(abs(est))) |>
   select(Predictor, est, lwr, upr, p) |>
   knitr::kable(caption = paste0(
-    "Oʻahu + Maui PO\u2084 submodel with cesspool density (n = ", nrow(po4_sub),
-    "; \u0394AIC = ", round(delta_aic_po4_cess, 1), "). Cesspool density is marginal (p \u2248 0.07)."),
+    "Oʻahu + Maui PO\u2084 submodel with both cesspool metrics (n = ", nrow(po4_sub),
+    "; \u0394AIC vs no-cesspool = ", round(delta_aic_po4_cess, 1),
+    "). Neither cesspool density nor distance is a clear predictor of PO\u2084."),
     col.names = c("Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
 ```
 
@@ -2896,6 +2902,7 @@ nh3_all <- chem_master |>
     log_ksat             = log(mean_ksat_um_s + 1),
     log_dist_npdes_m     = log(dist_to_nearest_npdes_m + 1),
     log_cesspool_density = log(cesspool_density_per_km2 + 1),
+    log_dist_cesspool_m  = log(dist_to_nearest_cesspool_m + 1),
     log_pop_density_km2  = log(pop_density_km2 + 1),
     island_f             = factor(island),
     ahupuaa_f            = factor(ahupuaa),
@@ -2989,7 +2996,7 @@ bind_rows(
 #| label: step14-nh4-cesspool-submodel
 #| cache: true
 
-nh3_sub_vars <- c(nox_primary_vars, "log_cesspool_density")
+nh3_sub_vars <- c(nox_primary_vars, "log_cesspool_density", "log_dist_cesspool_m")
 nh3_sub <- nh3_all |>
   filter(island %in% c("O'ahu", "Maui"), !is.na(cesspool_density_per_km2)) |>
   filter(if_all(all_of(c("log_NH3", nh3_sub_vars)), ~ !is.na(.)), !is.na(utm_x_km)) |>
@@ -3001,7 +3008,7 @@ cat("NH\u2084 cesspool submodel: n =", nrow(nh3_sub),
 z_sub  <- paste0("z_", nh3_sub_vars)
 re_sub <- "island_f + s(ahupuaa_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)"
 nh3_sub_nocess <- gam(
-  as.formula(paste("log_NH3 ~", paste(setdiff(z_sub, "z_log_cesspool_density"), collapse = " + "), "+", re_sub)),
+  as.formula(paste("log_NH3 ~", paste(setdiff(z_sub, c("z_log_cesspool_density", "z_log_dist_cesspool_m")), collapse = " + "), "+", re_sub)),
   data = nh3_sub, method = "REML")
 nh3_sub_full <- gam(
   as.formula(paste("log_NH3 ~", paste(z_sub, collapse = " + "), "+", re_sub)),
@@ -3013,13 +3020,13 @@ delta_aic_nh3_cess <- AIC(update(nh3_sub_nocess, method = "ML")) -
 coef_ci(nh3_sub_full, "OahuMaui") |>
   filter(term != "island_fO'ahu") |>
   mutate(across(c(est, se, lwr, upr), \(x) round(x, 3)), p = signif(p, 2),
-         Predictor = coalesce(pred_label[term], "log(Cesspool density)")) |>
+         Predictor = pred_label[term]) |>
   arrange(desc(abs(est))) |>
   select(Predictor, est, lwr, upr, p) |>
   knitr::kable(caption = paste0(
-    "Oʻahu + Maui NH\u2084 submodel with cesspool density (n = ", nrow(nh3_sub),
-    "; \u0394AIC = ", round(delta_aic_nh3_cess, 1),
-    "). Unlike NO\u2083+NO\u2082 and PO\u2084, cesspool density is a clear positive predictor of NH\u2084."),
+    "Oʻahu + Maui NH\u2084 submodel with both cesspool metrics (n = ", nrow(nh3_sub),
+    "; \u0394AIC vs no-cesspool = ", round(delta_aic_nh3_cess, 1),
+    "). Unlike NO\u2083+NO\u2082 and PO\u2084, cesspool density is a clear positive predictor of NH\u2084 (distance-to-nearest is not)."),
     col.names = c("Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
 ```
 
@@ -3081,9 +3088,10 @@ spatial structure to absorb (Moran's I ≈ 0 even before modelling). This is con
 with reduced inorganic N being controlled by localized sources and rapid biogeochemical
 cycling rather than watershed-to-coast transport. The exception worth flagging: on
 Oʻahu + Maui, **cesspool density is a clear positive predictor of NH₄** (standardized
-β ≈ 0.21, 95% CI 0.07–0.34, p ≈ 0.003; ΔAIC ≈ 7 favouring its inclusion) — the only
-nutrient/predictor combination in Steps 12–14 that matches the human-amplification
-prediction. This is chemically plausible (reduced N dominates fresh effluent) but
+β ≈ 0.20, 95% CI 0.06–0.34, p ≈ 0.006, with both cesspool metrics in the model) — the
+only nutrient/predictor combination in Steps 12–14 that matches the human-amplification
+prediction. Distance to the nearest cesspool adds nothing for NH₄. This is chemically
+plausible (reduced N dominates fresh effluent) but
 remains correlational and is confined to the two islands with cesspool data; it should
 be stated as consistent-with, not proof of, localized wastewater inputs.
 :::
@@ -3097,13 +3105,288 @@ be stated as consistent-with, not proof of, localized wastewater inputs.
 > **Step 15.** Coefficient plot — one row per predictor, four columns (nutrients).
 > Group rows: hydrologic forcing / watershed transport / anthropogenic / coastal dilution.
 
-*← Analysis code goes here when we work through Step 15 together.*
+Figure 5 shows both tiers of the design side by side. The **four-island** scope uses
+the primary `*_M_full` models (anthropogenic block = agriculture, impervious, NPDES);
+the **Oʻahu + Maui** scope uses the submodels, which additionally include *both*
+cesspool metrics (density and distance-to-nearest — they co-enter cleanly, r = −0.27,
+VIF < 1.5). To place Si on the same footing in each scope we refit the connectivity
+model (Step 11) as a **standardized linear comparability model**: `log(SiO₂)` as
+response, the same predictor set *minus* `log(SiO₂)` (Si's own response). These
+comparability models are for coefficient display only; the Step 11 GAM remains the
+primary inferential Si model.
+
+```{r}
+#| label: step15-si-comparability-model
+#| cache: true
+
+# Standardized linear Si model — comparability with the N/P/NH4 models for Figure 5.
+si_std <- chem_master |>
+  filter(!offshore_reference, !is.na(SiO2), !bdl_SiO2) |>
+  left_join(sp_sf |> st_drop_geometry() |> select(sample_id, utm_x, utm_y), by = "sample_id") |>
+  mutate(
+    log_SiO2 = log(SiO2),
+    log_dist_stream_m = log(dist_to_stream_mouth_m + 1),
+    log_ksat = log(mean_ksat_um_s + 1),
+    log_dist_npdes_m = log(dist_to_nearest_npdes_m + 1),
+    island_f = factor(island), ahupuaa_f = factor(ahupuaa),
+    utm_x_km = utm_x / 1000, utm_y_km = utm_y / 1000
+  )
+
+# Same predictors as the N/P models, dropping log_SiO2 (it is the response here)
+si_std_vars <- setdiff(nox_primary_vars, "log_SiO2")
+si_std <- si_std |>
+  filter(if_all(all_of(si_std_vars), ~ !is.na(.)), !is.na(utm_x_km)) |>
+  mutate(across(all_of(si_std_vars), z, .names = "z_{.col}"))
+
+si_M_std <- gam(
+  as.formula(paste("log_SiO2 ~", paste(paste0("z_", si_std_vars), collapse = " + "), "+", re_terms)),
+  data = si_std, method = "REML")
+saveRDS(si_M_std, here("output", "model_objects", "si_M_std_comparability.rds"))
+
+# Oʻahu + Maui Si comparability submodel — adds both cesspool metrics (tier-2 scope).
+si_sub_vars <- c(si_std_vars, "log_cesspool_density", "log_dist_cesspool_m")
+si_std_sub <- chem_master |>
+  filter(!offshore_reference, !is.na(SiO2), !bdl_SiO2,
+         island %in% c("O'ahu", "Maui"),
+         !is.na(cesspool_density_per_km2), !is.na(dist_to_nearest_cesspool_m)) |>
+  left_join(sp_sf |> st_drop_geometry() |> select(sample_id, utm_x, utm_y), by = "sample_id") |>
+  mutate(
+    log_SiO2 = log(SiO2),
+    log_dist_stream_m = log(dist_to_stream_mouth_m + 1),
+    log_ksat = log(mean_ksat_um_s + 1),
+    log_dist_npdes_m = log(dist_to_nearest_npdes_m + 1),
+    log_cesspool_density = log(cesspool_density_per_km2 + 1),
+    log_dist_cesspool_m  = log(dist_to_nearest_cesspool_m + 1),
+    island_f = factor(island), ahupuaa_f = factor(ahupuaa),
+    utm_x_km = utm_x / 1000, utm_y_km = utm_y / 1000
+  ) |>
+  filter(if_all(all_of(si_sub_vars), ~ !is.na(.)), !is.na(utm_x_km)) |>
+  mutate(across(all_of(si_sub_vars), z, .names = "z_{.col}"))
+
+si_M_std_sub <- gam(
+  as.formula(paste("log_SiO2 ~", paste(paste0("z_", si_sub_vars), collapse = " + "),
+                   "+ island_f + s(ahupuaa_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)")),
+  data = si_std_sub, method = "REML")
+saveRDS(si_M_std_sub, here("output", "model_objects", "si_M_std_comparability_oahumaui.rds"))
+
+cat("Si comparability models — four-island n =", nrow(si_std),
+    "| O\u02BBahu+Maui n =", nrow(si_std_sub), "\n")
+```
+
+```{r}
+#| label: step15-combine-coefficients
+
+# Standardized coefficients across all four nutrients, two model scopes.
+scope4 <- "Four islands"
+scope2 <- "O\u02BBahu + Maui (+cesspool)"
+fig5_coefs <- bind_rows(
+  coef_ci(si_M_std,     "SiO2")   |> mutate(scope = scope4),
+  coef_ci(nox_M_full,   "NO3NO2") |> mutate(scope = scope4),
+  coef_ci(po4_M_full,   "PO4")    |> mutate(scope = scope4),
+  coef_ci(nh3_M_full,   "NH4")    |> mutate(scope = scope4),
+  coef_ci(si_M_std_sub, "SiO2")   |> mutate(scope = scope2),
+  coef_ci(nox_sub_full, "NO3NO2") |> mutate(scope = scope2),
+  coef_ci(po4_sub_full, "PO4")    |> mutate(scope = scope2),
+  coef_ci(nh3_sub_full, "NH4")    |> mutate(scope = scope2)
+) |>
+  filter(term %in% paste0("z_", c(
+    "log_SiO2", "chirps_storm_cumulative_mm", "log_dist_stream_m", "mean_slope_deg",
+    "log_ksat", "pct_agriculture", "pct_impervious", "log_cesspool_density",
+    "log_dist_cesspool_m", "log_dist_npdes_m", "fetch_mean_km", "hs_mean_m")))
+
+# Response-specific sample sizes by scope
+fig5_n <- tibble(
+  Scope    = c(rep(scope4, 4), rep(scope2, 4)),
+  Nutrient = rep(c("SiO\u2082", "NO\u2083+NO\u2082", "PO\u2084", "NH\u2084"), 2),
+  n        = c(nrow(si_std), nrow(nox_primary), nrow(po4_primary), nrow(nh3_primary),
+               nrow(si_std_sub), nrow(nox_sub), nrow(po4_sub), nrow(nh3_sub))
+)
+fig5_n |> knitr::kable(caption = "Response-specific sample sizes for the four-nutrient comparison, by model scope.")
+```
+
+```{r}
+#| label: fig5-effect-sizes
+#| fig-width: 9
+#| fig-height: 6.5
+#| fig-cap: "**Figure 5.** Standardized fixed effects on each nutrient (log scale) from the mixed models, shown for two model scopes: the four-island primary models (left) and the Oʻahu + Maui submodels that additionally include both cesspool metrics (right). Rows are predictors grouped by mechanistic role; points are standardized coefficients with 95% Wald confidence intervals; colour distinguishes the four nutrients. Filled points mark effects whose 95% CI excludes zero (also encoded so the figure is interpretable in grayscale). log(SiO₂) enters the N/P/NH₄ models as an empirical terrestrial-water proxy and is Si's own response (so Si has no terrestrial-delivery row). Cesspool rows are populated only in the Oʻahu + Maui scope (no cesspool layer on Molokaʻi/Lānaʻi). Sample sizes are given in the table above. Island/ahupuaʻa random effects and the 2D spatial smooth are not shown."
+
+nut_levels <- c("SiO2", "NO3NO2", "PO4", "NH4")
+nut_labels <- c(SiO2 = "SiO\u2082", NO3NO2 = "NO\u2083+NO\u2082", PO4 = "PO\u2084", NH4 = "NH\u2084")
+nut_cols   <- c(SiO2 = "#1565C0", NO3NO2 = "#C62828", PO4 = "#2E7D32", NH4 = "#E65100")
+group_levels <- c("Terrestrial delivery", "Hydrologic forcing", "Watershed transport",
+                  "Anthropogenic", "Coastal dilution")
+pred_order <- paste0("z_", c("log_SiO2", "chirps_storm_cumulative_mm", "log_dist_stream_m",
+                             "mean_slope_deg", "log_ksat", "pct_agriculture", "pct_impervious",
+                             "log_cesspool_density", "log_dist_cesspool_m",
+                             "log_dist_npdes_m", "fetch_mean_km", "hs_mean_m"))
+
+fig5_df <- fig5_coefs |>
+  mutate(
+    nutrient  = factor(model, levels = nut_levels),
+    Predictor = factor(pred_label[term], levels = rev(pred_label[pred_order])),
+    Group     = factor(pred_group[term], levels = group_levels),
+    scope     = factor(scope, levels = c(scope4, scope2)),
+    sig       = if_else(lwr > 0 | upr < 0, "sig", "ns")
+  )
+
+fig5 <- ggplot(fig5_df, aes(est, Predictor, colour = nutrient, shape = sig)) +
+  geom_vline(xintercept = 0, linetype = 2, colour = "grey60") +
+  geom_pointrange(aes(xmin = lwr, xmax = upr),
+                  position = position_dodge(width = 0.65), linewidth = 0.5) +
+  facet_grid(Group ~ scope, scales = "free_y", space = "free_y", switch = "y") +
+  scale_colour_manual(values = nut_cols, labels = nut_labels, name = NULL) +
+  scale_shape_manual(values = c(sig = 19, ns = 1), guide = "none") +
+  labs(x = "Standardized effect (\u00b195% CI)", y = NULL) +
+  theme_kona_paper() +
+  theme(strip.placement = "outside",
+        strip.text.y.left = element_text(angle = 0, face = "bold"),
+        panel.grid.major.y = element_blank(),
+        legend.position = "top")
+
+save_fig(fig5, "fig5_effect_sizes", width = 9, height = 6.5)
+fig5
+```
+
+::: {.callout-important}
+**Figure 5 — what the four models show together.** The nutrients record different
+stages of the land-to-sea pathway. **Si** is driven by hydrologic forcing (storm
+rainfall, standardized β ≈ 0.43), stream proximity, and coastal dilution — the
+physical-connectivity signature, with anthropogenic land cover *negatively* associated
+(drier, more-developed watersheds deliver less terrestrial water). **NO₃+NO₂** is
+dominated by terrestrial delivery (log Si β ≈ 0.81); once that is accounted for, only
+NPDES proximity and wave dilution remain. **PO₄** shows moderate terrestrial coupling
+(β ≈ 0.41) plus its own positive storm-rainfall response. **NH₄** is weakly tied to all
+watershed-scale predictors. Across every nutrient, agricultural and urban land cover
+provide **no positive amplification** in either scope; the anthropogenic signals that
+do appear are NPDES proximity (N, P) and — in the Oʻahu + Maui scope, where both
+cesspool metrics enter — cesspool *density* (positive, strongest and only clearly
+significant for NH₄), while cesspool *distance-to-nearest* adds little for any nutrient.
+This figure supports the "watershed structure predicts exposure" framing more than a
+general "human amplification" claim; the formal test follows in Step 17.
+:::
 
 ## Explicit human-amplification test {#sec-amplification-test}
 
 > **Step 17.** Compare Model A (physical only) vs B (+anthropogenic) vs C (+interactions).
 
-*← Analysis code goes here when we work through Step 17 together.*
+The formal amplification test for NO₃+NO₂, using the **1 km cesspool buffer count** as
+the anthropogenic wastewater metric (Step 23 found it carried the clearer NO₃+NO₂
+signal, and it covers more samples than density). Three nested models on the
+Oʻahu + Maui scope:
+
+- **Model A — delivery:** log(Si) + storm rainfall + connectivity + coastal dilution.
+- **Model B — + anthropogenic:** A + % agriculture + % impervious + NPDES distance + 1 km cesspool count.
+- **Model C — + interactions:** B + storm-rainfall × cesspool-count and storm-rainfall × agriculture.
+
+Because neighbouring samples are not independent, predictive skill is assessed with
+**leave-one-ahupuaʻa-out spatial cross-validation** (random splits would be optimistic;
+§Step 18). Each held-out watershed is predicted at the population level — its ahupuaʻa
+random intercept is excluded — so the test asks whether landscape and anthropogenic
+predictors generalize to an *unsampled* watershed. The claim of "human amplification"
+requires Model B/C to beat Model A out of sample, not merely in sample.
+
+```{r}
+#| label: step17-amplification-data
+#| cache: true
+
+amp_d <- chem_master |>
+  filter(island %in% c("O'ahu", "Maui"), !is.na(NO3NO2), !bdl_NO3NO2,
+         !is.na(SiO2), !bdl_SiO2, !is.na(n_cess_1km)) |>
+  left_join(sp_sf |> st_drop_geometry() |> select(sample_id, utm_x, utm_y), by = "sample_id") |>
+  mutate(
+    y = log(NO3NO2), log_SiO2 = log(SiO2),
+    log_dist_stream_m = log(dist_to_stream_mouth_m + 1), log_ksat = log(mean_ksat_um_s + 1),
+    log_dist_npdes_m = log(dist_to_nearest_npdes_m + 1), log_n1km = log1p(n_cess_1km),
+    island_f = factor(island), ahupuaa_f = factor(ahupuaa),
+    utm_x_km = utm_x / 1000, utm_y_km = utm_y / 1000
+  )
+
+amp_base   <- c("log_SiO2", "chirps_storm_cumulative_mm", "log_dist_stream_m",
+                "mean_slope_deg", "log_ksat", "fetch_mean_km", "hs_mean_m")
+amp_anthro <- c("pct_agriculture", "pct_impervious", "log_dist_npdes_m", "log_n1km")
+
+amp_d <- amp_d |>
+  filter(if_all(all_of(c("y", amp_base, amp_anthro)), ~ !is.na(.)), !is.na(utm_x_km)) |>
+  mutate(across(all_of(c(amp_base, amp_anthro)), \(x) as.numeric(scale(x)), .names = "z_{.col}"))
+
+amp_sp <- "island_f + s(ahupuaa_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)"
+zb <- paste0("z_", amp_base); za <- paste0("z_", amp_anthro)
+fA <- as.formula(paste("y ~", paste(zb, collapse = " + "), "+", amp_sp))
+fB <- as.formula(paste("y ~", paste(c(zb, za), collapse = " + "), "+", amp_sp))
+fC <- as.formula(paste("y ~", paste(c(zb, za,
+        "z_chirps_storm_cumulative_mm:z_log_n1km",
+        "z_chirps_storm_cumulative_mm:z_pct_agriculture"), collapse = " + "), "+", amp_sp))
+
+amp_A <- gam(fA, data = amp_d, method = "REML")
+amp_B <- gam(fB, data = amp_d, method = "REML")
+amp_C <- gam(fC, data = amp_d, method = "REML")
+
+saveRDS(amp_A, here("output", "model_objects", "nox_amp_A_delivery.rds"))
+saveRDS(amp_B, here("output", "model_objects", "nox_amp_B_anthro_buffercount.rds"))
+saveRDS(amp_C, here("output", "model_objects", "nox_amp_C_interactions.rds"))
+
+cat("Amplification subset (NO\u2083+NO\u2082, 1 km buffer count): n =", nrow(amp_d),
+    "| ahupua\u02BBa:", n_distinct(amp_d$ahupuaa), "| islands: O\u02BBahu + Maui\n")
+```
+
+```{r}
+#| label: step17-loao-spatial-cv
+#| cache: true
+
+# Leave-one-ahupuaʻa-out CV. Each held-out watershed is predicted with its ahupuaʻa
+# random intercept excluded (population-level) — the "unsampled watershed" test.
+loao_cv <- function(formula, data) {
+  aps   <- unique(data$ahupuaa_f)
+  preds <- rep(NA_real_, nrow(data))
+  for (a in aps) {
+    idx <- data$ahupuaa_f == a
+    tr  <- data[!idx, ]; te <- data[idx, ]
+    m   <- try(gam(formula, data = tr, method = "REML"), silent = TRUE)
+    if (inherits(m, "try-error")) next
+    nd  <- te
+    nd$ahupuaa_f <- tr$ahupuaa_f[1]   # any training level; term excluded below
+    preds[idx] <- as.numeric(predict(m, newdata = nd, exclude = "s(ahupuaa_f)"))
+  }
+  ok <- !is.na(preds); obs <- data$y[ok]; pr <- preds[ok]
+  tibble(n = sum(ok),
+         R2    = 1 - sum((obs - pr)^2) / sum((obs - mean(obs))^2),
+         RMSE  = sqrt(mean((obs - pr)^2)),
+         MAE   = mean(abs(obs - pr)),
+         calib = unname(coef(lm(obs ~ pr))[2]))
+}
+
+set.seed(SEED)
+amp_cv <- bind_rows(
+  loao_cv(fA, amp_d) |> mutate(Model = "A — delivery"),
+  loao_cv(fB, amp_d) |> mutate(Model = "B — + anthropogenic (1 km buffer count)"),
+  loao_cv(fC, amp_d) |> mutate(Model = "C — + interactions")
+)
+
+amp_cv |>
+  transmute(Model, n,
+            `CV R\u00b2` = round(R2, 3), RMSE = round(RMSE, 3),
+            MAE = round(MAE, 3), `Calib. slope` = round(calib, 3)) |>
+  knitr::kable(caption = paste0(
+    "Leave-one-ahupua\u02BBa-out spatial CV for NO\u2083+NO\u2082 (n = ", nrow(amp_d),
+    ", ", n_distinct(amp_d$ahupuaa), " folds). Adding anthropogenic predictors (Model B) ",
+    "improves out-of-sample R\u00b2 by ~0.01; the interaction model (C) overfits."))
+```
+
+::: {.callout-important}
+**Human land use does not meaningfully improve out-of-sample NO₃+NO₂ prediction.**
+Adding the anthropogenic block — including the 1 km cesspool buffer count that was a
+significant *in-sample* predictor (Step 23) — lifts leave-one-ahupuaʻa-out CV R² only
+from 0.36 to 0.37 (ΔRMSE ≈ −0.01 on the log scale), and the interaction model actually
+*degrades* out-of-sample skill and calibration (R² 0.36, slope 0.77) despite a lower
+in-sample AIC — a clear overfitting signature. The gap between in-sample deviance
+explained (~59%) and spatially cross-validated R² (~0.36) underscores that the
+ahupuaʻa random effect and spatial smooth capture location, not transferable
+landscape–nutrient relationships. Under the Step 33 criteria, this argues **against**
+a title claiming human amplification of NO₃+NO₂: the anthropogenic signal is real and
+detectable in sample but adds little genuine predictive value for unsampled coastlines.
+The safer framing — *watershed structure predicts coastal nutrient exposure* — is the
+better-supported claim.
+:::
 
 ## Priority interactions {#sec-interactions}
 
@@ -3153,7 +3436,100 @@ be stated as consistent-with, not proof of, localized wastewater inputs.
 > **Step 23.** Repeat key results under 11 analytical alternatives.
 > Produce supplementary stability table.
 
-*← Analysis code goes here when we work through Step 23 together.*
+## Cesspool metric choice {#sec-sens-cesspool}
+
+The Oʻahu + Maui submodels (Steps 12–14) represent wastewater with two ahupuaʻa- and
+sample-level metrics: cesspool **density** (ahupuaʻa cesspools km⁻²) and **distance to
+the nearest** cesspool. Two sample-level **buffer counts** — cesspools within 500 m and
+within 1 km — are an alternative that captures *local* cesspool abundance directly.
+On the Oʻahu + Maui subset the two buffers are strongly correlated (Spearman ρ ≈ 0.83)
+so they enter one at a time; notably, buffer counts are nearly orthogonal to ahupuaʻa
+density (ρ ≈ 0.26) but strongly track distance-to-nearest (ρ ≈ −0.89) — i.e. they are an
+alternative *local-proximity* metric, not a restatement of density. Buffer counts cover
+Oʻahu, Maui, and Lānaʻi (still absent for Molokaʻi); to isolate the effect of the metric
+choice, each specification below is fit on the **same rows** as the main submodel.
+
+```{r}
+#| label: step23-cesspool-metric-sensitivity
+#| cache: true
+
+# Refit each nutrient submodel on identical Oʻahu+Maui rows, swapping the cesspool
+# block: (density + distance) vs n within 500 m vs n within 1 km. Counts are log1p'd;
+# all predictors z-standardized within each fit. log_SiO2 is dropped when Si is the
+# response (it would otherwise be response and predictor).
+cess_base <- c("log_SiO2", "chirps_storm_cumulative_mm", "log_dist_stream_m",
+               "mean_slope_deg", "log_ksat", "pct_agriculture", "pct_impervious",
+               "log_dist_npdes_m", "fetch_mean_km", "hs_mean_m")
+cess_re   <- "island_f + s(ahupuaa_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)"
+
+fit_cess_specs <- function(resp) {
+  bdlcol <- paste0("bdl_", resp)
+  bv <- if (resp == "SiO2") setdiff(cess_base, "log_SiO2") else cess_base
+  d <- chem_master |>
+    filter(island %in% c("O'ahu", "Maui"),
+           !is.na(cesspool_density_per_km2), !is.na(dist_to_nearest_cesspool_m),
+           !is.na(n_cess_500m), !is.na(n_cess_1km),
+           !is.na(.data[[resp]]), !.data[[bdlcol]], !bdl_SiO2) |>
+    left_join(sp_sf |> st_drop_geometry() |> select(sample_id, utm_x, utm_y), by = "sample_id") |>
+    mutate(
+      y = log(.data[[resp]]), log_SiO2 = log(SiO2),
+      log_dist_stream_m = log(dist_to_stream_mouth_m + 1), log_ksat = log(mean_ksat_um_s + 1),
+      log_dist_npdes_m = log(dist_to_nearest_npdes_m + 1),
+      log_cesspool_density = log(cesspool_density_per_km2 + 1),
+      log_dist_cesspool_m = log(dist_to_nearest_cesspool_m + 1),
+      log_n500 = log1p(n_cess_500m), log_n1km = log1p(n_cess_1km),
+      island_f = factor(island), ahupuaa_f = factor(ahupuaa),
+      utm_x_km = utm_x / 1000, utm_y_km = utm_y / 1000
+    ) |>
+    filter(if_all(all_of(c("y", bv)), ~ !is.na(.)), !is.na(utm_x_km))
+
+  specs <- list("Density + distance (main)" = c("log_cesspool_density", "log_dist_cesspool_m"),
+                "n within 500 m" = "log_n500", "n within 1 km" = "log_n1km")
+  imap_dfr(specs, function(cv, nm) {
+    allv <- c(bv, cv)
+    dd <- d |> mutate(across(all_of(allv), \(x) as.numeric(scale(x)), .names = "z_{.col}"))
+    m  <- gam(as.formula(paste("y ~", paste(paste0("z_", allv), collapse = " + "), "+", cess_re)),
+              data = dd, method = "REML")
+    coef_ci(m, nm) |> filter(term %in% paste0("z_", cv)) |>
+      mutate(nutrient = resp, n = nrow(dd))
+  })
+}
+
+cess_sens <- map_dfr(c("NO3NO2", "PO4", "NH3", "SiO2"), fit_cess_specs)
+
+metric_lab <- c(log_cesspool_density = "Cesspool density", log_dist_cesspool_m = "Dist to nearest",
+                log_n500 = "n within 500 m", log_n1km = "n within 1 km")
+nut_lab    <- c(NO3NO2 = "NO\u2083+NO\u2082", PO4 = "PO\u2084", NH3 = "NH\u2084", SiO2 = "SiO\u2082")
+
+cess_sens |>
+  transmute(
+    Nutrient      = factor(nut_lab[nutrient], levels = c("SiO\u2082", "NO\u2083+NO\u2082", "PO\u2084", "NH\u2084")),
+    Specification = model,
+    Metric        = metric_lab[str_remove(term, "z_")],
+    `Std. \u03b2`  = round(est, 3),
+    `95% CI`      = sprintf("[%.2f, %.2f]", lwr, upr),
+    p             = signif(p, 2),
+    n
+  ) |>
+  arrange(Nutrient, Specification) |>
+  knitr::kable(caption = "Table S. Cesspool-metric sensitivity (Oʻahu + Maui, identical rows per nutrient). Standardized coefficient for each cesspool metric under three specifications; distance-to-nearest and buffer counts are alternative local-proximity metrics, density is ahupuaʻa-scale.") |>
+  kableExtra::kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+::: {.callout-important}
+**The cesspool signal is metric-dependent — and the choice changes which nutrient
+responds.** For **NO₃+NO₂**, the local buffer counts are significant positive
+predictors (n within 500 m: β ≈ 0.18; within 1 km: β ≈ 0.17; both 95% CIs exclude zero)
+even though ahupuaʻa density and distance-to-nearest were not — a local cesspool signal
+that the ahupuaʻa-average density metric misses. **PO₄** shows a weak positive effect of
+the 1 km count only (β ≈ 0.09). **NH₄**, by contrast, responds to ahupuaʻa **density**
+(β ≈ 0.20) but *not* to buffer counts. **Si** responds only to distance-to-nearest
+(negative), consistent with a connectivity confound rather than a source signal. The
+robust reading is that cesspool associations are real but modest and depend on the
+spatial scale of the metric: local counts capture near-field NO₃+NO₂ enrichment, whereas
+ahupuaʻa density better tracks NH₄. This reinforces treating the cesspool result as
+correlational and scale-sensitive rather than a single clean "wastewater effect."
+:::
 
 ---
 
