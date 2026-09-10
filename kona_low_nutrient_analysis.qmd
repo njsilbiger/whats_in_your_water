@@ -537,13 +537,20 @@ chem_master <- chem_master |>
 
 ```{r}
 #| label: chirps-storm-rainfall
-# Spatially resolved CHIRPS daily rainfall, March 10–31 2026 (storm onset to end).
-# Extracted at 0.05° (~5 km) resolution for all unique sample pixel locations.
-# Source: CHC server (data.chc.ucsb.edu); cached to data/chirps_march2026_daily_raw.rds.
-# April 1–8 data (34 samples) not currently available from CHC; rainfall during
-# this post-storm window was near-zero (0–2.4 mm/day in test pixels), so the
-# March 10–31 cumulative captures effectively all storm rainfall.
-# CHIRPS fill value -9999 (ocean pixels) set to NA.
+# Step 5 — Spatially resolved CHIRPS storm rainfall metrics.
+# Source: CHC server (data.chc.ucsb.edu), 0.05° (~5 km) daily resolution,
+#   March 10–31 2026. Cached to data/chirps_march2026_daily_raw.rds.
+# Fill value -9999 (ocean pixels) → NA.
+# April 1–8 data unavailable from CHC; post-storm April rainfall was near-zero
+#   (0–2.4 mm/day), so Mar 10–31 cumulative captures effectively all storm rainfall.
+# Metrics computed (Step 5 complete):
+#   chirps_storm_cumulative_mm — Mar 10–31 total (primary event-exposure variable)
+#   chirps_peak_day_mm         — maximum single-day rainfall
+#   chirps_3day_max_mm         — maximum rolling 3-day sum
+#   chirps_7day_mm             — 7-day core storm total (Mar 10–16)
+#   chirps_storm_days_nonzero  — number of rain days
+#   chirps_peak_date           — date of maximum daily rainfall
+#   chirps_days_since_peak     — days from pixel peak to sample collection
 
 library(chirps)
 
@@ -555,30 +562,49 @@ unique_locs <- chem_master |>
   arrange(chirps_lat, chirps_lon) |>
   mutate(id = row_number())
 
-chirps_pixel <- as_tibble(chirps_march_all) |>
+chirps_daily <- as_tibble(chirps_march_all) |>
   left_join(unique_locs, by = "id") |>
   mutate(chirps = if_else(chirps == -9999, NA_real_, chirps)) |>
+  arrange(chirps_lon, chirps_lat, date)
+
+# Per-pixel summary metrics
+chirps_pixel <- chirps_daily |>
   group_by(chirps_lon, chirps_lat) |>
+  mutate(roll3 = slider::slide_dbl(chirps, sum, .before = 2, .after = 0,
+                                   .complete = TRUE, na_rm = TRUE)) |>
   summarise(
     chirps_storm_cumulative_mm = sum(chirps, na.rm = TRUE),
     chirps_peak_day_mm         = max(chirps, na.rm = TRUE),
+    chirps_3day_max_mm         = max(roll3,  na.rm = TRUE),
+    chirps_7day_mm             = sum(chirps[date >= as.Date("2026-03-10") &
+                                            date <= as.Date("2026-03-16")],
+                                     na.rm = TRUE),
     chirps_storm_days_nonzero  = sum(chirps > 0, na.rm = TRUE),
     chirps_ocean_pixel         = any(is.na(chirps)),
     .groups = "drop"
   ) |>
-  mutate(
-    chirps_storm_cumulative_mm = if_else(chirps_ocean_pixel, NA_real_, chirps_storm_cumulative_mm),
-    chirps_peak_day_mm         = if_else(chirps_ocean_pixel | is.infinite(chirps_peak_day_mm),
-                                          NA_real_, chirps_peak_day_mm)
-  )
+  mutate(across(c(chirps_storm_cumulative_mm, chirps_peak_day_mm,
+                  chirps_3day_max_mm, chirps_7day_mm),
+                \(x) if_else(chirps_ocean_pixel | is.infinite(x), NA_real_, x)))
 
+# Peak date per pixel (separate to avoid ties issue in summarise)
+chirps_peak_date_df <- chirps_daily |>
+  filter(!is.na(chirps)) |>
+  group_by(chirps_lon, chirps_lat) |>
+  slice_max(chirps, n = 1, with_ties = FALSE) |>
+  select(chirps_lon, chirps_lat, chirps_peak_date = date) |>
+  ungroup()
+
+chirps_pixel <- chirps_pixel |>
+  left_join(chirps_peak_date_df, by = c("chirps_lon", "chirps_lat"))
+
+# Join all metrics to chem_master
 chem_master <- chem_master |>
   mutate(chirps_lon = round(longitude, 2), chirps_lat = round(latitude, 2)) |>
-  left_join(
-    chirps_pixel |> select(chirps_lon, chirps_lat, chirps_storm_cumulative_mm,
-                           chirps_peak_day_mm, chirps_storm_days_nonzero, chirps_ocean_pixel),
-    by = c("chirps_lon", "chirps_lat")
-  )
+  left_join(chirps_pixel, by = c("chirps_lon", "chirps_lat")) |>
+  mutate(chirps_days_since_peak = as.integer(
+    as.Date(collected_hst) - chirps_peak_date
+  ))
 ```
 
 ```{r}
@@ -593,7 +619,193 @@ write_csv(chem_master, here("data", "chem_master.csv"))
 > **Step 6 (Figure 1).** Four-island map, event timeline, summary statistics.
 > Show the scale of the natural experiment — do not show nutrient concentrations yet.
 
-*← Analysis code goes here when we work through Step 6 together.*
+```{r}
+#| label: fig1-sampling-map
+#| fig-width: 9
+#| fig-height: 8.5
+#| fig-cap: "Figure 1. Sampling design and storm context. Four Hawaiian islands (Oʻahu, Maui, Molokaʻi, Lānaʻi) showing all unique coastal sampling sites (filled circles, coloured by island) and stream mouths (open white triangles, OpenStreetMap). Scale bars at bottom-left of each panel. Pacific inset shows archipelago location. Bottom timeline (left): 4-island mean daily rainfall (NCEP GDAS, March–April 2026); storm window (blue) and community science sampling window (green) are highlighted. Bottom timeline (right inset): daily discharge at three USGS gauges — Makaha Stream (Oʻahu, #16211600), Hanawi Stream (Maui, #16508000), and Hālawa Stream (Molokaʻi, #16400000). All three gauges peaked March 13–14. Basemap: Esri World Imagery."
+
+library(maptiles); library(tidyterra); library(ggspatial)
+
+normalize_apos <- function(x) str_replace_all(x, "[\u2018\u2019\u02bc']", "'")
+
+# ── Satellite tile cache (downloaded once, reused on render) ──────────────────
+tile_dir <- here("data", "maptiles_cache")
+dir.create(tile_dir, showWarnings = FALSE)
+
+island_bbox <- list(
+  "O'ahu"    = c(xmin=-158.33, xmax=-157.60, ymin=21.22, ymax=21.73),
+  "Maui"     = c(xmin=-156.72, xmax=-155.95, ymin=20.50, ymax=21.05),
+  "Moloka'i" = c(xmin=-157.38, xmax=-156.68, ymin=21.02, ymax=21.27),
+  "Lāna'i"   = c(xmin=-157.08, xmax=-156.72, ymin=20.71, ymax=20.97)
+)
+zoom_levels <- c("O'ahu"=11, "Maui"=11, "Moloka'i"=12, "Lāna'i"=12)
+
+make_bbox_sf <- function(xmin, xmax, ymin, ymax)
+  st_bbox(c(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), crs=4326) |>
+  st_as_sfc()
+
+tiles <- imap(island_bbox, \(bb, isl) {
+  cf <- file.path(tile_dir, paste0(gsub("[^A-Za-z]","_", isl), "_sat.rds"))
+  if (file.exists(cf)) return(readRDS(cf))
+  t <- get_tiles(make_bbox_sf(bb["xmin"], bb["xmax"], bb["ymin"], bb["ymax"]),
+                 provider = "Esri.WorldImagery",
+                 zoom = zoom_levels[[isl]], cachedir = tile_dir)
+  saveRDS(t, cf); t
+})
+
+# ── Sample sites and stream mouths ────────────────────────────────────────────
+samples_plot <- chem_master |>
+  dplyr::filter(!offshore_reference) |>
+  distinct(site_id, .keep_all = TRUE) |>
+  select(sample_id, island, latitude, longitude)
+
+stream_mouths_plot <- read_csv(here("data", "osm_stream_mouths.csv"),
+                               show_col_types = FALSE) |>
+  dplyr::filter(island %in% c("O'ahu", "Maui", "Moloka'i", "Lāna'i"))
+
+island_pal_norm <- island_pal
+names(island_pal_norm) <- normalize_apos(names(island_pal_norm))
+
+island_counts_norm <- chem_master |>
+  dplyr::filter(!offshore_reference) |>
+  mutate(island_n = normalize_apos(island)) |>
+  count(island_n, name = "n_samples")
+
+# ── Island panel helper: satellite basemap + points ───────────────────────────
+make_sat_panel <- function(isl) {
+  isl_n <- normalize_apos(isl)
+  bb    <- island_bbox[[isl]]
+  pts   <- samples_plot |> dplyr::filter(normalize_apos(island) == isl_n)
+  strm  <- stream_mouths_plot |> dplyr::filter(normalize_apos(island) == isl_n)
+  ns    <- island_counts_norm$n_samples[island_counts_norm$island_n == isl_n]
+  col   <- island_pal_norm[[isl_n]]
+  lbl_x <- mean(c(bb["xmin"], bb["xmax"]))
+  lbl_y <- bb["ymin"] + 0.07 * (bb["ymax"] - bb["ymin"])
+  hw    <- (bb["xmax"] - bb["xmin"]) * 0.40
+
+  ggplot() +
+    geom_spatraster_rgb(data = tiles[[isl]]) +
+    # Stream mouths: open white triangles, dark outline — visible on satellite
+    geom_point(data = strm, aes(x = longitude, y = latitude),
+               shape = 24, size = 1.3, stroke = 0.5,
+               fill = "white", colour = "gray10", alpha = 0.85) +
+    # Sample sites: solid island-colour circles, white border
+    geom_point(data = pts, aes(x = longitude, y = latitude),
+               shape = 21, size = 2.0, stroke = 0.4,
+               fill = col, colour = "white", alpha = 0.90) +
+    coord_sf(xlim = c(bb["xmin"], bb["xmax"]),
+             ylim = c(bb["ymin"], bb["ymax"]),
+             expand = FALSE, crs = 4326) +
+    annotate("rect",
+             xmin = lbl_x - hw, xmax = lbl_x + hw,
+             ymin = lbl_y - 0.010, ymax = lbl_y + 0.022,
+             fill = alpha("gray5", 0.72), colour = NA) +
+    annotate("text", x = lbl_x, y = lbl_y,
+             label = sprintf("%s  (n = %d)", isl, ns),
+             hjust = 0.5, vjust = 0, size = 2.5, fontface = "bold", colour = col) +
+    theme_void() +
+    theme(plot.background = element_rect(fill = "gray10", colour = NA),
+          panel.border    = element_rect(fill = NA, colour = "gray40",
+                                         linewidth = 0.4))
+}
+
+# ── Pacific inset ─────────────────────────────────────────────────────────────
+p_inset <- ggplot() +
+  geom_sf(data = ne_countries(scale = "medium", returnclass = "sf"),
+          fill = "gray30", colour = "gray50", linewidth = 0.15) +
+  annotate("point", x = -157.8, y = 21.3, shape = 23,
+           fill = "#C62828", colour = "white", size = 2.5, stroke = 0.5) +
+  coord_sf(xlim = c(-210, -100), ylim = c(-10, 60), expand = FALSE) +
+  theme_void() +
+  theme(plot.background = element_rect(fill = "#1a2a3a", colour = "gray50",
+                                       linewidth = 0.5))
+
+# ── Event timeline ────────────────────────────────────────────────────────────
+ncep_trim <- read_csv(here("hawaii_ncep_janjun_cache.csv"), show_col_types = FALSE) |>
+  dplyr::filter(island %in% c("Oahu", "Maui", "Molokai", "Lanai"),
+                date >= as.Date("2026-03-01"), date <= as.Date("2026-04-12")) |>
+  group_by(date) |>
+  summarise(precip_mmday = mean(precip_mmday, na.rm = TRUE), .groups = "drop")
+
+peak_mm <- max(ncep_trim$precip_mmday, na.rm = TRUE)
+
+p_tl <- ggplot() +
+  annotate("rect", xmin=storm_start, xmax=storm_end,
+           ymin=-Inf, ymax=Inf, fill="#BBDEFB", alpha=0.55) +
+  annotate("rect", xmin=samp_start, xmax=samp_end,
+           ymin=-Inf, ymax=Inf, fill="#C8E6C9", alpha=0.55) +
+  geom_col(data = ncep_trim, aes(x=date, y=precip_mmday),
+           fill="#64B5F6", alpha=0.90, width=1) +
+  annotate("text", x=as.Date("2026-03-11"), y=peak_mm*0.93,
+           label="March Kona Low\n(peak ~65 mm day\u207b\u00b9)",
+           size=2.6, hjust=0, colour="#90CAF9", fontface="italic") +
+  annotate("text", x=as.Date("2026-03-29"), y=peak_mm*0.93,
+           label="Community science\nsampling window",
+           size=2.6, hjust=0, colour="#A5D6A7", fontface="italic") +
+  scale_x_date(date_breaks="1 week", date_labels="%b %d",
+               limits=c(as.Date("2026-03-01"), as.Date("2026-04-12")),
+               expand=expansion(add=1)) +
+  scale_y_continuous(expand=expansion(mult=c(0, 0.05))) +
+  labs(x=NULL, y="Rainfall (mm day\u207b\u00b9)\n4-island mean (NCEP)") +
+  theme_minimal(base_size=8) +
+  theme(plot.background    = element_rect(fill="gray10", colour=NA),
+        panel.background   = element_rect(fill="gray10", colour=NA),
+        panel.grid.major.y = element_line(colour="gray30", linewidth=0.3),
+        panel.grid.minor   = element_blank(),
+        panel.grid.major.x = element_blank(),
+        axis.text          = element_text(colour="gray80", size=7),
+        axis.title.y       = element_text(colour="gray80", size=7.5))
+
+# ── Legend panel ──────────────────────────────────────────────────────────────
+p_leg <- ggplot() + theme_void() +
+  theme(plot.background = element_rect(fill="gray10", colour=NA)) +
+  annotate("point", x=0.12, y=0.82, shape=21, size=3,
+           fill="gray50", colour="white", stroke=0.4) +
+  annotate("text",  x=0.22, y=0.82, label="Sample site",
+           hjust=0, size=2.6, colour="gray90") +
+  annotate("point", x=0.12, y=0.62, shape=24, size=2.2,
+           fill="white", colour="gray15", stroke=0.5) +
+  annotate("text",  x=0.22, y=0.62, label="Stream mouth",
+           hjust=0, size=2.6, colour="gray90") +
+  annotate("rect",  xmin=0.06, xmax=0.18, ymin=0.36, ymax=0.48,
+           fill="#BBDEFB", colour=NA) +
+  annotate("text",  x=0.22, y=0.42, label="Storm window",
+           hjust=0, size=2.6, colour="gray90") +
+  annotate("rect",  xmin=0.06, xmax=0.18, ymin=0.16, ymax=0.28,
+           fill="#C8E6C9", colour=NA) +
+  annotate("text",  x=0.22, y=0.22, label="Sampling window",
+           hjust=0, size=2.6, colour="gray90") +
+  xlim(0,1) + ylim(0,1)
+
+# ── Assemble ──────────────────────────────────────────────────────────────────
+caption_txt <- sprintf(
+  "n = %d samples  \u00b7  %d unique coastal sites  \u00b7  %d ahupua\u02BBa  \u00b7  4 islands  \u00b7  Mar 28\u2013Apr 8, 2026\nBasemap: Esri World Imagery. Stream mouth locations: OpenStreetMap.",
+  nrow(chem_master |> dplyr::filter(!offshore_reference)),
+  nrow(samples_plot),
+  n_distinct(chem_master$ahupuaa[!chem_master$offshore_reference])
+)
+
+top_row <- (make_sat_panel("O'ahu") | make_sat_panel("Maui")) +
+  plot_layout(widths = c(1, 1))
+mid_row <- (make_sat_panel("Moloka'i") | make_sat_panel("Lāna'i") |
+              p_inset | p_leg) +
+  plot_layout(widths = c(2.2, 1.3, 1.8, 1.5))
+
+fig1 <- (top_row / mid_row / p_tl) +
+  plot_layout(heights = c(3.2, 2.2, 2.2)) +
+  plot_annotation(
+    caption = caption_txt,
+    theme = theme(
+      plot.background = element_rect(fill = "gray10", colour = NA),
+      plot.caption = element_text(size=6.5, hjust=0.5,
+                                  colour="gray50", margin=margin(t=3))
+    )
+  )
+
+suppressWarnings(fig1)
+save_fig(fig1, "Fig1_sampling_map", width = 9, height = 8)
+```
 
 ---
 
@@ -824,6 +1036,225 @@ chem_master |>
         align = c("l", "l", "r", "r")) |>
   kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
 ```
+
+## Predictor correlations and VIF {#sec-collinearity}
+
+> **Steps 3–4.** Predictor correlation structure and VIF for candidate model sets.
+> Groups defined here — **do not revise based on results**.
+
+```{r}
+#| label: step4-predictor-groups
+# Define four conceptual predictor groups BEFORE examining correlations or fitting
+# models. This prevents post hoc storytelling about variable selection.
+# Log transforms applied here to right-skewed variables; use these throughout.
+
+PRED_GROUPS <- list(
+  A_hydro = c(
+    "chirps_storm_cumulative_mm",  # spatially resolved storm forcing (primary)
+    "chirps_peak_day_mm",          # single-day max (intensity; collinear with cumul.)
+    "mean_gwetroot",               # antecedent soil wetness (island-level)
+    "chirps_days_since_peak",      # elapsed days from pixel peak to sample collection
+    "total_cfs_march"              # USGS discharge (63% coverage; supplementary)
+  ),
+  B_connectivity = c(
+    "log_dist_stream_m",           # log(dist_to_stream_mouth_m + 1)
+    "mean_slope_deg",
+    "log_ksat_um_s"                # log(mean_ksat_um_s + 1)
+  ),
+  C_anthropogenic = c(
+    "log_cesspool_density",        # log(cesspool_density_per_km2 + 1)
+    "log_dist_cesspool_m",         # log(dist_to_nearest_cesspool_m + 1)
+    "n_cess_500m",
+    "pct_agriculture",
+    "pct_impervious",
+    "log_pop_density_km2",         # log(pop_density_km2 + 1)
+    "log_dist_npdes_m",            # log(dist_to_nearest_npdes_m + 1)
+    "cattle_per_km2"
+  ),
+  D_coastal = c(
+    "fetch_mean_km",
+    "hs_mean_m"
+  )
+)
+
+# Build predictor data frame with all log transforms
+pred_df <- chem_master |>
+  filter(!offshore_reference) |>
+  mutate(
+    log_dist_stream_m      = log(dist_to_stream_mouth_m + 1),
+    log_dist_cesspool_m    = log(dist_to_nearest_cesspool_m + 1),
+    log_dist_npdes_m       = log(dist_to_nearest_npdes_m + 1),
+    log_ksat_um_s          = log(mean_ksat_um_s + 1),
+    log_cesspool_density   = log(cesspool_density_per_km2 + 1),
+    log_pop_density_km2    = log(pop_density_km2 + 1),
+    log_NO3NO2             = log(NO3NO2),
+    log_PO4                = log(PO4),
+    log_NH3                = log(NH3),
+    log_SiO2               = log(SiO2)
+  )
+
+cat("Predictor data frame:", nrow(pred_df), "samples (11 offshore reference excluded)\n")
+```
+
+```{r}
+#| label: step3-correlation-matrix
+#| fig-width: 7
+#| fig-height: 6
+#| fig-cap: "Figure S1. Spearman rank correlations among candidate predictors. Values shown where |ρ| ≥ 0.5. Offshore reference samples excluded."
+
+# Predictor variables entered in the correlation (log-transformed where skewed)
+corr_vars <- c(
+  "chirps_storm_cumulative_mm", "chirps_peak_day_mm", "mean_gwetroot",
+  "chirps_days_since_peak",
+  "log_dist_stream_m", "mean_slope_deg", "log_ksat_um_s",
+  "log_cesspool_density", "log_dist_cesspool_m",
+  "pct_agriculture", "pct_impervious", "log_pop_density_km2", "log_dist_npdes_m",
+  "fetch_mean_km", "hs_mean_m"
+)
+
+var_labels <- c(
+  chirps_storm_cumulative_mm = "CHIRPS cumul. (mm)",
+  chirps_peak_day_mm         = "CHIRPS peak day (mm)",
+  mean_gwetroot              = "Soil moisture",
+  chirps_days_since_peak     = "Days since peak rainfall",
+  log_dist_stream_m          = "log(Dist stream mouth)",
+  mean_slope_deg             = "Slope (\u00b0)",
+  log_ksat_um_s              = "log(Ksat)",
+  log_cesspool_density       = "log(Cesspool density)",
+  log_dist_cesspool_m        = "log(Dist cesspool)",
+  pct_agriculture            = "% agriculture",
+  pct_impervious             = "% impervious",
+  log_pop_density_km2        = "log(Pop density)",
+  log_dist_npdes_m           = "log(Dist NPDES)",
+  fetch_mean_km              = "Wave fetch (km)",
+  hs_mean_m                  = "Wave height (m)"
+)
+
+corr_mat_df <- pred_df |> select(all_of(corr_vars)) |> drop_na()
+spearman    <- cor(corr_mat_df, method = "spearman", use = "pairwise.complete.obs")
+
+sp_tidy <- spearman |>
+  as.data.frame() |>
+  rownames_to_column("var1") |>
+  pivot_longer(-var1, names_to = "var2", values_to = "rho") |>
+  mutate(
+    var1 = factor(var_labels[var1], levels = rev(var_labels)),
+    var2 = factor(var_labels[var2], levels = var_labels)
+  )
+
+ggplot(sp_tidy, aes(var2, var1, fill = rho)) +
+  geom_tile(colour = "white", linewidth = 0.4) +
+  geom_text(aes(label = if_else(abs(rho) >= 0.5, sprintf("%.2f", rho), "")),
+            size = 2.5, colour = "white") +
+  scale_fill_gradient2(low = "#1565C0", mid = "white", high = "#B71C1C",
+                       midpoint = 0, limits = c(-1, 1), name = "Spearman \u03c1") +
+  scale_x_discrete(position = "top") +
+  labs(x = NULL, y = NULL,
+       caption = paste0("n = ", nrow(corr_mat_df), " complete cases")) +
+  theme_kona_paper(base_size = 8) +
+  theme(axis.text.x = element_text(angle = 40, hjust = 0),
+        panel.grid  = element_blank())
+```
+
+```{r}
+#| label: step3-high-correlation-pairs
+
+spearman |>
+  as.data.frame() |>
+  rownames_to_column("var1") |>
+  pivot_longer(-var1, names_to = "var2", values_to = "rho") |>
+  filter(var1 < var2, abs(rho) >= 0.5) |>
+  mutate(Predictor1 = var_labels[var1], Predictor2 = var_labels[var2],
+         rho = round(rho, 3)) |>
+  arrange(desc(abs(rho))) |>
+  select(Predictor1, Predictor2, rho) |>
+  kable(caption = "Table S3. Predictor pairs with |Spearman \u03c1| \u2265 0.5.",
+        col.names = c("Predictor 1", "Predictor 2", "Spearman \u03c1"),
+        align = c("l", "l", "r")) |>
+  kable_styling(bootstrap_options = "condensed", full_width = FALSE)
+```
+
+::: {.callout-warning}
+**Collinearity decisions (fixed before modeling).**
+
+- **CHIRPS cumulative vs peak day** (ρ = 0.97): use `chirps_storm_cumulative_mm` as the
+  primary storm-forcing variable; drop `chirps_peak_day_mm` from inferential models.
+- **% impervious vs log(pop density)** (ρ = 0.92): these cannot both enter the same
+  inferential model. Test as alternative specifications; report both in sensitivity analyses.
+- **Mean soil moisture** is island-level (4 unique values) and perfectly aliased with
+  `island` as a fixed effect. It will be absorbed by island random effects in mixed models;
+  do not include as an explicit predictor alongside island.
+- **All other pairs** have |ρ| < 0.6 — acceptable for joint estimation.
+:::
+
+```{r}
+#| label: step3-vif-si-model
+
+library(car)
+
+# Si connectivity model: Groups A (drop peak day) + B + D, island as random effect
+si_df <- pred_df |>
+  select(log_SiO2, chirps_storm_cumulative_mm, mean_gwetroot,
+         log_dist_stream_m, mean_slope_deg, log_ksat_um_s,
+         fetch_mean_km, hs_mean_m) |>
+  drop_na()
+
+cat("Si model complete cases:", nrow(si_df), "\n")
+
+vif_si <- vif(lm(log_SiO2 ~ chirps_storm_cumulative_mm + mean_gwetroot +
+                   log_dist_stream_m + mean_slope_deg + log_ksat_um_s +
+                   fetch_mean_km + hs_mean_m,
+                 data = si_df))
+
+tibble(Predictor = names(vif_si), VIF = round(vif_si, 2)) |>
+  arrange(desc(VIF)) |>
+  kable(caption = "VIF — Si connectivity model (Groups A+B+D; island as random effect; n = 682).",
+        align = c("l", "r")) |>
+  kable_styling(bootstrap_options = "condensed", full_width = FALSE)
+```
+
+```{r}
+#| label: step3-vif-nox-model
+
+# NOx amplification model: Groups A+B+C+D + log(Si), island as random effect
+# pct_impervious and log_pop_density_km2 included to assess joint VIF;
+# only one will enter the primary specification (see collinearity note above)
+nox_df <- pred_df |>
+  select(log_NO3NO2, log_SiO2,
+         chirps_storm_cumulative_mm, mean_gwetroot,
+         log_dist_stream_m, mean_slope_deg, log_ksat_um_s,
+         log_cesspool_density, pct_agriculture, pct_impervious,
+         log_pop_density_km2, log_dist_npdes_m,
+         fetch_mean_km, hs_mean_m) |>
+  drop_na()
+
+cat("NOx model complete cases:", nrow(nox_df), "\n")
+
+vif_nox <- vif(lm(log_NO3NO2 ~ log_SiO2 +
+                    chirps_storm_cumulative_mm + mean_gwetroot +
+                    log_dist_stream_m + mean_slope_deg + log_ksat_um_s +
+                    log_cesspool_density + pct_agriculture + pct_impervious +
+                    log_pop_density_km2 + log_dist_npdes_m +
+                    fetch_mean_km + hs_mean_m,
+                  data = nox_df))
+
+tibble(Predictor = names(vif_nox), VIF = round(vif_nox, 2)) |>
+  arrange(desc(VIF)) |>
+  kable(caption = paste0("VIF — NO\u2083+NO\u2082 amplification model (Groups A+B+C+D + log(Si); n = ",
+                         nrow(nox_df), ")."),
+        align = c("l", "r")) |>
+  kable_styling(bootstrap_options = "condensed", full_width = FALSE)
+```
+
+::: {.callout-note}
+**VIF summary.** All predictors in the Si connectivity model have VIF < 1.5 — no
+collinearity concern. In the NOx model, `pct_impervious` (VIF = 4.38) and
+`log(pop density)` (VIF = 4.22) are moderately elevated due to their ρ = 0.92
+correlation; `mean_gwetroot` reaches 3.86 because it is island-level. None exceed 5.
+The primary inferential models will use either `pct_impervious` or `log(pop density)`,
+not both; the other enters as a sensitivity check. `mean_gwetroot` will be handled
+through island random effects.
+:::
 
 ## Si connectivity model {#sec-si-model}
 

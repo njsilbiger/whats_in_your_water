@@ -50,7 +50,7 @@ Prior Hawaiʻi studies demonstrate that terrestrial groundwater and storm runoff
 | Peak rainfall | 68–124 mm/day (island mean, NCEP) |
 | Peak discharge | 231–1,040 cfs (USGS gauges, Mar 14–15) |
 | Post-storm chlorophyll bloom | 0.5–3 mg/m³ coastal mean (VIIRS) |
-| Citizen science sampling window | March 28–April 8 (12–26 days post-peak) |
+| Community science sampling window | March 28–April 8 (12–26 days post-peak) |
 | WQP conventional monitoring records | **0 records** during storm window (last: Dec 18, 2025) |
 
 ---
@@ -577,6 +577,18 @@ Checklist items:
 - [ ] All model objects saved
 - [ ] `sessioninfo::session_info()` saved
 - [ ] All claims updated to match actual model results
+
+---
+
+## Language Rules
+
+### Never use "citizen science" — always "community science"
+
+All text, figure labels, captions, annotations, code comments, and manuscript prose must use **"community science"** (or "community scientist"). The term "citizen science" is never acceptable in any output from this project. This applies to:
+- Quarto document prose and callouts
+- Figure annotations and captions
+- Code comments
+- Tables and supplementary materials
 
 ---
 
