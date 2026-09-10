@@ -1,0 +1,1020 @@
+---
+title: "Extreme rainfall reveals human amplification of land-to-sea nutrient transport across tropical coastlines"
+subtitle: "Kona Low March 2026 — Clean Reproducible Analysis"
+author:
+  - name: Nyssa J. Silbiger
+    affiliation: University of Hawaiʻi at Mānoa
+  - name: Andrea Kealoha
+    affiliation: University of Hawaiʻi at Mānoa
+  - name: Sara Kahanamoku
+    affiliation: University of Hawaiʻi at Mānoa
+date: today
+date-format: "MMMM D, YYYY"
+
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    toc-title: "Contents"
+    number-sections: true
+    embed-resources: true
+    theme: flatly
+    code-fold: true
+    code-summary: "Show code"
+    fig-width: 9
+    fig-height: 6
+    lang: en
+    css: |
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+             "Helvetica Neue", Arial, sans-serif; }
+      .callout { margin-top: 1rem; }
+
+execute:
+  warning: false
+  message: false
+  cache: false   # set to true for expensive chunks individually with #| cache: true
+---
+
+```{r}
+#| label: global-seed
+#| include: false
+
+# Global random seed — set once, used everywhere.
+# All stochastic operations (PAM, RF, Bayesian samplers, block CV splits)
+# must reference this object rather than hard-coding numbers.
+SEED <- 2847
+set.seed(SEED)
+```
+
+# Setup {#sec-setup}
+
+```{r}
+#| label: packages
+
+# ── Core tidyverse ────────────────────────────────────────────────────────────
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(here)
+
+# ── Tables & reporting ────────────────────────────────────────────────────────
+library(knitr)
+library(kableExtra)
+library(gt)
+
+# ── Visualisation ─────────────────────────────────────────────────────────────
+library(patchwork)
+library(cowplot)
+library(ggrepel)
+
+# ── Spatial ───────────────────────────────────────────────────────────────────
+library(sf)
+library(terra)
+library(gstat)
+library(spdep)
+library(exactextractr)
+
+# ── Statistics & modelling ────────────────────────────────────────────────────
+library(cluster)     # PAM clustering
+library(ranger)      # random forest
+library(broom)       # tidy model output
+library(infer)       # tidy inference
+
+# Note: brms, sdmTMB, glmmTMB, mgcv, blockCV loaded in the sections
+# where they are first used to keep startup time reasonable.
+```
+
+```{r}
+#| label: output-directories
+
+# Create output directory tree. Safe to re-run — dirs already present are skipped.
+dirs <- here(c(
+  "output/main_figures",
+  "output/supplement",
+  "output/tables",
+  "output/model_objects",
+  "output/diagnostics"
+))
+walk(dirs, \(d) dir.create(d, showWarnings = FALSE, recursive = TRUE))
+```
+
+```{r}
+#| label: global-constants
+
+# ── Island colour palette ─────────────────────────────────────────────────────
+island_pal <- c(
+  "O'ahu"    = "#1565C0",
+  "Maui"     = "#2E7D32",
+  "Moloka'i" = "#E65100",
+  "Lāna'i"   = "#6A1B9A"
+)
+
+# Normalise okina/smart-quote variants so island-name joins are consistent
+fix_island <- function(x) {
+  x |>
+    stringr::str_replace_all("[ʻʼ'']", "'") |>
+    stringr::str_replace_all("ā", "a") |>   # for join matching only
+    stringr::str_trim()
+}
+
+# Canonical island factor levels (display form)
+island_levels <- c("O'ahu", "Maui", "Moloka'i", "Lāna'i")
+
+# ── Nutrient response variables ───────────────────────────────────────────────
+response_vars  <- c("NO3NO2", "PO4", "NH3", "SiO2")
+response_labels <- c(
+  NO3NO2 = "NO\u2083+NO\u2082 (\u03bcmol L\u207b\u00b9)",
+  PO4    = "PO\u2084 (\u03bcmol L\u207b\u00b9)",
+  NH3    = "NH\u2084 (\u03bcmol L\u207b\u00b9)",
+  SiO2   = "SiO\u2082 (\u03bcmol L\u207b\u00b9)"
+)
+
+# ── Reef health thresholds (µmol/L; Reef Check / Hawaii benchmarks) ───────────
+reef_thresholds <- c(NO3NO2 = 1.0, PO4 = 0.1, SiO2 = 5.0, NH3 = 1.0)
+
+# ── PAM water-type cluster palette ───────────────────────────────────────────
+cluster_pal <- c(
+  "Marine background"  = "#1565C0",
+  "Nearshore enriched" = "#2E7D32",
+  "Runoff-dominated"   = "#E65100"
+)
+cluster_levels <- c("Marine background", "Nearshore enriched", "Runoff-dominated")
+
+# ── Storm & sampling time windows ─────────────────────────────────────────────
+storm_start  <- as.Date("2026-03-10")
+storm_peak   <- as.Date("2026-03-14")
+storm_end    <- as.Date("2026-03-25")
+samp_start   <- as.Date("2026-03-28")
+samp_end     <- as.Date("2026-04-08")
+
+# Shared annotate() rectangles for time-series plots
+ts_windows <- list(
+  annotate("rect", xmin = storm_start, xmax = storm_end,
+           ymin = -Inf, ymax = Inf, fill = "#BBDEFB", alpha = 0.70),
+  annotate("rect", xmin = samp_start, xmax = samp_end,
+           ymin = -Inf, ymax = Inf, fill = "#C8E6C9", alpha = 0.70)
+)
+```
+
+```{r}
+#| label: theme-kona-paper
+
+# Custom ggplot2 theme for all publication figures.
+# Requirements: white bg, minimal grid, ~9pt text, no unnecessary legends,
+# panel letters added via labs(tag = "A"), accessible palette,
+# interpretable in grayscale.
+
+theme_kona_paper <- function(base_size = 9, ...) {
+  theme_minimal(base_size = base_size, ...) +
+    theme(
+      # Typography
+      text              = element_text(colour = "gray10"),
+      plot.title        = element_text(size = rel(1.15), face = "bold",
+                                       margin = margin(b = 4)),
+      plot.subtitle     = element_text(size = rel(0.95), colour = "gray40",
+                                       margin = margin(b = 6)),
+      plot.caption      = element_text(size = rel(0.82), colour = "gray50",
+                                       hjust = 0, margin = margin(t = 6)),
+      plot.tag          = element_text(face = "bold", size = rel(1.1)),
+      # Axes
+      axis.title        = element_text(size = rel(0.95)),
+      axis.title.x      = element_text(margin = margin(t = 5)),
+      axis.title.y      = element_text(margin = margin(r = 5)),
+      axis.text         = element_text(size = rel(0.88), colour = "gray20"),
+      axis.ticks        = element_line(colour = "gray70", linewidth = 0.3),
+      # Panel
+      panel.background  = element_rect(fill = "white", colour = NA),
+      plot.background   = element_rect(fill = "white", colour = NA),
+      panel.grid.major  = element_line(colour = "gray92", linewidth = 0.35),
+      panel.grid.minor  = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.border      = element_blank(),
+      # Facets
+      strip.background  = element_rect(fill = "gray96", colour = NA),
+      strip.text        = element_text(face = "bold", size = rel(0.92)),
+      # Legends
+      legend.position   = "right",
+      legend.title      = element_text(size = rel(0.9), face = "bold"),
+      legend.text       = element_text(size = rel(0.85)),
+      legend.key.size   = unit(0.9, "lines"),
+      legend.background = element_rect(fill = NA, colour = NA),
+      # Margins
+      plot.margin       = margin(8, 10, 6, 8)
+    )
+}
+
+# Make it the default for this document
+theme_set(theme_kona_paper())
+
+# Helper: save a figure as both PDF (vector) and PNG (600 dpi)
+save_fig <- function(plot, name, width, height,
+                     dir = here("output", "main_figures")) {
+  ggsave(file.path(dir, paste0(name, ".pdf")), plot,
+         width = width, height = height, device = cairo_pdf)
+  ggsave(file.path(dir, paste0(name, ".png")), plot,
+         width = width, height = height, dpi = 600)
+  invisible(plot)
+}
+
+save_supp <- function(plot, name, width, height) {
+  save_fig(plot, name, width, height,
+           dir = here("output", "supplement"))
+}
+```
+
+---
+
+# Data Inventory and QA/QC {#sec-data-inventory}
+
+> **Step 1.** Audit the sample data before doing any modeling.
+> Target: explicit sample-flow table, site_id creation, coordinate QA.
+
+```{r}
+#| label: load-raw-chemistry
+
+chem_raw <- read_csv(here("data", "clean_chemdata.csv"), show_col_types = FALSE)
+```
+
+```{r}
+#| label: load-spatial-support-files
+
+ahupuaa   <- read_csv(here("data", "ahupuaa_cache.csv"),             show_col_types = FALSE)
+cess_dist <- read_csv(here("data", "sample_cesspool_distances.csv"), show_col_types = FALSE)
+cess_buf  <- read_csv(here("data", "cesspool_buffer_counts.csv"),    show_col_types = FALSE)
+cess_ahu  <- read_csv(here("data", "cesspool_by_ahupuaa.csv"),       show_col_types = FALSE)
+ccap      <- read_csv(here("data", "ccap_ahupuaa_summary.csv"),      show_col_types = FALSE)
+slope     <- read_csv(here("data", "ahupuaa_slope.csv"),             show_col_types = FALSE)
+ksat      <- read_csv(here("data", "ahupuaa_ksat.csv"),              show_col_types = FALSE)
+discharge <- read_csv(here("data", "usgs_discharge_march2026.csv"),  show_col_types = FALSE)
+fetch     <- read_csv(here("data", "wave_fetch.csv"),                show_col_types = FALSE)
+```
+
+```{r}
+#| label: resolve-duplicate-ahupuaa
+# Several ahupuaa-level tables contain duplicate rows from multi-polygon
+# boundary intersections during raster extraction. Resolved by averaging
+# within the composite key ahupuaa + mokupuni (island).
+#
+# CRITICAL: ahupuaa names are NOT unique across islands. Seven names recur
+# on multiple islands (Hālawa, Kahana, Kalihi, Kawela, Waiheʻe, Wailua, Waimea).
+# All joins MUST use ahupuaa + mokupuni as a composite key.
+# cesspool_by_ahupuaa uses column name 'island' (same encoding as mokupuni);
+# rename to mokupuni before joining.
+
+slope_clean <- slope |>
+  group_by(ahupuaa, mokupuni) |>
+  summarise(mean_slope_deg = mean(mean_slope_deg, na.rm = TRUE), .groups = "drop")
+
+ksat_clean <- ksat |>
+  group_by(ahupuaa, mokupuni) |>
+  summarise(mean_ksat_um_s = mean(mean_ksat_um_s, na.rm = TRUE), .groups = "drop")
+
+ccap_clean <- ccap |>
+  group_by(ahupuaa, mokupuni) |>
+  summarise(
+    pct_impervious  = mean(pct_impervious,  na.rm = TRUE),
+    pct_agriculture = mean(pct_agriculture, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cess_ahu_clean <- cess_ahu |>
+  rename(mokupuni = island) |>   # harmonise column name; encoding matches mokupuni
+  group_by(ahupuaa, mokupuni) |>
+  summarise(
+    cesspool_density_per_km2 = mean(cesspool_density_per_km2, na.rm = TRUE),
+    n_cesspools              = mean(n_cesspools,              na.rm = TRUE),
+    .groups = "drop"
+  )
+
+discharge_clean <- discharge |>
+  group_by(ahupuaa, mokupuni) |>
+  summarise(
+    total_cfs_march            = mean(total_cfs_march,            na.rm = TRUE),
+    specific_discharge_cfs_km2 = mean(specific_discharge_cfs_km2, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(across(where(is.numeric), \(x) if_else(is.nan(x), NA_real_, x)))
+```
+
+```{r}
+#| label: filter-coords-assign-site-id
+# One sample has completely missing metadata (NA sample_id, island, coordinates).
+# Drop it; all downstream analyses require coordinates.
+has_coords <- chem_raw |>
+  filter(!is.na(latitude), !is.na(longitude))
+
+# Assign a stable site_id: each unique lat/lon pair is one site.
+# This is an exact-coordinate match — coordinates are already stored to ~5 dp.
+site_lookup <- has_coords |>
+  distinct(latitude, longitude) |>
+  arrange(latitude, longitude) |>
+  mutate(site_id = sprintf("SITE_%04d", row_number()))
+
+chem_audit <- has_coords |>
+  left_join(site_lookup, by = c("latitude", "longitude"))
+```
+
+*Table S1 (sample attrition) and Table S2 (missingness matrix) are generated after all
+covariates are joined — see the end of [§ Master analytical dataset](#sec-master-dataset).*
+
+```{r}
+#| label: coordinate-duplicate-audit
+# Classify the 33 multi-sample sites
+site_type_tbl <- chem_audit |>
+  group_by(site_id) |>
+  filter(n() > 1) |>
+  summarise(
+    n_samples  = n(),
+    n_dates    = n_distinct(as.Date(collected_hst)),
+    cv_NO3     = sd(NO3NO2, na.rm = TRUE) / mean(NO3NO2, na.rm = TRUE),
+    cv_Si      = sd(SiO2,   na.rm = TRUE) / mean(SiO2,   na.rm = TRUE),
+    site_type  = case_when(
+      n_dates > 1                                                       ~ "same_site_repeat_visit",
+      (is.na(cv_NO3) | cv_NO3 < 0.25) & (is.na(cv_Si) | cv_Si < 0.25) ~ "probable_technical_replicate",
+      TRUE                                                              ~ "same_coord_independent_samples"
+    ),
+    .groups = "drop"
+  )
+
+site_type_tbl |>
+  count(site_type, name = "n_sites") |>
+  kable(caption = "Multi-sample sites by classification (33 sites share coordinates with ≥1 other sample).",
+        col.names = c("Site type", "n sites")) |>
+  kable_styling(bootstrap_options = "condensed", full_width = FALSE)
+```
+
+::: {.callout-note}
+**Coordinate duplicate decisions.** Of 708 unique lat/lon positions, 33 have ≥2 samples.
+Nine sites have nearly identical chemistry on the same date (probable technical replicates),
+18 sites have substantially different chemistry on the same date (independent nearby
+observations — retain all; shared coordinates may reflect GPS rounding),
+and 6 sites have samples from different dates (genuine repeat visits).
+All 746 samples are retained for nutrient-specific analyses; hierarchical random effects
+(site nested in ahupuaʻa nested in island) will account for pseudoreplication in
+landscape-scale models.
+:::
+
+```{r}
+#| label: build-master-dataset
+# Build one-row-per-sample master dataset with all covariates joined.
+# This is the base for all downstream analyses.
+
+chem_master <- chem_audit |>
+  left_join(ahupuaa |> select(sample_id, ahupuaa, moku, mokupuni),
+            by = "sample_id") |>
+  left_join(cess_dist,                                          by = "sample_id") |>
+  left_join(cess_buf,                                           by = "sample_id") |>
+  left_join(fetch |> select(sample_id, fetch_mean_km, fetch_min_km),
+            by = "sample_id") |>
+  # All ahupuaa-level joins use composite key ahupuaa + mokupuni to prevent
+  # cross-island name collisions (7 ahupuaa names recur on multiple islands)
+  left_join(slope_clean,    by = c("ahupuaa", "mokupuni")) |>
+  left_join(ksat_clean,     by = c("ahupuaa", "mokupuni")) |>
+  left_join(ccap_clean,     by = c("ahupuaa", "mokupuni")) |>
+  left_join(cess_ahu_clean  |> select(ahupuaa, mokupuni, cesspool_density_per_km2, n_cesspools),
+            by = c("ahupuaa", "mokupuni")) |>
+  left_join(discharge_clean |> select(ahupuaa, mokupuni, total_cfs_march, specific_discharge_cfs_km2),
+            by = c("ahupuaa", "mokupuni"))
+
+# site_lookup saved here; chem_master saved after BDL substitution and cesspool correction
+write_csv(site_lookup, here("data", "site_lookup.csv"))
+```
+
+
+
+::: {.callout-warning}
+**Key data gaps to note before modeling.**
+
+- **USGS stream discharge** (61.5% missing): **this is gauge-coverage missingness, not
+  streamlessness.** Of the 470 ungauged samples, 91% (n = 426) are within 5 km of an
+  OSM stream mouth, and median distance to the nearest stream mouth is ≤ 0.5 km on
+  Maui, Molokaʻi, and Lānaʻi. USGS gauges exist only for major perennial streams; the
+  many smaller coastal drainages that were sampled are simply ungauged. Treating missing
+  discharge as zero would be scientifically incorrect. Use `dist_to_stream_mouth_m`
+  (computed from OSM stream mouths; now in `chem_master`) as the primary within-watershed
+  connectivity variable; use spatially resolved CHIRPS storm rainfall as the storm-forcing
+  variable. Reserve USGS discharge for sensitivity analysis and supplementary context.
+- **NH₄** (18.5% missing): missingness is distributed across islands; NH₄-specific models
+  will use a smaller sample. Do not impute; report n separately.
+- **Cesspool metrics — island-specific data gaps.** HCPT layer 32 does not cover Molokaʻi
+  (103 samples); all cesspool variables (`dist_to_nearest_cesspool_m`,
+  `cesspool_density_per_km2`, `n_cess_500m`, `n_cess_1km`) are set to `NA` for Molokaʻi.
+  For Lānaʻi (20 samples), Lānaʻi does not appear in `cesspool_by_ahupuaʻa.csv` —
+  `cesspool_density_per_km2` is `NA` for all 20 samples. Buffer counts (`n_cess_500m`,
+  `n_cess_1km`) are correctly 0 (no cesspools in the HCPT layer within those buffers
+  on-island). `dist_to_nearest_cesspool_m` is `NA` because sample-level distances
+  (16–34 km) referenced cesspools on neighboring islands. An earlier observation of
+  "9 cesspools in Kamoku (Lānaʻi)" was a cross-island join artefact: that record
+  belongs to Kamoku ahupuaʻa on Hawaiʻi Island; the composite-key fix eliminated this.
+  For inferential models, exclude Molokaʻi from cesspool analyses; for Lānaʻi, only
+  buffer counts (= 0) are usable — no density or distance metric is available.
+:::
+
+```{r}
+#| label: bdl-substitution
+# All reported zeros are below-detection-limit (BDL), not true zeros.
+# Substitution rule: replace with DL/2 where DL = minimum observed non-zero value.
+# BDL indicator columns (bdl_*) retain the original flag for sensitivity analyses.
+
+dl_half <- c(
+  NO3NO2 = min(chem_master$NO3NO2[chem_master$NO3NO2 > 0], na.rm = TRUE) / 2,
+  PO4    = min(chem_master$PO4[chem_master$PO4 > 0],       na.rm = TRUE) / 2,
+  NH3    = min(chem_master$NH3[chem_master$NH3 > 0],       na.rm = TRUE) / 2,
+  SiO2   = min(chem_master$SiO2[chem_master$SiO2 > 0],     na.rm = TRUE) / 2
+)
+
+chem_master <- chem_master |>
+  mutate(
+    bdl_NO3NO2 = !is.na(NO3NO2) & NO3NO2 == 0,
+    bdl_PO4    = !is.na(PO4)    & PO4    == 0,
+    bdl_NH3    = !is.na(NH3)    & NH3    == 0,
+    bdl_SiO2   = !is.na(SiO2)  & SiO2   == 0,
+    NO3NO2 = if_else(bdl_NO3NO2, dl_half["NO3NO2"], NO3NO2),
+    PO4    = if_else(bdl_PO4,    dl_half["PO4"],    PO4),
+    NH3    = if_else(bdl_NH3,    dl_half["NH3"],     NH3),
+    SiO2   = if_else(bdl_SiO2,  dl_half["SiO2"],    SiO2)
+  )
+
+# Summary table
+bdl_tbl <- tibble(
+  Nutrient    = c("NO\u2083+NO\u2082", "PO\u2084", "NH\u2084", "SiO\u2082"),
+  n_bdl       = c(sum(chem_master$bdl_NO3NO2), sum(chem_master$bdl_PO4),
+                  sum(chem_master$bdl_NH3),    sum(chem_master$bdl_SiO2)),
+  n_available = c(sum(!is.na(chem_master$NO3NO2)), sum(!is.na(chem_master$PO4)),
+                  sum(!is.na(chem_master$NH3)),     sum(!is.na(chem_master$SiO2))),
+  pct_bdl     = round(100 * n_bdl / n_available, 1),
+  `DL/2 substituted (umol/L)` = round(dl_half, 4)
+)
+
+bdl_tbl |>
+  kable(caption = "BDL substitution summary. All zeros replaced with DL/2 (half the minimum observed non-zero value). BDL flags retained in `bdl_*` columns for sensitivity analyses.",
+        align = c("l", "r", "r", "r", "r")) |>
+  kable_styling(bootstrap_options = "condensed", full_width = FALSE)
+```
+
+::: {.callout-warning}
+**NH₄ has 30.4% BDL observations.** DL/2 substitution is defensible for modest BDL fractions,
+but at 30% the substituted values can meaningfully inflate apparent precision.
+The NH₄ model should be treated as a candidate for censored regression (e.g., `survival::Surv`
+left-censored, or a Bayesian truncated-normal likelihood in `brms`). A sensitivity analysis
+comparing DL/2 results to a censored model is required for any inferential claim about NH₄.
+:::
+
+```{r}
+#| label: cesspool-island-corrections
+# Molokaʻi: HCPT layer 32 has no coverage — all cesspool metrics set to NA.
+# Lānaʻi: no on-island cesspools in the layer for most ahupuaʻa; buffer counts
+# and density are correctly 0 where present, but dist_to_nearest_cesspool_m
+# values (16–34 km) reference off-island sources and are set to NA.
+# Molokaʻi: layer does not cover island → all cesspool metrics NA.
+# Lānaʻi: island absent from cesspool_by_ahupuaa → density NA.
+#   dist_to_nearest set to NA (sample-level values pointed off-island, 16–34 km).
+#   Buffer counts correctly 0 (no on-island cesspools in HCPT layer).
+#   The earlier "Kamoku 9-cesspool" flag was a cross-island join artefact
+#   (Hawaiʻi Island's Kamoku); resolved by the composite ahupuaa+mokupuni key.
+chem_master <- chem_master |>
+  mutate(
+    dist_to_nearest_cesspool_m = if_else(island == "Moloka'i",             NA_real_, dist_to_nearest_cesspool_m),
+    n_cess_500m                = if_else(island == "Moloka'i",             NA_real_, n_cess_500m),
+    n_cess_1km                 = if_else(island == "Moloka'i",             NA_real_, n_cess_1km),
+    cesspool_density_per_km2   = if_else(island == "Moloka'i",             NA_real_, cesspool_density_per_km2),
+    n_cesspools                = if_else(island == "Moloka'i",             NA_real_, n_cesspools),
+    dist_to_nearest_cesspool_m = if_else(grepl("n.?a.?i", island, ignore.case = TRUE),
+                                          NA_real_, dist_to_nearest_cesspool_m)
+  )
+```
+
+```{r}
+#| label: dist-to-stream-mouth
+# Compute distance from each sample to the nearest OSM stream mouth.
+# Source: osm_stream_mouths.csv (OpenStreetMap, filtered to 400 m coastal buffer).
+# Missing discharge data reflects gauge-coverage gaps, not absent streams:
+# 91% of ungauged samples are within 5 km of a mapped stream mouth.
+# dist_to_stream_mouth_m is therefore the primary connectivity variable.
+
+stream_mouths <- read_csv(here("data", "osm_stream_mouths.csv"), show_col_types = FALSE)
+
+samples_sf <- chem_master |>
+  select(sample_id, latitude, longitude) |>
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+  st_transform(32604)   # UTM zone 4N
+
+streams_sf <- stream_mouths |>
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+  st_transform(32604)
+
+nearest_idx <- st_nearest_feature(samples_sf, streams_sf)
+chem_master <- chem_master |>
+  mutate(dist_to_stream_mouth_m = as.numeric(
+    st_distance(samples_sf, streams_sf[nearest_idx, ], by_element = TRUE)
+  ))
+```
+
+```{r}
+#| label: offshore-flags
+# Flag samples that fall outside the stream-connectivity framework.
+# offshore_reference: samples in the "Open Ocean" ahupuaa — deliberately
+#   collected far offshore as marine background (n = 11; 15–114 km from
+#   any stream mouth). Exclude from connectivity and landscape models;
+#   retain as marine background context.
+# far_from_stream: dist_to_stream_mouth_m > 10 km (n = 35 total).
+#   Includes the 11 offshore reference samples plus 24 leeward O'ahu
+#   coastal samples (Honouliuli, Nānākuli, Waiʻanae, Waipiʻo ahupuaʻa)
+#   in genuinely stream-sparse dry terrain. Leeward samples retain
+#   valid CHIRPS land-pixel data and are kept in landscape models with
+#   the caveat that stream-proximity effects are poorly constrained there.
+
+chem_master <- chem_master |>
+  mutate(
+    offshore_reference = ahupuaa == "Open Ocean",
+    far_from_stream    = dist_to_stream_mouth_m > 10000
+  )
+
+# CHIRPS -9999 fill values indicate ocean/off-land pixels — same set as offshore samples.
+# These receive NA for all CHIRPS metrics.
+```
+
+```{r}
+#| label: chirps-storm-rainfall
+# Spatially resolved CHIRPS daily rainfall, March 10–31 2026 (storm onset to end).
+# Extracted at 0.05° (~5 km) resolution for all unique sample pixel locations.
+# Source: CHC server (data.chc.ucsb.edu); cached to data/chirps_march2026_daily_raw.rds.
+# April 1–8 data (34 samples) not currently available from CHC; rainfall during
+# this post-storm window was near-zero (0–2.4 mm/day in test pixels), so the
+# March 10–31 cumulative captures effectively all storm rainfall.
+# CHIRPS fill value -9999 (ocean pixels) set to NA.
+
+library(chirps)
+
+chirps_march_all <- readRDS(here("data", "chirps_march2026_daily_raw.rds"))
+
+unique_locs <- chem_master |>
+  mutate(chirps_lon = round(longitude, 2), chirps_lat = round(latitude, 2)) |>
+  distinct(chirps_lon, chirps_lat) |>
+  arrange(chirps_lat, chirps_lon) |>
+  mutate(id = row_number())
+
+chirps_pixel <- as_tibble(chirps_march_all) |>
+  left_join(unique_locs, by = "id") |>
+  mutate(chirps = if_else(chirps == -9999, NA_real_, chirps)) |>
+  group_by(chirps_lon, chirps_lat) |>
+  summarise(
+    chirps_storm_cumulative_mm = sum(chirps, na.rm = TRUE),
+    chirps_peak_day_mm         = max(chirps, na.rm = TRUE),
+    chirps_storm_days_nonzero  = sum(chirps > 0, na.rm = TRUE),
+    chirps_ocean_pixel         = any(is.na(chirps)),
+    .groups = "drop"
+  ) |>
+  mutate(
+    chirps_storm_cumulative_mm = if_else(chirps_ocean_pixel, NA_real_, chirps_storm_cumulative_mm),
+    chirps_peak_day_mm         = if_else(chirps_ocean_pixel | is.infinite(chirps_peak_day_mm),
+                                          NA_real_, chirps_peak_day_mm)
+  )
+
+chem_master <- chem_master |>
+  mutate(chirps_lon = round(longitude, 2), chirps_lat = round(latitude, 2)) |>
+  left_join(
+    chirps_pixel |> select(chirps_lon, chirps_lat, chirps_storm_cumulative_mm,
+                           chirps_peak_day_mm, chirps_storm_days_nonzero, chirps_ocean_pixel),
+    by = c("chirps_lon", "chirps_lat")
+  )
+```
+
+```{r}
+#| label: save-master-dataset
+write_csv(chem_master, here("data", "chem_master.csv"))
+```
+
+---
+
+# Sampling Coverage {#sec-sampling-coverage}
+
+> **Step 6 (Figure 1).** Four-island map, event timeline, summary statistics.
+> Show the scale of the natural experiment — do not show nutrient concentrations yet.
+
+*← Analysis code goes here when we work through Step 6 together.*
+
+---
+
+# Event Magnitude and Long-Term Context {#sec-event-magnitude}
+
+## Nutrient enrichment — storm vs background {#sec-enrichment}
+
+> **Step 7 (Figure 2).** Quantify the magnitude of nutrient enrichment.
+> Four-panel: NO₃+NO₂, PO₄, NH₄, Si — storm-influenced vs marine-background.
+
+*← Analysis code goes here when we work through Step 7 together.*
+
+## Long-term Hui baseline comparison {#sec-hui-baseline}
+
+> **Step 8.** Load Hui o Ka Wai Ola data, compute station-specific historical baselines,
+> calculate fold-changes relative to pre-2026 medians.
+
+*← Analysis code goes here when we work through Step 8 together.*
+
+## Was 2026 statistically extreme? {#sec-extreme-test}
+
+> **Step 9 (Figure 3).** Test whether March 2026 anomalies exceed the range expected
+> from the decade-long rainfall–nutrient relationship.
+
+*← Analysis code goes here when we work through Step 9 together.*
+
+---
+
+# Spatial Nutrient Patterns {#sec-spatial-patterns}
+
+## Spatial autocorrelation structure {#sec-morans}
+
+> **Step 10.** Moran's I, spatial correlograms, variograms — per nutrient per island.
+
+*← Analysis code goes here when we work through Step 10 together.*
+
+## Interpolated maps {#sec-kriging}
+
+> **Step 10 (Figure 4).** Spatial interpolation for visualization only.
+> Mask to coastal band; show observed points on top.
+
+*← Analysis code goes here when we work through Step 10 together.*
+
+---
+
+# Terrestrial Connectivity {#sec-connectivity}
+
+## Master analytical dataset {#sec-master-dataset}
+
+> **Steps 2–5.** Load and join all spatial covariates; build `analysis_master`;
+> missingness matrix; predictor correlations; define four predictor groups.
+
+```{r}
+#| label: step2-load-remaining-covariates
+# Load the five covariate sources not yet joined in §2 (Data Inventory):
+#   wave height, population density, soil moisture, livestock, NPDES distance.
+# All ahupuaa-level joins use composite key ahupuaa + mokupuni.
+# pop_density uses 'island' with ʻokina encoding = mokupuni.
+# soilmoist and livestock use straight-apostrophe encoding = island;
+#   apostrophe variants normalised before joining.
+
+waveheight <- read_csv(here("data", "sample_waveheight.csv"),      show_col_types = FALSE)
+pop_dens   <- read_csv(here("data", "pop_density_ahupuaa.csv"),    show_col_types = FALSE)
+epa        <- read_csv(here("data", "epa_facilities_hi.csv"),      show_col_types = FALSE)
+soilmoist  <- read_csv(here("data", "nasa_power_soilmoist.csv"),   show_col_types = FALSE)
+livestock  <- read_csv(here("data", "usda_nass_livestock_hi.csv"), show_col_types = FALSE)
+
+# Normalise apostrophe variants for island-level joins
+normalize_island <- function(x) str_replace_all(x, "['\u2018\u2019\u02bc]", "'")
+
+# 1. Wave height — sample_id join
+chem_master <- chem_master |>
+  left_join(waveheight |> select(sample_id, hs_at_collection_m, hs_mean_m, hs_max_m),
+            by = "sample_id")
+
+# 2. Population density — composite key (pop_dens$island uses ʻokina = mokupuni)
+pop_clean <- pop_dens |>
+  rename(mokupuni = island) |>
+  group_by(ahupuaa, mokupuni) |>
+  summarise(pop_density_km2 = mean(pop_density_km2, na.rm = TRUE), .groups = "drop")
+
+chem_master <- chem_master |>
+  left_join(pop_clean |> select(ahupuaa, mokupuni, pop_density_km2),
+            by = c("ahupuaa", "mokupuni"))
+
+# 3. Soil moisture & 4. Livestock — island-level; normalise apostrophe first
+chem_master <- chem_master |>
+  mutate(island_key = normalize_island(island)) |>
+  left_join(soilmoist |> mutate(island = normalize_island(island)) |>
+              select(island, mean_gwetroot),
+            by = c("island_key" = "island")) |>
+  left_join(livestock |> mutate(island = normalize_island(island)),
+            by = c("island_key" = "island")) |>
+  select(-island_key)
+
+# 5. NPDES distance — spatial computation
+npdes_pts <- epa |>
+  filter(!is.na(lat), !is.na(lon), between(lat, 18, 23), between(lon, -161, -154)) |>
+  distinct(lat, lon) |>
+  st_as_sf(coords = c("lon", "lat"), crs = 4326) |>
+  st_transform(32604)
+
+samples_sf <- chem_master |>
+  select(sample_id, latitude, longitude) |>
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+  st_transform(32604)
+
+nearest_npdes <- st_nearest_feature(samples_sf, npdes_pts)
+chem_master <- chem_master |>
+  mutate(
+    dist_to_nearest_npdes_m = as.numeric(
+      st_distance(samples_sf, npdes_pts[nearest_npdes, ], by_element = TRUE)
+    ),
+    log_dist_npdes = log(dist_to_nearest_npdes_m)
+  )
+```
+
+::: {.callout-note}
+**Step 2 missingness summary.**
+
+| Variable | n missing | % | Note |
+|---|--:|--:|---|
+| `total_cfs_march` | 470 | 63.0 | Gauge coverage gap — not absent streams |
+| `cesspool_density_per_km2` | 165 | 22.1 | Molokaʻi (103) + Lānaʻi (20) + ungauged ahupuaʻa |
+| `dist_to_nearest_cesspool_m` | 123 | 16.5 | Molokaʻi (103) + Lānaʻi (20) |
+| `n_cess_500m / n_cess_1km` | 103 | 13.8 | Molokaʻi only (layer 32 gap) |
+| `chirps_storm_cumulative_mm` | 32 | 4.3 | Ocean-pixel locations (offshore samples) |
+| `mean_ksat_um_s` | 19 | 2.5 | Ahupuaʻa with no SSURGO coverage |
+| `mean_slope_deg / pct_impervious / pct_agriculture / pop_density_km2` | 11 | 1.5 | Open Ocean ahupuaʻa |
+| All other predictors | 0 | 0 | — |
+
+Apostrophe encoding mismatch between `soilmoist`/`livestock` (ASCII `'`, byte 39) and
+`chem_master$island` (Unicode left-quote U+2018, byte 8216) — resolved by the
+`normalize_island()` helper before joining.
+:::
+
+```{r}
+#| label: sample-flow-table
+
+# Helper: n samples, n unique sites, n islands for any filtered tibble
+flow_row <- function(label, df) {
+  tibble(
+    Stage       = label,
+    `n samples` = nrow(df),
+    `n sites`   = df |> distinct(latitude, longitude) |> nrow(),
+    `n islands` = df |> distinct(island) |> nrow()
+  )
+}
+
+full_ids <- chem_master |>
+  filter(
+    !is.na(ahupuaa),
+    !is.na(pct_impervious),
+    !is.na(chirps_storm_cumulative_mm),
+    !is.na(hs_mean_m),
+    !is.na(dist_to_nearest_npdes_m),
+    !is.na(pop_density_km2)
+  ) |>
+  pull(sample_id)
+
+bind_rows(
+  tibble(Stage       = "Raw chemistry dataset",
+         `n samples` = nrow(chem_raw),
+         `n sites`   = chem_raw |> filter(!is.na(latitude)) |>
+                         distinct(latitude, longitude) |> nrow(),
+         `n islands` = chem_raw |> filter(!is.na(island)) |>
+                         distinct(island) |> nrow()),
+  flow_row("Coordinates available",             chem_master),
+  flow_row("NO\u2083+NO\u2082 available",       chem_master |> filter(!is.na(NO3NO2))),
+  flow_row("PO\u2084 available",                chem_master |> filter(!is.na(PO4))),
+  flow_row("NH\u2084 available",                chem_master |> filter(!is.na(NH3))),
+  flow_row("Si available",                      chem_master |> filter(!is.na(SiO2))),
+  flow_row("Ahupua\u02BBa assigned",            chem_master |> filter(!is.na(ahupuaa))),
+  flow_row("USGS stream discharge",             chem_master |> filter(!is.na(total_cfs_march))),
+  flow_row("Land-cover data (C-CAP)",           chem_master |> filter(!is.na(pct_impervious))),
+  flow_row("Cesspool data (sample-level dist)", chem_master |> filter(!is.na(dist_to_nearest_cesspool_m))),
+  flow_row("CHIRPS storm rainfall",             chem_master |> filter(!is.na(chirps_storm_cumulative_mm))),
+  flow_row("Wave height (WW3 PacIOOS)",         chem_master |> filter(!is.na(hs_mean_m))),
+  flow_row("Population density",                chem_master |> filter(!is.na(pop_density_km2))),
+  flow_row("NPDES outfall distance",            chem_master |> filter(!is.na(dist_to_nearest_npdes_m))),
+  flow_row("Full landscape model dataset",      chem_master |> filter(sample_id %in% full_ids))
+) |>
+  kable(caption = paste0("Table S1. Sample availability through data stages (n = ",
+                         nrow(chem_master), " samples with coordinates)."),
+        align = c("l", "r", "r", "r")) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r}
+#| label: missingness-matrix
+
+chem_master |>
+  summarise(across(
+    c(NO3NO2, PO4, NH3, SiO2,
+      total_cfs_march, dist_to_stream_mouth_m, chirps_storm_cumulative_mm,
+      mean_slope_deg, mean_ksat_um_s, mean_gwetroot,
+      fetch_mean_km, hs_mean_m, hs_at_collection_m,
+      cesspool_density_per_km2, dist_to_nearest_cesspool_m,
+      n_cess_500m, n_cess_1km,
+      pct_impervious, pct_agriculture,
+      pop_density_km2, dist_to_nearest_npdes_m, cattle_per_km2),
+    ~ sum(is.na(.x)),
+    .names = "{.col}"
+  )) |>
+  pivot_longer(everything(), names_to = "Variable", values_to = "n_missing") |>
+  mutate(
+    pct_missing = round(100 * n_missing / nrow(chem_master), 1),
+    Group = case_when(
+      Variable %in% c("NO3NO2", "PO4", "NH3", "SiO2")
+        ~ "A — Response",
+      Variable %in% c("total_cfs_march", "dist_to_stream_mouth_m",
+                      "chirps_storm_cumulative_mm", "mean_slope_deg",
+                      "mean_ksat_um_s", "mean_gwetroot",
+                      "fetch_mean_km", "hs_mean_m", "hs_at_collection_m")
+        ~ "B — Hydrologic / physical",
+      Variable %in% c("cesspool_density_per_km2", "dist_to_nearest_cesspool_m",
+                      "n_cess_500m", "n_cess_1km",
+                      "pct_impervious", "pct_agriculture",
+                      "pop_density_km2", "dist_to_nearest_npdes_m", "cattle_per_km2")
+        ~ "C — Anthropogenic"
+    )
+  ) |>
+  arrange(Group, desc(n_missing)) |>
+  select(Group, Variable, n_missing, pct_missing) |>
+  kable(caption = paste0("Table S2. Missingness across all predictor variables (n = ",
+                         nrow(chem_master), " samples with coordinates)."),
+        col.names = c("Group", "Variable", "n missing", "% missing"),
+        align = c("l", "l", "r", "r")) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+## Si connectivity model {#sec-si-model}
+
+> **Step 11.** Model log(Si) as a function of physical/hydrologic predictors.
+> First mechanistic model; establishes terrestrial-water delivery baseline.
+
+*← Analysis code goes here when we work through Step 11 together.*
+
+---
+
+# Human Amplification {#sec-human-amplification}
+
+## NO₃+NO₂ model — the central analysis {#sec-nox-model}
+
+> **Step 12.** log(NO₃+NO₂) ~ log(Si) + cesspool + agriculture + impervious + ...
+> Key question: do anthropogenic variables explain variation *beyond* hydrologic delivery?
+
+*← Analysis code goes here when we work through Step 12 together.*
+
+## PO₄ model {#sec-po4-model}
+
+> **Step 13.** Parallel PO₄ model. Same predictor groups as NO₃+NO₂.
+
+*← Analysis code goes here when we work through Step 13 together.*
+
+## NH₄ model — the contrast {#sec-nh4-model}
+
+> **Step 14.** NH₄ model. Expect weaker explanatory power — treat that as a result.
+
+*← Analysis code goes here when we work through Step 14 together.*
+
+---
+
+# Nutrient-Specific Models — Comparison {#sec-model-comparison}
+
+## Standardized effect sizes (Figure 5) {#sec-effect-sizes}
+
+> **Step 15.** Coefficient plot — one row per predictor, four columns (nutrients).
+> Group rows: hydrologic forcing / watershed transport / anthropogenic / coastal dilution.
+
+*← Analysis code goes here when we work through Step 15 together.*
+
+## Explicit human-amplification test {#sec-amplification-test}
+
+> **Step 17.** Compare Model A (physical only) vs B (+anthropogenic) vs C (+interactions).
+
+*← Analysis code goes here when we work through Step 17 together.*
+
+## Priority interactions {#sec-interactions}
+
+> **Step 21.** StreamDistance × Slope; Rainfall × CesspoolDensity;
+> Rainfall × Agriculture; Rainfall × Ksat.
+
+*← Analysis code goes here when we work through Step 21 together.*
+
+---
+
+# Variance Partitioning {#sec-variance-partitioning}
+
+> **Step 16 (Figure 6).** Unique and shared explanatory power for each driver group
+> across all four nutrients.
+
+*← Analysis code goes here when we work through Step 16 together.*
+
+---
+
+# Out-of-Sample Hotspot Prediction {#sec-hotspot-prediction}
+
+## Spatial cross-validation {#sec-spatial-cv}
+
+> **Step 18.** Blocked spatial CV and leave-one-island-out CV.
+> Report R², RMSE, MAE, calibration slope.
+
+*← Analysis code goes here when we work through Step 18 together.*
+
+## Random forest — applied prediction {#sec-random-forest}
+
+> **Step 19.** Continuous-response RF for all four nutrients.
+> Use for hotspot identification, not inference.
+
+*← Analysis code goes here when we work through Step 19 together.*
+
+## Vulnerability maps {#sec-vulnerability-maps}
+
+> **Step 20.** Cross-validated predicted nutrient concentrations mapped to coastline.
+> Mask extrapolation beyond training predictor space.
+
+*← Analysis code goes here when we work through Step 20 together.*
+
+---
+
+# Sensitivity Analyses {#sec-sensitivity}
+
+> **Step 23.** Repeat key results under 11 analytical alternatives.
+> Produce supplementary stability table.
+
+*← Analysis code goes here when we work through Step 23 together.*
+
+---
+
+# Publication Figures {#sec-pub-figures}
+
+> Final, camera-ready assembly of all six main figures.
+> Saved to `output/main_figures/` as PDF + PNG (600 dpi).
+
+*← Assembled when all upstream analysis sections are complete.*
+
+---
+
+# Supplementary Analyses {#sec-supplementary}
+
+## Nutrient stoichiometry {#sec-stoichiometry}
+
+> **Step 22.** Si:N and N:P ratios as supplementary descriptive context only.
+
+*← Analysis code goes here when we work through Step 22 together.*
+
+## Pseudoreplication diagnostics {#sec-pseudoreplication}
+
+> **Step 24.** Document hierarchical structure; demonstrate random-effects approach
+> compared to naïve sample-level analysis.
+
+*← Analysis code goes here when we work through Step 24 together.*
+
+---
+
+# Model Diagnostics {#sec-diagnostics}
+
+> **Step 27.** Automated diagnostic figures for every final model.
+> Residual vs fitted, QQ, spatial residual map, residual Moran's I,
+> leverage/influence, observed vs predicted, CV performance.
+
+*← Generated automatically once models in §6–8 are finalised.*
+
+---
+
+# Reproducibility Information {#sec-reproducibility}
+
+> **Step 34.** Session info, checklist, and "What the analyses actually support."
+
+```{r}
+#| label: session-info
+#| eval: false   # set to true when producing the final document
+
+sessioninfo::session_info() |>
+  capture.output() |>
+  writeLines(here("output", "session_info.txt"))
+```
+
+```{r}
+#| label: checklist
+#| eval: false   # evaluate interactively as steps are completed
+
+checklist <- tribble(
+  ~item,                                          ~done,
+  "Sample attrition audited",                     TRUE,
+  "Response-specific sample sizes reported",       TRUE,
+  "Repeated sites identified",                     TRUE,
+  "Predictor collinearity evaluated",              FALSE,
+  "Spatial rainfall calculated",                   FALSE,
+  "Long-term Hui comparison completed",            FALSE,
+  "Four nutrient spatial structures evaluated",    FALSE,
+  "Si connectivity model completed",              FALSE,
+  "NO3+NO2 human-amplification model completed",  FALSE,
+  "PO4 model completed",                          FALSE,
+  "NH4 model completed",                          FALSE,
+  "Model residual spatial autocorrelation checked",FALSE,
+  "Hierarchical structure accounted for",          FALSE,
+  "Spatial cross-validation completed",            FALSE,
+  "Leave-one-island-out prediction completed",     FALSE,
+  "Variance partitioning completed",               FALSE,
+  "Key interactions tested",                       FALSE,
+  "Sensitivity analyses completed",                FALSE,
+  "Main figures exported",                         FALSE,
+  "Supplementary figures exported",                FALSE,
+  "Tables exported",                               FALSE,
+  "All model objects saved",                       FALSE,
+  "session_info() saved",                          FALSE,
+  "All claims updated to match actual results",    FALSE
+)
+
+checklist |>
+  mutate(status = if_else(done, "\u2713", "\u25cb")) |>
+  select(status, item) |>
+  kable(col.names = c("", "Checklist item"), align = "cl") |>
+  kable_styling(bootstrap_options = c("condensed"), full_width = FALSE,
+                font_size = 12) |>
+  row_spec(which(checklist$done), color = "gray50")
+```
+
+---
+
+*Document rendered: `r format(Sys.time(), "%Y-%m-%d %H:%M %Z")`*
+*Global seed: `r SEED`*

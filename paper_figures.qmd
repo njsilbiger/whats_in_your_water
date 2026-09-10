@@ -1,0 +1,1588 @@
+---
+title: "What's In Your Water — Paper Figures"
+subtitle: "4 main figures for manuscript submission"
+author: "Silbiger, N., Kealoha, A., & Kahanamoku, S."
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    embed-resources: true
+    theme: flatly
+    code-fold: true
+    fig-width: 10
+    fig-height: 7
+    lang: en
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: packages
+
+library(tidyverse)
+library(scales)
+library(patchwork)
+library(here)
+library(cowplot)
+library(ggrepel)
+
+# Spatial
+library(sf)
+library(gstat)
+library(stars)
+library(terra)
+library(maptiles)
+library(tidyterra)
+library(rnaturalearth)
+library(rnaturalearthdata)
+
+# Clustering & ML
+library(cluster)
+library(ranger)
+
+# Misc
+library(readxl)
+library(lubridate)
+library(dataRetrieval)
+```
+
+```{r}
+#| label: helpers
+
+normalize_name <- function(x) {
+  x |>
+    stringr::str_replace_all("[ʻʼ'']", "") |>
+    stringr::str_replace_all("ā", "a") |>
+    stringr::str_to_lower() |>
+    stringr::str_trim()
+}
+
+# Island colour palette (consistent across all figures)
+island_pal <- c(
+  "O'ahu"    = "#1565C0",
+  "Maui"     = "#2E7D32",
+  "Moloka'i" = "#E65100",
+  "Lāna'i"   = "#6A1B9A"
+)
+
+recode_island <- c(
+  "Oahu"    = "O'ahu",
+  "Maui"    = "Maui",
+  "Molokai" = "Moloka'i",
+  "Lanai"   = "Lāna'i"
+)
+
+# Water-type cluster palette
+cluster_pal <- c(
+  "Marine background"  = "#1565C0",
+  "Nearshore enriched" = "#2E7D32",
+  "Runoff-dominated"   = "#E65100"
+)
+
+# Reef health thresholds (µmol/L)
+reef_thresholds <- c(NO3NO2 = 1, PO4 = 0.1, SiO2 = 5, NH3 = 1)
+
+# Shared time-window constants (used in Fig 1 and across the paper)
+storm_xmin <- as.Date("2026-03-10"); storm_xmax <- as.Date("2026-03-25")
+samp_xmin  <- as.Date("2026-03-28"); samp_xmax  <- as.Date("2026-04-08")
+plot_xlim  <- as.Date(c("2026-01-15", "2026-06-05"))
+
+window_rects <- list(
+  annotate("rect", xmin = storm_xmin, xmax = storm_xmax,
+           ymin = -Inf, ymax = Inf, fill = "#BBDEFB", alpha = 0.75),
+  annotate("rect", xmin = samp_xmin,  xmax = samp_xmax,
+           ymin = -Inf, ymax = Inf, fill = "#C8E6C9", alpha = 0.75)
+)
+
+# Shared time-series theme (stacked panels — no x axis on upper panels)
+ts_theme <- theme_minimal(base_size = 10) +
+  theme(
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.title.x       = element_blank(),
+    axis.text.x        = element_blank(),
+    axis.ticks.x       = element_blank(),
+    legend.position    = "none",
+    plot.margin        = margin(3, 6, 1, 6),
+    axis.title.y       = element_text(size = 8.5)
+  )
+
+# kriging scale metadata
+var_meta <- list(
+  NO3NO2 = list(
+    label     = expression(atop(NO[3]+NO[2], "("*mu*"mol/L)")),
+    limits    = c(0, 10),
+    breaks    = c(0.5, 1, 3, 5, 10),
+    labels    = c("0.5", "1", "3", "5", "≥10"),
+    trans     = "log1p",
+    direction = 1
+  ),
+  PO4 = list(
+    label     = expression(atop(PO[4], "("*mu*"mol/L)")),
+    limits    = c(0, 1),
+    breaks    = c(0.05, 0.1, 0.3, 0.5, 1),
+    labels    = c("0.05", "0.1", "0.3", "0.5", "≥1"),
+    trans     = "log1p",
+    direction = 1
+  ),
+  SiO2 = list(
+    label     = expression(atop(SiO[2], "("*mu*"mol/L)")),
+    limits    = c(0, 50),
+    breaks    = c(1, 5, 10, 20, 50),
+    labels    = c("1", "5", "10", "20", "≥50"),
+    trans     = "log1p",
+    direction = 1
+  ),
+  NH3 = list(
+    label     = expression(atop(NH[3], "("*mu*"mol/L)")),
+    limits    = c(0, 3),
+    breaks    = c(0.1, 0.5, 1, 2, 3),
+    labels    = c("0.1", "0.5", "1", "2", "≥3"),
+    trans     = "log1p",
+    direction = 1
+  ),
+  Salinity = list(
+    label     = expression(atop("Salinity", "(PSU)")),
+    limits    = c(28, 36),
+    breaks    = c(28, 30, 32, 34, 36),
+    labels    = c("≤28", "30", "32", "34", "36"),
+    trans     = "identity",
+    direction = -1
+  )
+)
+```
+
+```{r}
+#| label: load-data
+
+chem <- read_csv("data/clean_chemdata.csv", show_col_types = FALSE) |>
+  filter(!is.na(island)) |>
+  mutate(island = stringr::str_replace_all(island, "[ʻʼ'']", "'")) |>
+  left_join(read_csv("data/ahupuaa_cache.csv",             show_col_types = FALSE), by = "sample_id") |>
+  left_join(read_csv("data/sample_cesspool_distances.csv", show_col_types = FALSE), by = "sample_id") |>
+  left_join(
+    read_csv("data/cesspool_by_ahupuaa.csv", show_col_types = FALSE) |>
+      select(ahupuaa, moku, cesspool_density_per_km2, n_cesspools),
+    by = c("ahupuaa", "moku")
+  ) |>
+  left_join(read_csv("data/cesspool_buffer_counts.csv", show_col_types = FALSE), by = "sample_id") |>
+  left_join(
+    read_csv("data/wave_fetch.csv", show_col_types = FALSE) |>
+      select(sample_id, fetch_mean_km, fetch_min_km),
+    by = "sample_id"
+  ) |>
+  left_join(read_csv("data/sample_waveheight.csv", show_col_types = FALSE), by = "sample_id") |>
+  left_join(
+    read_csv("data/pop_density_ahupuaa.csv", show_col_types = FALSE) |>
+      select(ahupuaa, island, pop_density_km2),
+    by = c("ahupuaa", "island")
+  )
+
+ahupuaa_raw <- st_read("data/ahupuaa_boundaries.geojson", quiet = TRUE)
+```
+
+```{r}
+#| label: kriging-functions
+
+krige_island_map <- function(data, island_name, ahupuaa_sf,
+                              var = "NO3NO2", res_m = 250,
+                              band_km = 3, tile_zoom = 11) {
+  meta    <- var_meta[[var]]
+  use_log <- !is.null(meta) && meta$trans == "log1p"
+  if (is.null(meta)) meta <- list(
+    label = var, limits = NULL, breaks = waiver(), labels = waiver(),
+    trans = "identity", direction = 1
+  )
+
+  island_data <- data |>
+    filter(island == island_name, !is.na(.data[[var]]),
+           !is.na(latitude), !is.na(longitude))
+
+  match_idx  <- normalize_name(ahupuaa_sf$mokupuni) == normalize_name(island_name)
+  land_union <- ahupuaa_sf[match_idx, ] |>
+    st_transform(32604) |> st_make_valid() |> st_union()
+  land_parts <- st_cast(land_union, "POLYGON")
+  land_union <- land_parts[as.numeric(st_area(land_parts)) > 1e6] |> st_union()
+  land_sf    <- st_as_sf(st_sf(geometry = land_union))
+
+  coast_outer <- st_buffer(land_union, dist = band_km * 1000)
+  coast_band  <- st_difference(coast_outer, land_union)
+  coast_bbox  <- st_bbox(coast_outer)
+
+  pts_proj <- island_data |>
+    st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+    st_transform(32604) |>
+    mutate(raw_val = .data[[var]],
+           log_val = if (use_log) log1p(raw_val) else raw_val,
+           X = st_coordinates(geometry)[, 1],
+           Y = st_coordinates(geometry)[, 2]) |>
+    group_by(X, Y) |>
+    summarise(log_val = mean(log_val, na.rm = TRUE),
+              raw_val = mean(raw_val, na.rm = TRUE), .groups = "drop") |>
+    st_as_sf(coords = c("X", "Y"), crs = 32604)
+
+  pts_proj_all <- island_data |>
+    st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+    st_transform(32604) |>
+    mutate(val = .data[[var]],
+           X   = st_coordinates(geometry)[, 1],
+           Y   = st_coordinates(geometry)[, 2]) |>
+    filter(X >= coast_bbox["xmin"], X <= coast_bbox["xmax"],
+           Y >= coast_bbox["ymin"], Y <= coast_bbox["ymax"])
+
+  island_diag <- sqrt(diff(st_bbox(pts_proj)[c("xmin", "xmax")])^2 +
+                      diff(st_bbox(pts_proj)[c("ymin", "ymax")])^2)
+  min_range <- island_diag / 5
+  v_emp     <- variogram(log_val ~ 1, pts_proj)
+  init_ps   <- var(pts_proj$log_val, na.rm = TRUE)
+  v_auto <- tryCatch(
+    fit.variogram(v_emp, vgm(init_ps * 0.8, "Sph", min_range, init_ps * 0.2)),
+    error = function(e) NULL
+  )
+  v_fit <- if (!is.null(v_auto) && v_auto$range[2] >= min_range) v_auto else
+    vgm(init_ps * 0.8, "Sph", min_range, init_ps * 0.2)
+
+  sample_cov <- st_buffer(st_union(pts_proj), dist = min_range)
+  grid_pts <- st_make_grid(coast_band, cellsize = res_m, what = "centers") |>
+    st_as_sf() |> st_filter(coast_band) |> st_filter(sample_cov)
+
+  k_out  <- suppressWarnings(krige(log_val ~ 1, pts_proj, grid_pts, model = v_fit, nmax = 40))
+  pred_df <- st_coordinates(k_out) |>
+    as.data.frame() |>
+    mutate(pred = if (use_log) expm1(k_out$var1.pred) else k_out$var1.pred)
+
+  ggplot() +
+    geom_spatraster_rgb(
+      data = get_tiles(st_transform(coast_outer, 4326),
+                       provider = "Esri.WorldImagery", zoom = tile_zoom)
+    ) +
+    geom_raster(data = pred_df, aes(x = X, y = Y, fill = pred), alpha = 0.8) +
+    geom_sf(data = land_sf, fill = NA, color = "white", linewidth = 0.4) +
+    geom_sf(data = pts_proj_all, aes(fill = val),
+            size = 1.0, shape = 21, color = "white", stroke = 0.3, alpha = 0.5) +
+    scale_fill_viridis_c(
+      name      = meta$label,
+      option    = "plasma", direction = meta$direction,
+      trans     = meta$trans, limits = meta$limits,
+      breaks    = meta$breaks, labels = meta$labels,
+      oob       = scales::squish, na.value = "transparent",
+      guide     = guide_colorbar(barheight = unit(10, "lines"),
+                                 barwidth  = unit(0.6, "lines"),
+                                 ticks.linewidth = 0.5)
+    ) +
+    coord_sf(crs = 32604,
+             xlim = c(coast_bbox["xmin"], coast_bbox["xmax"]),
+             ylim = c(coast_bbox["ymin"], coast_bbox["ymax"]), expand = FALSE) +
+    labs(title = island_name) +
+    theme_minimal(base_size = 11) +
+    theme(axis.title = element_blank(), axis.text = element_text(size = 7),
+          plot.title = element_text(face = "bold", size = 12),
+          legend.position = "right")
+}
+
+# Returns pred_df + land polygon + coast_bbox for external compositing
+krige_surface_data <- function(data, island_name, ahupuaa_sf,
+                               var = "NO3NO2", res_m = 300, band_km = 3) {
+  meta    <- var_meta[[var]]
+  use_log <- !is.null(meta) && meta$trans == "log1p"
+  island_data <- data |>
+    filter(island == island_name, !is.na(.data[[var]]),
+           !is.na(latitude), !is.na(longitude))
+  match_idx  <- normalize_name(ahupuaa_sf$mokupuni) == normalize_name(island_name)
+  land_union <- ahupuaa_sf[match_idx, ] |>
+    st_transform(32604) |> st_make_valid() |> st_union()
+  land_parts <- st_cast(land_union, "POLYGON")
+  land_union <- land_parts[as.numeric(st_area(land_parts)) > 1e6] |> st_union()
+  coast_outer <- st_buffer(land_union, dist = band_km * 1000)
+  coast_band  <- st_difference(coast_outer, land_union)
+  coast_bbox  <- st_bbox(coast_outer)
+  pts_proj <- island_data |>
+    st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+    st_transform(32604) |>
+    mutate(raw_val = .data[[var]],
+           log_val = if (use_log) log1p(raw_val) else raw_val,
+           X = st_coordinates(geometry)[, 1],
+           Y = st_coordinates(geometry)[, 2]) |>
+    group_by(X, Y) |>
+    summarise(log_val = mean(log_val, na.rm = TRUE),
+              raw_val = mean(raw_val, na.rm = TRUE), .groups = "drop") |>
+    st_as_sf(coords = c("X", "Y"), crs = 32604)
+  island_diag <- sqrt(diff(st_bbox(pts_proj)[c("xmin", "xmax")])^2 +
+                      diff(st_bbox(pts_proj)[c("ymin", "ymax")])^2)
+  min_range <- island_diag / 5
+  v_emp <- variogram(log_val ~ 1, pts_proj)
+  v_auto <- tryCatch(
+    fit.variogram(v_emp, vgm(var(pts_proj$log_val) * 0.8, "Sph",
+                              min_range, var(pts_proj$log_val) * 0.2)),
+    error = function(e) NULL
+  )
+  v_fit <- if (!is.null(v_auto) && v_auto$range[2] >= min_range) v_auto else
+    vgm(var(pts_proj$log_val) * 0.8, "Sph", min_range, var(pts_proj$log_val) * 0.2)
+  sample_cov <- st_buffer(st_union(pts_proj), dist = min_range)
+  grid_pts <- st_make_grid(coast_band, cellsize = res_m, what = "centers") |>
+    st_as_sf() |> st_filter(coast_band) |> st_filter(sample_cov)
+  k_out  <- suppressWarnings(krige(log_val ~ 1, pts_proj, grid_pts, model = v_fit, nmax = 40))
+  pred_df <- st_coordinates(k_out) |>
+    as.data.frame() |>
+    mutate(pred = if (use_log) expm1(k_out$var1.pred) else k_out$var1.pred)
+  list(pred_df    = pred_df,
+       land_sf    = st_as_sf(st_sf(geometry = land_union)),
+       coast_bbox = coast_bbox,
+       coast_outer = coast_outer)
+}
+```
+
+---
+
+# Figure 1 — Storm Cascade & Monitoring Context
+
+*Rain → streams → coastal nutrients → bloom; conventional monitoring absent throughout.*
+
+```{r}
+#| label: fig1-data
+
+rain_df <- read_csv("hawaii_ncep_janjun_cache.csv", show_col_types = FALSE) |>
+  filter(island %in% c("Oahu", "Maui", "Molokai"),
+         date >= plot_xlim[1], date <= plot_xlim[2]) |>
+  mutate(island = recode_island[island]) |>
+  group_by(island, date) |>
+  summarise(precip_mm = mean(precip_mmday, na.rm = TRUE), .groups = "drop")
+
+dis_df <- read_csv("data/usgs_discharge_cache.csv", show_col_types = FALSE,
+                   col_types = cols(site_no = col_character())) |>
+  dataRetrieval::renameNWISColumns() |>
+  filter(site_no %in% c("16211600", "16400000", "16508000"),
+         Date >= plot_xlim[1], Date <= plot_xlim[2], Flow > 0.5) |>
+  left_join(
+    tibble(site_no = c("16211600", "16400000", "16508000"),
+           island  = c("O'ahu",    "Moloka'i", "Maui")),
+    by = "site_no"
+  )
+
+chla_df <- readRDS("hawaii_chlorophyll_cache.rds") |>
+  filter(island %in% c("Oahu", "Maui", "Molokai"),
+         date >= plot_xlim[1], date <= plot_xlim[2]) |>
+  mutate(island = recode_island[island]) |>
+  group_by(island, date) |>
+  summarise(mean_chla = mean(chlor_a, na.rm = TRUE),
+            n_valid   = sum(!is.na(chlor_a)), .groups = "drop") |>
+  filter(n_valid >= 8, mean_chla > 0)
+
+nut_long_fig1 <- chem |>
+  filter(island %in% c("O'ahu", "Maui", "Moloka'i")) |>
+  mutate(island = factor(island, levels = c("Maui", "Moloka'i", "O'ahu"))) |>
+  select(island, NO3NO2, NH3, PO4, SiO2) |>
+  pivot_longer(c(NO3NO2, NH3, PO4, SiO2), names_to = "nutrient", values_to = "conc") |>
+  filter(!is.na(conc), conc > 0) |>
+  mutate(nutrient = factor(
+    recode(nutrient, "NO3NO2" = "NO3+NO2", "NH3" = "NH3",
+           "PO4" = "PO4",     "SiO2" = "SiO2"),
+    levels = c("NO3+NO2", "NH3", "PO4", "SiO2")
+  ))
+
+thresh_long_fig1 <- tibble(
+  nutrient  = c("NO3+NO2", "NH3", "PO4", "SiO2"),
+  threshold = c(1, 1, 0.1, 5)
+)
+```
+
+```{r}
+#| label: fig1-panels
+
+# Panel A: Rainfall
+pA_f1 <- ggplot(rain_df, aes(x = date, y = precip_mm, fill = island, color = island)) +
+  window_rects +
+  geom_area(position = "identity", alpha = 0.30, linewidth = 0.35) +
+  annotate("text", x = as.Date("2026-03-17"), y = 108,
+           label = "Kona Low", size = 2.6, color = "#1A237E", hjust = 0.5, vjust = 0) +
+  scale_fill_manual(values  = island_pal) +
+  scale_color_manual(values = island_pal) +
+  scale_x_date(limits = plot_xlim, expand = c(0, 0)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  labs(y = "Rainfall\n(mm/day)", tag = "A") +
+  ts_theme
+
+# Panel B: Stream discharge (log scale)
+pB_f1 <- ggplot(dis_df, aes(x = Date, y = Flow, color = island, group = site_no)) +
+  window_rects +
+  geom_line(linewidth = 0.65, alpha = 0.9, na.rm = TRUE) +
+  scale_color_manual(values = island_pal) +
+  scale_x_date(limits = plot_xlim, date_labels = "%b %Y", expand = c(0, 0)) +
+  scale_y_log10(breaks = c(1, 10, 100, 1000),
+                labels = scales::label_number(big.mark = ",")) +
+  coord_cartesian(ylim = c(0.8, 3000)) +
+  labs(y = "Discharge\n(cfs, log)", tag = "B") +
+  ts_theme
+
+# Panel C: Coastal chlorophyll-a (VIIRS 4 km)
+pC_f1 <- ggplot(chla_df, aes(x = date, y = mean_chla, color = island)) +
+  window_rects +
+  geom_point(size = 0.7, alpha = 0.50, na.rm = TRUE) +
+  geom_smooth(method = "loess", span = 0.2, se = FALSE, linewidth = 0.9, na.rm = TRUE) +
+  scale_color_manual(values = island_pal, name = NULL) +
+  scale_x_date(limits = plot_xlim, date_labels = "%b %Y", expand = c(0, 0)) +
+  scale_y_log10(breaks = c(0.1, 0.3, 1, 3, 10),
+                labels = scales::label_number(accuracy = 0.1)) +
+  labs(y = expression("Chl-"*italic(a)*"\n(mg m"^{-3}*", log)"), tag = "C") +
+  ts_theme +
+  theme(axis.text.x  = element_text(size = 8),
+        axis.ticks.x = element_line(linewidth = 0.3),
+        legend.position = "right",
+        legend.text     = element_text(size = 8.5),
+        plot.margin     = margin(1, 6, 2, 6))
+
+# Panel D: Post-storm nutrient distributions by island (violin + box + threshold)
+pD_f1 <- ggplot(nut_long_fig1, aes(x = island, y = conc, fill = island, color = island)) +
+  geom_hline(data = thresh_long_fig1, aes(yintercept = threshold),
+             linetype = "dashed", color = "#B71C1C", linewidth = 0.5,
+             inherit.aes = FALSE) +
+  geom_violin(alpha = 0.28, linewidth = 0.3, trim = TRUE) +
+  geom_boxplot(width = 0.17, outliers = FALSE,
+               fill = "white", linewidth = 0.45, alpha = 0.9) +
+  scale_fill_manual(values  = island_pal) +
+  scale_color_manual(values = island_pal) +
+  scale_y_log10(breaks = c(0.01, 0.1, 1, 10, 100),
+                labels = scales::label_number(drop0trailing = TRUE)) +
+  facet_wrap(~nutrient, ncol = 1, scales = "free_y") +
+  labs(y = expression(mu*"mol L"^{-1}), x = NULL, tag = "D") +
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.text.x  = element_text(angle = 30, hjust = 1, vjust = 1, size = rel(0.85)),
+    strip.text   = element_text(size = 8.5, face = "bold"),
+    legend.position = "none",
+    plot.margin  = margin(4, 8, 4, 2),
+    axis.title.y = element_text(size = 8.5),
+    plot.tag     = element_text(face = "bold")
+  )
+```
+
+```{r}
+#| label: fig1-assemble
+#| fig-height: 9
+#| fig-width: 12
+#| fig-cap: "**Figure 1.** Storm cascade and citizen-science response. **(A)** Island-mean daily rainfall (NCEP GDAS, mm/day). **(B)** Stream discharge at three USGS gauges (log scale; Makaha Stream, Oʻahu; Halawa Stream, Molokaʻi; Hanawi Stream, Maui). **(C)** VIIRS NOAA-20 4 km island-mean coastal chlorophyll-a (log scale; loess smoother). **(D)** Post-storm nutrient concentrations by island from citizen-science sampling (Mar 28–Apr 8; log scale). Dashed red lines = reef health thresholds. Blue shading = Kona Low storm window (Mar 10–25); green shading = citizen-science sampling window. Conventional monitoring records in WQP = 0 during this period (last record: Dec 18, 2025)."
+
+fig1 <- ((pA_f1 / pB_f1 / pC_f1) | pD_f1) +
+  plot_layout(widths = c(3, 1.4)) +
+  plot_annotation(
+    theme = theme(plot.margin = margin(6, 6, 4, 6))
+  )
+
+fig1
+ggsave(here("output", "fig1_storm_cascade.pdf"), fig1,
+       width = 12, height = 9, device = cairo_pdf)
+ggsave(here("output", "fig1_storm_cascade.png"), fig1,
+       width = 12, height = 9, dpi = 300)
+```
+
+---
+
+# Figure 2 — Spatial Fingerprints of Nutrient Enrichment
+
+*Island-scale hotspot pattern; historically unprecedented; independently validated.*
+
+```{r}
+#| label: fig2-kriging
+#| fig-height: 6
+#| fig-width: 15
+#| fig-cap: "**Figure 2A.** Ordinary kriged NO₃+NO₂ surfaces for Oʻahu, Maui, and Molokaʻi (250 m grid, 3 km coastal band, log₁p colour scale). Circles = citizen-science sample locations on same scale. Colour scale is uniform across islands. Lānaʻi shown in Extended Data Fig. 1."
+
+oahu_nn  <- krige_island_map(chem, "O'ahu",    ahupuaa_raw, var = "NO3NO2") +
+  theme(legend.position = "none")
+maui_nn  <- krige_island_map(chem, "Maui",     ahupuaa_raw, var = "NO3NO2") +
+  theme(legend.position = "none")
+molo_nn  <- krige_island_map(chem, "Moloka'i", ahupuaa_raw, var = "NO3NO2", tile_zoom = 12)
+
+# All three panels share identical colour scales — one legend on the right is sufficient
+fig2a <- oahu_nn | maui_nn | molo_nn
+
+fig2a
+ggsave(here("output", "fig2a_kriging_NO3NO2.pdf"), fig2a,
+       width = 15, height = 6, device = cairo_pdf)
+ggsave(here("output", "fig2a_kriging_NO3NO2.png"), fig2a,
+       width = 15, height = 6, dpi = 300)
+```
+
+```{r}
+#| label: fig2-hui-data
+
+bg_hui_loc <- bind_rows(
+  read_excel("data/background_nutrients/hui-south-maui-thru-2026-1st-quarter.0.xlsx",
+             sheet = "data") |>
+    mutate(Turbidity = as.numeric(Turbidity), region = "South Maui"),
+  read_excel("data/background_nutrients/hui-west-maui-thru-2026-1st-quarter.0.xlsx",
+             sheet = "data") |>
+    mutate(Turbidity = as.numeric(Turbidity), region = "West Maui")
+) |>
+  mutate(
+    Date           = as.Date(Date),
+    NNN_umol       = as.numeric(NNN)       / 14.007,
+    Phosphate_umol = as.numeric(Phosphate) / 30.974,
+    Silicate_umol  = as.numeric(Silicate)  / 28.086,
+    NH4_umol       = as.numeric(NH4)        / 14.007
+  )
+```
+
+```{r}
+#| label: fig2-hui-validation
+#| fig-height: 7
+#| fig-width: 8
+#| fig-cap: "**Figure 2B.** Maui NO₃+NO₂ kriging surface with independent Hui o Ka Wai Ola monitoring stations overlaid. Triangle size proportional to fold-change above station-specific 10-year historical median. Labels = stations with fold-change > 15×. Agreement between two fully independent datasets confirms the hotspot pattern is real."
+
+# Build Hui station sf with fold-change encoding
+hui_col <- "NNN_umol"
+hui_post <- bg_hui_loc |>
+  filter(year(Date) == 2026, month(Date) == 3,
+         Date >= as.Date("2026-03-14"), !is.na(.data[[hui_col]])) |>
+  group_by(Station, SiteName, region, Lat, Long) |>
+  summarise(val_umol = mean(.data[[hui_col]], na.rm = TRUE), .groups = "drop")
+
+hui_hist_med <- bg_hui_loc |>
+  filter(!is.na(.data[[hui_col]])) |>
+  group_by(Station) |>
+  summarise(med_hist = median(.data[[hui_col]], na.rm = TRUE), .groups = "drop")
+
+log_lo   <- log1p(1); log_hi <- log1p(20)
+grey_pal <- colorRampPalette(c("gray20", "white"))(1000)
+
+hui_sf <- bg_hui_loc |>
+  distinct(Station, SiteName, region, Lat, Long) |>
+  filter(!is.na(Lat), !is.na(Long)) |>
+  left_join(hui_post    |> select(Station, val_umol), by = "Station") |>
+  left_join(hui_hist_med,                              by = "Station") |>
+  mutate(
+    fold_change = val_umol / med_hist,
+    fc_safe     = pmin(pmax(replace_na(fold_change, 1), 1), 20),
+    tri_fill    = grey_pal[round((log1p(fc_safe) - log_lo) /
+                                    (log_hi - log_lo) * 999) + 1],
+    tri_fill    = case_when(
+      is.na(fold_change) & !is.na(med_hist) ~ "gray50",
+      is.na(med_hist)                        ~ "gray70",
+      TRUE                                   ~ tri_fill
+    ),
+    fold_change = replace_na(fold_change, 1)
+  ) |>
+  st_as_sf(coords = c("Long", "Lat"), crs = 4326) |>
+  st_transform(32604)
+
+# Build kriging surface for Maui
+kd_maui <- krige_surface_data(chem, "Maui", ahupuaa_raw, var = "NO3NO2")
+cs_maui  <- chem |>
+  filter(island == "Maui", !is.na(NO3NO2), !is.na(latitude), !is.na(longitude)) |>
+  mutate(val = NO3NO2) |>
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+  st_transform(32604)
+sat_maui <- get_tiles(
+  st_as_sfc(kd_maui$coast_bbox) |> st_set_crs(32604) |> st_transform(4326),
+  provider = "Esri.WorldImagery", zoom = 11
+)
+
+meta_nn <- var_meta[["NO3NO2"]]
+
+fig2b <- ggplot() +
+  geom_spatraster_rgb(data = sat_maui) +
+  geom_raster(data = kd_maui$pred_df, aes(x = X, y = Y, fill = pred), alpha = 0.8) +
+  geom_sf(data = kd_maui$land_sf, fill = NA, color = "white", linewidth = 0.35) +
+  geom_sf(data = cs_maui, aes(fill = val),
+          shape = 21, size = 1.0, color = "white", stroke = 0.3, alpha = 0.5) +
+  scale_fill_viridis_c(
+    name = meta_nn$label, option = "plasma", direction = meta_nn$direction,
+    trans = meta_nn$trans, limits = meta_nn$limits,
+    breaks = meta_nn$breaks, labels = meta_nn$labels,
+    oob = scales::squish, na.value = "transparent",
+    guide = guide_colorbar(barheight = unit(10, "lines"), barwidth = unit(0.6, "lines"),
+                           ticks.linewidth = 0.5)
+  ) +
+  geom_sf(data = hui_sf,
+          aes(size = fold_change, fill = I(tri_fill)),
+          color = "white", shape = 24, stroke = 0.8, alpha = 0.85) +
+  geom_label_repel(
+    data = hui_sf |> filter(fold_change > 15),
+    aes(label    = paste0(SiteName, "\n", round(fold_change, 0), "×"),
+        geometry = geometry),
+    stat = "sf_coordinates", size = 2.5, fontface = "bold", color = "#B71C1C",
+    fill = alpha("white", 0.85), label.size = 0.2,
+    nudge_y = 4500, min.segment.length = 0
+  ) +
+  scale_size_continuous(
+    name   = "Fold-change\n(Mar 2026 /\nhistorical median)",
+    range  = c(1.0, 8), limits = c(1, 20),
+    breaks = c(1, 3, 5, 10, 20), labels = c("1", "3", "5", "10", "≥20"),
+    guide  = guide_legend(
+      theme = theme(legend.key = element_rect(fill = "gray30", color = NA)),
+      override.aes = list(shape = 24, color = "white", stroke = 0.8, alpha = 0.85,
+                          fill = c("#333333", "#6F6F6F", "#929292", "#C6C6C6", "#FFFFFF"))
+    )
+  ) +
+  coord_sf(crs = 32604,
+           xlim = c(kd_maui$coast_bbox["xmin"], kd_maui$coast_bbox["xmax"]),
+           ylim = c(kd_maui$coast_bbox["ymin"], kd_maui$coast_bbox["ymax"]),
+           expand = FALSE) +
+  labs(caption = "△ Hui o Ka Wai Ola long-term monitoring stations (Falinski et al.)") +
+  theme_minimal(base_size = 11) +
+  theme(axis.title = element_blank(), axis.text = element_text(size = 7),
+        plot.caption = element_text(size = 8, color = "gray50", hjust = 0),
+        legend.position = "right")
+
+fig2b
+ggsave(here("output", "fig2b_maui_hui_validation.pdf"), fig2b,
+       width = 8, height = 7, device = cairo_pdf)
+ggsave(here("output", "fig2b_maui_hui_validation.png"), fig2b,
+       width = 8, height = 7, dpi = 300)
+```
+
+```{r}
+#| label: fig2-salinity-mixing
+#| fig-height: 5.5
+#| fig-width: 9
+#| fig-cap: "**Figure 2C.** Salinity–nutrient mixing relationships. Orange = storm-influenced (Sal ≤ 34 PSU) with OLS trend ± 95% CI. Blue horizontal line = median marine background (Sal > 34 PSU). Dotted vertical line marks Sal = 34 PSU. Zeros excluded as below-detection."
+
+sal_zone_pal <- c(
+  "Storm-influenced\n(≤ 34 PSU)" = "#E65100",
+  "Marine background\n(> 34 PSU)" = "#1565C0"
+)
+
+mixing_long <- chem |>
+  filter(!is.na(Salinity)) |>
+  select(island, Salinity, NO3NO2, PO4, SiO2, NH3) |>
+  pivot_longer(c(NO3NO2, PO4, SiO2, NH3), names_to = "nutrient", values_to = "conc") |>
+  filter(!is.na(conc), conc > 0) |>
+  mutate(
+    nutrient = factor(nutrient,
+      levels = c("NO3NO2", "PO4", "SiO2", "NH3"),
+      labels = c("NO3+NO2 (umol/L)", "PO4 (umol/L)",
+                 "SiO2 (umol/L)",    "NH3 (umol/L)")),
+    sal_zone = factor(
+      if_else(Salinity > 34,
+              "Marine background\n(> 34 PSU)",
+              "Storm-influenced\n(≤ 34 PSU)"),
+      levels = c("Storm-influenced\n(≤ 34 PSU)", "Marine background\n(> 34 PSU)"))
+  )
+
+marine_medians <- mixing_long |>
+  filter(sal_zone == "Marine background\n(> 34 PSU)") |>
+  group_by(nutrient) |>
+  summarise(med = median(conc, na.rm = TRUE), .groups = "drop")
+
+fig2c <- ggplot(mixing_long, aes(x = Salinity, y = conc, color = sal_zone)) +
+  geom_vline(xintercept = 34, linetype = "dotted", color = "gray40", linewidth = 0.6) +
+  geom_point(size = 1.2, alpha = 0.40) +
+  geom_smooth(data = \(d) filter(d, sal_zone == "Storm-influenced\n(≤ 34 PSU)"),
+              method = "lm", se = TRUE, linewidth = 0.85, alpha = 0.15,
+              color = "#E65100") +
+  geom_hline(data = marine_medians, aes(yintercept = med),
+             color = "#1565C0", linetype = "solid", linewidth = 0.8,
+             inherit.aes = FALSE) +
+  scale_color_manual(values = sal_zone_pal, name = NULL) +
+  scale_y_log10(labels = label_number(drop0trailing = TRUE)) +
+  scale_x_continuous(limits = c(NA, 36.5)) +
+  facet_wrap(~nutrient, scales = "free_y", ncol = 2) +
+  labs(x = "Salinity (PSU)", y = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position  = "bottom",
+        panel.grid.minor = element_blank(),
+        strip.text       = element_text(face = "bold"))
+
+fig2c
+ggsave(here("output", "fig2c_salinity_mixing.pdf"), fig2c,
+       width = 9, height = 5.5, device = cairo_pdf)
+ggsave(here("output", "fig2c_salinity_mixing.png"), fig2c,
+       width = 9, height = 5.5, dpi = 300)
+```
+
+---
+
+# Figure 3 — Causes: Landscape Predictability
+
+*Pre-existing landscape infrastructure predicts post-storm water type.*
+
+```{r}
+#| label: fig3-pam-clustering
+
+# PAM clustering on log-nutrients + salinity (k = 3)
+chem_clust <- chem |>
+  filter(!is.na(island), !is.na(Salinity), !is.na(NO3NO2), !is.na(PO4), !is.na(SiO2)) |>
+  mutate(log_NO3NO2 = log1p(NO3NO2), log_PO4 = log1p(PO4), log_SiO2 = log1p(SiO2))
+
+clust_mat <- chem_clust |>
+  select(Salinity, log_NO3NO2, log_PO4, log_SiO2) |>
+  scale()
+
+set.seed(8341)
+pam3 <- pam(clust_mat, k = 3, pamonce = 5)
+
+# Reorder clusters 1 = lowest NO3NO2 (marine bg), 3 = highest (runoff-dominated)
+chem_clust <- chem_clust |>
+  mutate(temp_cluster = pam3$clustering)
+cluster_medians <- chem_clust |>
+  group_by(temp_cluster) |>
+  summarise(med_NO3 = median(NO3NO2, na.rm = TRUE), .groups = "drop") |>
+  arrange(med_NO3) |>
+  mutate(new_cluster = row_number())
+cluster_remap <- setNames(cluster_medians$new_cluster, cluster_medians$temp_cluster)
+
+chem_clust <- chem_clust |>
+  mutate(cluster = as.numeric(cluster_remap[temp_cluster])) |>
+  select(-temp_cluster)
+
+cluster_labels <- c("1" = "Marine background",
+                    "2" = "Nearshore enriched",
+                    "3" = "Runoff-dominated")
+
+chem_clust <- chem_clust |>
+  mutate(
+    cluster       = factor(cluster),
+    cluster_label = factor(cluster_labels[cluster],
+                           levels = c("Marine background",
+                                      "Nearshore enriched",
+                                      "Runoff-dominated"))
+  )
+
+pam3$clustering <- as.numeric(cluster_remap[pam3$clustering])
+```
+
+```{r}
+#| label: fig3-pam-heatmap
+#| fig-height: 3.5
+#| fig-width: 5.5
+
+fp_vars   <- c("Salinity", "NO3NO2", "PO4", "SiO2")
+fp_labels <- c("Salinity\n(PSU)", "NO₃+NO₂\n(µmol/L)", "PO₄\n(µmol/L)", "SiO₂\n(µmol/L)")
+
+hm_df <- chem_clust |>
+  group_by(cluster_label) |>
+  summarise(across(all_of(fp_vars), ~median(., na.rm = TRUE)), .groups = "drop") |>
+  pivot_longer(-cluster_label, names_to = "variable", values_to = "median_val") |>
+  group_by(variable) |>
+  mutate(z = (median_val - mean(median_val)) / sd(median_val)) |>
+  ungroup() |>
+  mutate(
+    variable      = factor(variable, levels = fp_vars, labels = fp_labels),
+    cluster_label = factor(cluster_label,
+                           levels = c("Runoff-dominated", "Nearshore enriched", "Marine background")),
+    val_label = case_when(
+      variable == "Salinity\n(PSU)"    ~ as.character(round(median_val, 1)),
+      variable == "NO₃+NO₂\n(µmol/L)" ~ as.character(round(median_val, 2)),
+      variable == "PO₄\n(µmol/L)"     ~ as.character(round(median_val, 3)),
+      TRUE                             ~ as.character(round(median_val, 1))
+    )
+  )
+
+pA_f3 <- ggplot(hm_df, aes(x = variable, y = cluster_label, fill = z)) +
+  geom_tile(color = "white", linewidth = 0.8) +
+  geom_text(aes(label = val_label), size = 3, fontface = "bold",
+            color = ifelse(abs(hm_df$z) > 1.2, "white", "gray20")) +
+  scale_fill_gradient2(low = "#1565C0", mid = "white", high = "#B71C1C",
+                       midpoint = 0, name = "Z-score") +
+  scale_x_discrete(position = "top") +
+  scale_y_discrete(labels = \(x) str_wrap(x, 14)) +
+  labs(x = NULL, y = NULL, tag = "A") +
+  theme_minimal(base_size = 10.5) +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(size = 8.5, face = "bold"),
+        axis.text.y = element_text(size = 9),
+        plot.tag = element_text(face = "bold"))
+
+pA_f3
+```
+
+```{r}
+#| label: fig3-cluster-maps
+#| fig-height: 3
+#| fig-width: 12
+
+clust_sf <- chem_clust |>
+  filter(!is.na(latitude), !is.na(longitude)) |>
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+  st_transform(32604)
+
+map_cluster_fn <- function(island_name, dot_size = 2.2) {
+  match_idx  <- normalize_name(ahupuaa_raw$mokupuni) == normalize_name(island_name)
+  land_union <- ahupuaa_raw[match_idx, ] |>
+    st_transform(32604) |> st_make_valid() |> st_union()
+  land_parts <- st_cast(land_union, "POLYGON")
+  land_union <- land_parts[as.numeric(st_area(land_parts)) > 1e6] |> st_union()
+  coast_bbox <- st_bbox(st_buffer(land_union, 3500))
+  pts <- clust_sf |> filter(island == island_name)
+  ggplot() +
+    geom_sf(data = st_as_sf(st_sf(geometry = land_union)),
+            fill = "gray78", color = "gray55", linewidth = 0.3) +
+    geom_sf(data = pts, aes(color = cluster_label),
+            size = dot_size, alpha = 0.85, shape = 16) +
+    scale_color_manual(values = cluster_pal, name = NULL, drop = FALSE) +
+    coord_sf(crs = 32604,
+             xlim = c(coast_bbox["xmin"], coast_bbox["xmax"]),
+             ylim = c(coast_bbox["ymin"], coast_bbox["ymax"]), expand = FALSE) +
+    labs(title = island_name) +
+    theme_void(base_size = 9) +
+    theme(plot.title = element_text(face = "bold", size = 9, hjust = 0.5),
+          legend.position = "none", plot.margin = margin(2, 2, 2, 2))
+}
+
+map_oahu  <- map_cluster_fn("O'ahu",    dot_size = 1.5)
+map_maui  <- map_cluster_fn("Maui")
+map_molo  <- map_cluster_fn("Moloka'i", dot_size = 2.5)
+map_lanai <- map_cluster_fn("Lāna'i",   dot_size = 3.0)
+
+legend_strip <- get_legend(
+  ggplot(chem_clust, aes(x = NO3NO2, y = PO4, color = cluster_label)) +
+    geom_point() +
+    scale_color_manual(values = cluster_pal, name = "Water type (PAM k = 3)") +
+    theme_minimal() +
+    theme(legend.position = "bottom", legend.text = element_text(size = 9),
+          legend.key.size = unit(0.9, "lines"))
+)
+
+pB_f3 <- plot_grid(
+  plot_grid(map_oahu, map_maui, map_molo, map_lanai,
+            nrow = 1, rel_widths = c(1.6, 1.4, 0.9, 0.7)),
+  legend_strip,
+  ncol = 1, rel_heights = c(1, 0.2)
+)
+
+pB_f3
+```
+
+```{r}
+#| label: fig3-rf-data
+
+# Load cached predictor files (all pre-computed)
+stream_mouths_sf <- read_csv(here("data", "osm_stream_mouths.csv"), show_col_types = FALSE) |>
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+  st_transform(32604)
+
+ccap_summary <- read_csv(here("data", "ccap_ahupuaa_summary.csv"), show_col_types = FALSE)
+
+slope_df <- read_csv(here("data", "ahupuaa_slope.csv"), show_col_types = FALSE)
+ksat_df  <- read_csv(here("data", "ahupuaa_ksat.csv"),  show_col_types = FALSE)
+
+outfalls_hi <- read_csv(here("data", "epa_facilities_hi.csv"), show_col_types = FALSE)
+outfalls_sf <- outfalls_hi |>
+  distinct(facility_name, lat, lon) |>
+  st_as_sf(coords = c("lon", "lat"), crs = 4326) |>
+  st_transform(32604)
+
+discharge_per_ahu <- read_csv(here("data", "usgs_discharge_march2026.csv"),
+                              show_col_types = FALSE,
+                              col_types = cols(site_no = col_character()))
+gauge_sf <- read_csv(here("data", "usgs_gauges_march2026.csv"),
+                     show_col_types = FALSE,
+                     col_types = cols(site_no = col_character())) |>
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+  st_transform(32604)
+
+sm_df <- read_csv(here("data", "nasa_power_soilmoist.csv"), show_col_types = FALSE) |>
+  mutate(island = stringr::str_replace_all(island, "[ʻʼ'']", "'"))
+
+livestock_by_island <- read_csv(here("data", "usda_nass_livestock_hi.csv"),
+                                show_col_types = FALSE) |>
+  mutate(island = stringr::str_replace_all(island, "[ʻʼ'']", "'"))
+
+island_norm <- c("oahu" = "O'ahu", "maui" = "Maui",
+                 "molokai" = "Moloka'i", "lanai" = "Lāna'i")
+add_island_col <- function(df) {
+  df |> mutate(island = island_norm[normalize_name(mokupuni)])
+}
+
+slope_j <- slope_df |> add_island_col() |> filter(!is.na(island)) |>
+  group_by(ahupuaa, island) |>
+  summarise(mean_slope_deg = mean(mean_slope_deg, na.rm = TRUE), .groups = "drop")
+ksat_j <- ksat_df  |> add_island_col() |> filter(!is.na(island)) |>
+  group_by(ahupuaa, island) |>
+  summarise(mean_ksat_um_s = mean(mean_ksat_um_s, na.rm = TRUE), .groups = "drop")
+
+# Compute stream mouth distances for all chem sites with coordinates
+chem_sf_rf <- chem |>
+  filter(!is.na(latitude), !is.na(longitude)) |>
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+  st_transform(32604)
+
+nearest_sm  <- st_nearest_feature(chem_sf_rf, stream_mouths_sf)
+chem_w_stream <- chem |>
+  filter(!is.na(latitude), !is.na(longitude)) |>
+  mutate(dist_to_stream_mouth_m = as.numeric(
+    st_distance(chem_sf_rf, stream_mouths_sf[nearest_sm, ], by_element = TRUE)
+  ))
+
+# Assign nearest gauge discharge (within 15 km)
+chem_sf_d <- chem_w_stream |>
+  filter(!is.na(Salinity), !is.na(NO3NO2), !is.na(PO4), !is.na(SiO2)) |>
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+  st_transform(32604)
+nearest_g  <- st_nearest_feature(chem_sf_d, gauge_sf)
+nearest_gd <- as.numeric(st_distance(chem_sf_d, gauge_sf[nearest_g, ], by_element = TRUE))
+
+chem_w_dis <- chem_w_stream |>
+  filter(!is.na(Salinity), !is.na(NO3NO2), !is.na(PO4), !is.na(SiO2)) |>
+  mutate(
+    mean_cfs_march    = if_else(nearest_gd > 15000, NA_real_, gauge_sf$mean_cfs_march[nearest_g]),
+    log_discharge_cfs = log1p(mean_cfs_march)
+  )
+
+# Compute distance to nearest NPDES outfall
+chem_sf_o  <- chem_w_dis |>
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+  st_transform(32604)
+outfall_nn  <- st_nearest_feature(chem_sf_o, outfalls_sf)
+outfall_d   <- as.numeric(st_distance(chem_sf_o, outfalls_sf[outfall_nn, ], by_element = TRUE))
+
+chem_enhanced <- chem_w_dis |>
+  mutate(log_dist_outfall = log1p(outfall_d))
+```
+
+```{r}
+#| label: fig3-rf-fit
+
+# Build RF dataset (placeholder predictor set — to be finalised)
+rf_base <- chem_enhanced |>
+  mutate(log_NO3NO2 = log1p(NO3NO2), log_PO4 = log1p(PO4), log_SiO2 = log1p(SiO2))
+
+# Cluster assignments on RF-eligible rows (k = 3, consistent with Fig 3A)
+set.seed(8341)
+pam_rf <- pam(
+  rf_base |> select(Salinity, log_NO3NO2, log_PO4, log_SiO2) |> scale(),
+  k = 3, pamonce = 5
+)
+# Reorder by NO3NO2 median (marine bg → nearshore → runoff)
+rf_med <- tibble(temp = pam_rf$clustering, NO3NO2 = rf_base$NO3NO2) |>
+  group_by(temp) |>
+  summarise(med = median(NO3NO2, na.rm = TRUE), .groups = "drop") |>
+  arrange(med) |>
+  mutate(new = row_number())
+rf_remap <- setNames(rf_med$new, rf_med$temp)
+
+rf_base <- rf_base |>
+  mutate(
+    cluster       = factor(rf_remap[pam_rf$clustering]),
+    cluster_label = factor(cluster_labels[cluster],
+                           levels = c("Marine background", "Nearshore enriched", "Runoff-dominated"))
+  )
+
+rf_joined <- rf_base |>
+  left_join(
+    ccap_summary |>
+      group_by(ahupuaa, island) |>
+      summarise(pct_impervious  = mean(pct_impervious,  na.rm = TRUE),
+                pct_agriculture = mean(pct_agriculture, na.rm = TRUE),
+                .groups = "drop"),
+    by = c("ahupuaa", "island")
+  ) |>
+  left_join(slope_j,           by = c("ahupuaa", "island"), relationship = "many-to-one") |>
+  left_join(ksat_j,            by = c("ahupuaa", "island"), relationship = "many-to-one") |>
+  left_join(sm_df     |> select(island, mean_gwetroot), by = "island") |>
+  left_join(livestock_by_island |> select(island, cattle_per_km2), by = "island") |>
+  mutate(across(
+    c(mean_slope_deg, mean_ksat_um_s, log_dist_outfall,
+      cattle_per_km2, n_cess_1km, fetch_mean_km,
+      hs_mean_m, hs_at_collection_m, pop_density_km2),
+    \(x) if_else(is.na(x), median(x, na.rm = TRUE), x)
+  ))
+
+rf_df <- rf_joined |>
+  filter(!is.na(cesspool_density_per_km2),
+         !is.na(dist_to_nearest_cesspool_m),
+         !is.na(dist_to_stream_mouth_m),
+         !is.na(pct_impervious),
+         !is.na(log_discharge_cfs),
+         !is.na(cluster_label)) |>
+  transmute(
+    cluster_label,
+    log_n_cess_1km        = log1p(n_cess_1km),
+    log_dist_cesspool     = log1p(dist_to_nearest_cesspool_m),
+    log_fetch_mean        = log1p(fetch_mean_km),
+    hs_mean_m,
+    hs_at_collection_m,
+    log_pop_density       = log1p(pop_density_km2),
+    log_dist_stream_mouth = log1p(dist_to_stream_mouth_m),
+    log_discharge_cfs,
+    pct_impervious,
+    sqrt_ag               = sqrt(pct_agriculture),
+    mean_slope_deg,
+    log_ksat              = log1p(mean_ksat_um_s),
+    log_dist_outfall,
+    log_cattle_km2        = log1p(cattle_per_km2)
+  ) |>
+  mutate(
+    cess_x_ksat  = log_n_cess_1km * log_ksat,
+    imp_x_ag     = pct_impervious * sqrt_ag,
+    dist_x_slope = log_dist_stream_mouth * mean_slope_deg,
+    disc_x_ag    = log_discharge_cfs * sqrt_ag,
+    disc_x_cess  = log_discharge_cfs * log_n_cess_1km,
+    imp_x_slope  = pct_impervious * mean_slope_deg,
+    cluster_label = factor(cluster_label,
+                           levels = c("Marine background", "Nearshore enriched", "Runoff-dominated"))
+  )
+
+set.seed(5572)
+rf_fit <- ranger(
+  cluster_label ~ .,
+  data       = rf_df,
+  num.trees  = 1000,
+  mtry       = 4,
+  importance = "permutation",
+  seed       = 5572
+)
+
+oob_acc  <- round((1 - rf_fit$prediction.error) * 100, 1)
+null_acc <- round(max(table(rf_df$cluster_label)) / nrow(rf_df) * 100, 1)
+```
+
+```{r}
+#| label: fig3-rf-importance
+#| fig-height: 6
+#| fig-width: 7
+
+label_map <- c(
+  "log_n_cess_1km"        = "Cesspool density (1 km radius)",
+  "log_dist_cesspool"     = "Distance to nearest cesspool",
+  "log_dist_stream_mouth" = "Stream mouth proximity",
+  "log_fetch_mean"        = "Coastal wave exposure (fetch)",
+  "hs_mean_m"             = "Significant wave height (storm mean)",
+  "hs_at_collection_m"    = "Significant wave height (at sampling)",
+  "log_pop_density"       = "Population density",
+  "log_discharge_cfs"     = "Storm discharge (March USGS)",
+  "pct_impervious"        = "Impervious surface cover",
+  "sqrt_ag"               = "Agricultural land cover",
+  "mean_slope_deg"        = "Watershed slope",
+  "log_ksat"              = "Soil permeability (Ksat)",
+  "log_dist_outfall"      = "Distance to wastewater outfall",
+  "log_cattle_km2"        = "Livestock density",
+  "cess_x_ksat"           = "Cesspool density \u00d7 soil permeability",
+  "imp_x_ag"              = "Impervious \u00d7 agricultural cover",
+  "dist_x_slope"          = "Stream proximity \u00d7 watershed slope",
+  "disc_x_ag"             = "Storm discharge \u00d7 agricultural cover",
+  "disc_x_cess"           = "Storm discharge \u00d7 cesspool density",
+  "imp_x_slope"           = "Impervious cover \u00d7 watershed slope"
+)
+
+anthropogenic_labels <- c(
+  "Cesspool density (1 km radius)", "Distance to nearest cesspool",
+  "Impervious surface cover", "Agricultural land cover",
+  "Distance to wastewater outfall", "Livestock density", "Population density",
+  "Cesspool density \u00d7 soil permeability",
+  "Impervious \u00d7 agricultural cover",
+  "Storm discharge \u00d7 agricultural cover",
+  "Storm discharge \u00d7 cesspool density",
+  "Impervious cover \u00d7 watershed slope"
+)
+
+imp_df <- enframe(rf_fit$variable.importance, name = "predictor", value = "importance") |>
+  mutate(
+    predictor  = recode(predictor, !!!label_map),
+    importance = importance / max(importance),
+    driver     = if_else(predictor %in% anthropogenic_labels,
+                         "Anthropogenic", "Natural / physical")
+  ) |>
+  arrange(importance)
+
+pC_f3 <- ggplot(imp_df, aes(x = importance, y = reorder(predictor, importance),
+                             fill = driver)) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = round(importance, 2)), hjust = -0.15, size = 3.0) +
+  scale_x_continuous(limits = c(0, 1.2), expand = c(0, 0)) +
+  scale_fill_manual(
+    values = c("Anthropogenic" = "#BF360C", "Natural / physical" = "#37474F"),
+    name   = NULL
+  ) +
+  labs(x = "Relative permutation importance (normalised)", y = NULL, tag = "C",
+       subtitle = sprintf("OOB accuracy = %.1f%%  (null = %.1f%%)", oob_acc, null_acc)) +
+  theme_minimal(base_size = 10.5) +
+  theme(panel.grid.minor   = element_blank(),
+        panel.grid.major.y = element_blank(),
+        plot.subtitle      = element_text(size = 8.5, color = "gray40"),
+        legend.position    = "bottom",
+        legend.text        = element_text(size = 9),
+        plot.tag           = element_text(face = "bold"))
+
+pC_f3
+```
+
+```{r}
+#| label: fig3-pdp
+#| fig-height: 3.5
+#| fig-width: 10
+
+# Probability RF (same predictors, for PDP)
+set.seed(5572)
+rf_prob <- ranger(
+  cluster_label ~ .,
+  data        = rf_df,
+  num.trees   = 1000,
+  mtry        = 4,
+  probability = TRUE,
+  seed        = 5572
+)
+
+# Partial dependence: cesspool density × Ksat (top interaction)
+ksat_breaks <- quantile(rf_df$log_ksat, c(1/3, 2/3))
+ksat_rep <- c(
+  "Low"    = median(rf_df$log_ksat[rf_df$log_ksat <= ksat_breaks[1]]),
+  "Medium" = median(rf_df$log_ksat[rf_df$log_ksat > ksat_breaks[1] &
+                                    rf_df$log_ksat <= ksat_breaks[2]]),
+  "High"   = median(rf_df$log_ksat[rf_df$log_ksat > ksat_breaks[2]])
+)
+
+cess_seq <- seq(min(rf_df$log_n_cess_1km), max(rf_df$log_n_cess_1km), length.out = 60)
+
+pdp_df <- map_dfr(names(ksat_rep), function(grp) {
+  kv <- ksat_rep[[grp]]
+  map_dfr(cess_seq, function(cv) {
+    nd    <- rf_df |>
+      mutate(log_n_cess_1km = cv, log_ksat = kv, cess_x_ksat = cv * kv)
+    probs <- colMeans(predict(rf_prob, data = nd)$predictions)
+    tibble(ksat_group = grp, log_n_cess_1km = cv, n_cess_1km = expm1(cv), as_tibble_row(probs))
+  })
+})
+
+ksat_pal <- c("Low"    = "#1565C0",
+              "Medium" = "#FB8C00",
+              "High"   = "#E53935")
+
+pD_f3 <- pdp_df |>
+  pivot_longer(
+    cols = c(`Marine background`, `Nearshore enriched`, `Runoff-dominated`),
+    names_to = "cluster", values_to = "probability"
+  ) |>
+  mutate(
+    cluster    = factor(cluster, levels = c("Marine background",
+                                             "Nearshore enriched",
+                                             "Runoff-dominated")),
+    ksat_group = factor(ksat_group, levels = c("Low", "Medium", "High"),
+                        labels = c("Low Ksat", "Medium Ksat", "High Ksat"))
+  ) |>
+  ggplot(aes(x = log_n_cess_1km, y = probability, color = ksat_group)) +
+  geom_smooth(se = FALSE, method = "loess", span = 0.5, linewidth = 1.1) +
+  scale_color_manual(values = ksat_pal, name = "Soil permeability\n(Ksat tertile)") +
+  scale_x_continuous(
+    name   = "Cesspools within 1 km (count, log scale)",
+    breaks = log1p(c(0, 1, 5, 20, 50, 100, 200)),
+    labels = c("0", "1", "5", "20", "50", "100", "200")
+  ) +
+  scale_y_continuous(name = "Predicted probability",
+                     labels = label_percent(accuracy = 1)) +
+  facet_wrap(~cluster, nrow = 1) +
+  labs(tag = "D") +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(),
+        strip.text       = element_text(face = "bold"),
+        legend.position  = "right",
+        legend.title     = element_text(size = 9),
+        legend.text      = element_text(size = 8.5),
+        plot.tag         = element_text(face = "bold"))
+
+pD_f3
+```
+
+```{r}
+#| label: fig3-assemble
+#| fig-height: 13
+#| fig-width: 12
+#| fig-cap: "**Figure 3.** Landscape predictability of post-storm coastal water type. **(A)** Biogeochemical fingerprint heatmap for each PAM cluster (k = 3; Z-scores of cluster-median concentrations; values = median µmol/L or PSU). **(B)** Spatial distribution of PAM water-type clusters across the four study islands. **(C)** Random forest variable importance (permutation, normalised to maximum). Red = anthropogenic drivers; gray = natural/physical drivers. OOB accuracy vs null shown in subtitle. **(D)** Partial dependence of predicted cluster probability on cesspool density within 1 km, stratified by soil permeability (Ksat tertile). High-Ksat soils amplify the cesspool signal: runoff-dominated probability climbs steeply with cesspool density only when permeability is high."
+
+fig3 <- (pA_f3 / pB_f3 / pC_f3 / pD_f3) +
+  plot_layout(heights = c(1, 0.9, 2.5, 1)) +
+  plot_annotation(theme = theme(plot.margin = margin(6, 6, 4, 6)))
+
+fig3
+ggsave(here("output", "fig3_landscape_causes.pdf"), fig3,
+       width = 12, height = 13, device = cairo_pdf)
+ggsave(here("output", "fig3_landscape_causes.png"), fig3,
+       width = 12, height = 13, dpi = 300)
+```
+
+---
+
+# Figure 4 — Consequences: Reef Risk & Biological Response
+
+*Post-storm concentrations exceeded reef health thresholds across all islands; phytoplankton responded.*
+
+```{r}
+#| label: fig4-aca-data
+#| include: false
+#| cache: false
+
+# ── Download Allen Coral Atlas Coral/Algae polygons for Hawaii (WFS; cached) ─
+aca_cache <- here("data", "aca_hawaii_coral.rds")
+
+if (!file.exists(aca_cache)) {
+  message("Fetching Allen Coral Atlas benthic data from WFS…")
+  islands_aca <- tribble(
+    ~island,    ~lon_min, ~lat_min, ~lon_max, ~lat_max,
+    "O'ahu",   -158.40,   21.20,  -157.60,   21.75,
+    "Maui",    -156.75,   20.50,  -155.90,   21.05,
+    "Moloka'i",-157.40,   21.00,  -156.65,   21.30
+  )
+
+  fetch_aca <- function(island, lon_min, lat_min, lon_max, lat_max) {
+    url <- paste0(
+      "https://allencoralatlas.org/geoserver/ows?",
+      "service=WFS&version=2.0.0&request=GetFeature",
+      "&typeNames=coral-atlas:benthic_data_verbose",
+      "&bbox=", paste(lon_min, lat_min, lon_max, lat_max, sep = ","), ",CRS:84",
+      "&outputFormat=application/json"
+    )
+    out <- tryCatch(sf::st_read(url, quiet = TRUE),
+                   error = function(e) { warning(island, ": ", e$message); NULL })
+    if (!is.null(out) && nrow(out) > 0) out |> mutate(island = island) else NULL
+  }
+
+  reef_raw   <- pmap_dfr(islands_aca, fetch_aca)
+  reef_coral <- reef_raw |> filter(class_name == "Coral/Algae")
+  saveRDS(reef_coral, aca_cache)
+  message("Cached ", nrow(reef_coral), " Coral/Algae polygons.")
+}
+reef_coral <- readRDS(aca_cache)
+
+# ── Compute kriging rasters and extract per reef polygon (cached) ─────────────
+reef_krige_cache <- here("data", "aca_reef_kriged_NO3.rds")
+
+if (!file.exists(reef_krige_cache)) {
+  message("Computing kriging surfaces and extracting per reef polygon…")
+
+  krige_to_raster <- function(island_name) {
+    kd     <- krige_surface_data(chem, island_name, ahupuaa_raw,
+                                 var = "NO3NO2", res_m = 250)
+    # Rasterize the irregular grid of point predictions
+    pred_v <- terra::vect(
+      as.matrix(kd$pred_df[, c("X", "Y")]),
+      type = "points",
+      atts = data.frame(pred = kd$pred_df$pred),
+      crs  = "EPSG:32604"
+    )
+    r_tmpl <- terra::rast(terra::ext(pred_v) + 300,
+                          resolution = 250, crs = "EPSG:32604")
+    terra::rasterize(pred_v, r_tmpl, field = "pred", fun = "mean")
+  }
+
+  reef_utm <- reef_coral |> st_transform(32604)
+
+  reef_with_krige <- map_dfr(
+    c("O'ahu", "Maui", "Moloka'i"),
+    function(isl) {
+      message("  ", isl)
+      r   <- krige_to_raster(isl)
+      sub <- reef_utm |> filter(island == isl)
+      if (nrow(sub) == 0) return(NULL)
+      sub |> mutate(
+        mean_NO3NO2 = exactextractr::exact_extract(r, sub, "mean",
+                                                   progress = FALSE)
+      )
+    }
+  )
+  saveRDS(reef_with_krige, reef_krige_cache)
+}
+reef_with_krige <- readRDS(reef_krige_cache)
+
+# ── Assign nearest PAM cluster (≤ 3 km) ───────────────────────────────────────
+chem_clust_sf_f4 <- chem_clust |>
+  filter(!is.na(latitude), !is.na(longitude), !is.na(cluster_label)) |>
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+  st_transform(32604)
+
+reef_cents <- reef_with_krige |> st_centroid()
+nn_idx     <- st_nearest_feature(reef_cents, chem_clust_sf_f4)
+nn_dist    <- as.numeric(
+  st_distance(reef_cents, chem_clust_sf_f4[nn_idx, ], by_element = TRUE)
+)
+
+reef_classified <- reef_with_krige |>
+  st_drop_geometry() |>
+  mutate(
+    cluster_label    = as.character(chem_clust_sf_f4$cluster_label[nn_idx]),
+    dist_to_sample_m = nn_dist,
+    # Only assign cluster if nearest sample is within 3 km coastal kriging range
+    cluster_label    = if_else(dist_to_sample_m > 3000, NA_character_, cluster_label),
+    island           = factor(island, levels = c("O'ahu", "Maui", "Moloka'i")),
+    cluster_label    = factor(cluster_label,
+                              levels = c("Marine background",
+                                         "Nearshore enriched",
+                                         "Runoff-dominated"))
+  ) |>
+  filter(!is.na(cluster_label), !is.na(mean_NO3NO2))
+```
+
+```{r}
+#| label: fig4-reef-vulnerability
+#| fig-height: 5.5
+#| fig-width: 8.5
+#| fig-cap: "**Figure 4A.** Coral reef area (km²) co-occurring with each post-storm PAM water-type cluster, by island. Benthic polygons from Allen Coral Atlas v2.0 (Coral/Algae class; <10 m depth). PAM cluster assigned by nearest citizen-science sampling site within 3 km. Mean kriged NO₃+NO₂ (µmol/L) annotated for each cluster. Total reef area label shown above each bar group. Runoff-dominated water masses overlap substantially more mapped coral area on Maui and Molokaʻi, where post-storm nutrient concentrations were highest."
+
+# ── Per-cluster summary stats ──────────────────────────────────────────────────
+reef_summary <- reef_classified |>
+  group_by(island, cluster_label) |>
+  summarise(
+    total_km2 = sum(area_sqkm, na.rm = TRUE),
+    mean_NO3  = mean(mean_NO3NO2, na.rm = TRUE),
+    n_patches = n(),
+    .groups   = "drop"
+  )
+
+cluster_totals <- reef_classified |>
+  group_by(cluster_label) |>
+  summarise(
+    total_km2 = sum(area_sqkm, na.rm = TRUE),
+    mean_NO3  = median(mean_NO3NO2, na.rm = TRUE),
+    .groups   = "drop"
+  ) |>
+  mutate(
+    km2_lab = paste0(round(total_km2, 1), " km²"),
+    no3_lab = paste0("median\n", round(mean_NO3, 2), " µmol/L")
+  )
+
+y_max <- max(reef_summary |> group_by(cluster_label) |>
+               summarise(s = sum(total_km2)) |> pull(s))
+
+pA_f4 <- ggplot(reef_summary,
+                aes(x = cluster_label, y = total_km2, fill = island)) +
+  geom_col(width = 0.68, color = "white", linewidth = 0.3) +
+  # Total km² label above each group
+  geom_text(data = cluster_totals,
+            aes(x = cluster_label, y = total_km2, label = km2_lab),
+            inherit.aes = FALSE, vjust = -0.55,
+            size = 3.2, fontface = "bold") +
+  # Median NO3NO2 label below x-axis (requires clip = "off")
+  geom_text(data = cluster_totals,
+            aes(x = cluster_label, y = 0, label = no3_lab),
+            inherit.aes = FALSE, vjust = 1.35,
+            size = 2.6, color = "#5D4037", lineheight = 0.9) +
+  scale_fill_manual(values = island_pal, name = NULL) +
+  scale_x_discrete(labels = \(x) str_wrap(x, 11)) +
+  scale_y_continuous(
+    expand  = expansion(mult = c(0, 0.18)),
+    labels  = \(x) paste0(x, " km²")
+  ) +
+  coord_cartesian(clip = "off") +
+  labs(x = NULL, y = "Coral reef area (km²)", tag = "A",
+       subtitle = "Allen Coral Atlas Coral/Algae class  \u00b7  nearest sample \u22643 km") +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    plot.margin        = margin(6, 10, 28, 10),   # bottom space for NO3 labels
+    plot.subtitle      = element_text(size = 8.5, color = "gray45"),
+    legend.position    = "right",
+    plot.tag           = element_text(face = "bold")
+  )
+
+pA_f4
+```
+
+```{r}
+#| label: fig4-viirs-data
+
+library(rerddap)
+library(marmap)
+
+# Load cached VIIRS 750 m data (downloaded in nutrient_hotspot_maps.qmd)
+all_750  <- readRDS("data/viirs_750m_bloom_cache.rds")
+all_ext  <- readRDS("data/viirs_750m_prestorm_extended.rds")
+bathy_raw <- readRDS("data/hawaii_bathy_1min.rds")
+
+bathy_df_qc <- fortify(bathy_raw) |>
+  as_tibble() |>
+  rename(longitude = x, latitude = y, depth_m = z)
+
+bathy_lon_step <- diff(sort(unique(bathy_df_qc$longitude)))[1]
+bathy_lat_step <- diff(sort(unique(bathy_df_qc$latitude)))[1]
+
+add_depth <- function(df) {
+  df |>
+    mutate(lon_key = round(longitude / bathy_lon_step) * bathy_lon_step,
+           lat_key = round(latitude  / bathy_lat_step) * bathy_lat_step) |>
+    left_join(
+      bathy_df_qc |>
+        mutate(lon_key = round(longitude / bathy_lon_step) * bathy_lon_step,
+               lat_key = round(latitude  / bathy_lat_step) * bathy_lat_step) |>
+        select(lon_key, lat_key, depth_m),
+      by = c("lon_key", "lat_key")
+    ) |>
+    select(-lon_key, -lat_key)
+}
+
+bloom_pixels_qc <- all_750 |>
+  filter(period == "peak_bloom", !is.na(chla), chla >= 0.001, chla <= 100.1) |>
+  add_depth() |>
+  filter(!is.na(depth_m), depth_m <= -10) |>
+  group_by(island, latitude, longitude) |>
+  summarise(bloom_chl = mean(chla, na.rm = TRUE), n_days = n(), .groups = "drop")
+
+pre_pixels_ext <- all_ext |>
+  filter(!is.na(chla), chla >= 0.001, chla <= 100.1) |>
+  add_depth() |>
+  filter(!is.na(depth_m), depth_m <= -10) |>
+  group_by(island, latitude, longitude) |>
+  summarise(pre_chl_ext = mean(chla, na.rm = TRUE), n_days_ext = n(), .groups = "drop")
+
+pixel_matched_ext <- bloom_pixels_qc |>
+  inner_join(pre_pixels_ext |> select(island, latitude, longitude, pre_chl_ext, n_days_ext),
+             by = c("island", "latitude", "longitude")) |>
+  mutate(fold_change_ext = bloom_chl / pre_chl_ext,
+         chl_anomaly_ext = bloom_chl - pre_chl_ext)
+
+# Match sample sites to nearest 750 m pixel (≤ 5 km ≈ 0.045 decimal degrees)
+find_nearest_chl <- function(site_lat, site_lon, site_island, bloom_df) {
+  map_dbl(seq_along(site_lat), function(i) {
+    px <- bloom_df[bloom_df$island == site_island[i], ]
+    if (nrow(px) == 0) return(NA_real_)
+    d   <- sqrt((px$latitude - site_lat[i])^2 + (px$longitude - site_lon[i])^2)
+    idx <- which.min(d)
+    if (d[idx] > 0.045) NA_real_ else px$bloom_chl[idx]
+  })
+}
+
+chem_sites <- chem_clust |>
+  filter(island %in% c("Maui", "Moloka'i", "O'ahu"),
+         !is.na(latitude), !is.na(longitude), !is.na(NO3NO2))
+island_750 <- recode(chem_sites$island, "Moloka'i" = "Molokai", "O'ahu" = "Oahu")
+
+chem_750m_match <- chem_sites |>
+  mutate(
+    island_750     = island_750,
+    bloom_chl_750m = find_nearest_chl(latitude, longitude, island_750, bloom_pixels_qc),
+    fc_ext         = find_nearest_chl(latitude, longitude, island_750,
+                                       pixel_matched_ext |>
+                                         select(island, latitude, longitude,
+                                                bloom_chl = fold_change_ext)),
+    chl_anom_ext   = find_nearest_chl(latitude, longitude, island_750,
+                                       pixel_matched_ext |>
+                                         select(island, latitude, longitude,
+                                                bloom_chl = chl_anomaly_ext))
+  ) |>
+  filter(!is.na(bloom_chl_750m))
+```
+
+```{r}
+#| label: fig4-bloom-map
+#| fig-height: 5.5
+#| fig-width: 10
+#| fig-cap: "**Figure 4B.** VIIRS NOAA-20 750 m peak-bloom Chl-a (Mar 20–Apr 8, 2026; pixels with ≥ 2 cloud-free days; depth ≥ 10 m). Overlaid points = citizen-science sites coloured by PAM water-type cluster."
+
+hawaii_sf <- ne_states(country = "United States of America", returnclass = "sf") |>
+  filter(name == "Hawaii")
+
+df_for_map <- chem_clust |>
+  filter(island %in% c("Maui", "Moloka'i", "O'ahu"),
+         !is.na(cluster_label), !is.na(latitude), !is.na(longitude))
+
+pB_f4 <- ggplot() +
+  geom_tile(
+    data = bloom_pixels_qc |>
+      mutate(island = recode(island, "Molokai" = "Moloka'i", "Oahu" = "O'ahu")),
+    aes(x = longitude, y = latitude, fill = log10(bloom_chl)), na.rm = TRUE
+  ) +
+  geom_sf(data = hawaii_sf, fill = "gray45", color = "white", linewidth = 0.3) +
+  geom_point(data = df_for_map,
+             aes(x = longitude, y = latitude, color = cluster_label),
+             size = 1.2, alpha = 0.75, shape = 16) +
+  scale_fill_gradientn(
+    colors   = c("#08306B", "#2171B5", "#6BAED6", "#C6DBEF",
+                 "#FDD0A2", "#FDAE6B", "#F16913", "#D94801", "#7F2704"),
+    na.value = "transparent",
+    name     = expression("Chl-"*italic(a)*"\n(mg m"^{-3}*")"),
+    breaks   = log10(c(0.05, 0.1, 0.3, 1, 3, 10)),
+    labels   = c("0.05", "0.1", "0.3", "1", "3", "10")
+  ) +
+  scale_color_manual(values = cluster_pal, name = "Water type") +
+  coord_sf(xlim = c(-158.6, -155.85), ylim = c(20.45, 21.80), expand = FALSE) +
+  guides(
+    fill  = guide_colorbar(order = 1, barheight = unit(3.5, "cm"),
+                           title.position = "top"),
+    color = guide_legend(order = 2, override.aes = list(size = 3, alpha = 1))
+  ) +
+  labs(x = NULL, y = NULL, tag = "B",
+       subtitle = "VIIRS 750 m  ·  peak bloom Mar 20–Apr 8, 2026") +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.background = element_rect(fill = "#c8dff0", color = NA),
+    legend.position  = "right",
+    axis.text        = element_text(size = 8.5),
+    plot.subtitle    = element_text(size = 9, color = "gray45"),
+    plot.tag         = element_text(face = "bold")
+  )
+
+pB_f4
+```
+
+```{r}
+#| label: fig4-hui-summary
+#| fig-height: 5.5
+#| fig-width: 7
+#| fig-cap: "**Figure 4C.** Post-storm Hui o Ka Wai Ola NO₃+NO₂ fold-change above station-specific historical median (all records 2016–Jan 2026). Orange = readings above the station's historical 95th percentile. Stations ordered within West/South Maui regions by magnitude."
+
+hui_hist <- bg_hui_loc |>
+  filter(year(Date) < 2026, !is.na(NNN_umol)) |>
+  group_by(Station, SiteName, region) |>
+  summarise(med_hist = median(NNN_umol, na.rm = TRUE),
+            p95_hist = quantile(NNN_umol, 0.95, na.rm = TRUE), .groups = "drop")
+
+hui_post_nn <- bg_hui_loc |>
+  filter(year(Date) == 2026, month(Date) == 3,
+         Date >= as.Date("2026-03-14"), !is.na(NNN_umol)) |>
+  group_by(Station, SiteName, region) |>
+  summarise(val_umol = mean(NNN_umol, na.rm = TRUE), .groups = "drop") |>
+  left_join(hui_hist, by = c("Station", "SiteName", "region")) |>
+  filter(!is.na(med_hist)) |>
+  mutate(
+    fold_change = val_umol / med_hist,
+    above_p95   = val_umol > p95_hist,
+    label       = str_trunc(SiteName, 26, ellipsis = "…"),
+    region      = factor(region, levels = c("South Maui", "West Maui"))
+  ) |>
+  arrange(region, fold_change) |>
+  mutate(label = factor(label, levels = unique(label)))
+
+pC_f4 <- ggplot(hui_post_nn, aes(x = fold_change, y = label, fill = above_p95)) +
+  geom_col(width = 0.65) +
+  geom_text(
+    aes(label = paste0(round(fold_change, 1), "×"),
+        hjust = if_else(fold_change > 12, 1.1, -0.1),
+        color = if_else(fold_change > 12, "white", "gray25")),
+    size = 2.5, fontface = "bold"
+  ) +
+  geom_vline(xintercept = 1, color = "gray40", linewidth = 0.5, linetype = "dashed") +
+  scale_fill_manual(
+    values = c("TRUE" = "#E65100", "FALSE" = "#90A4AE"),
+    labels = c("TRUE" = "Above 95th percentile", "FALSE" = "Within historical range"),
+    name   = NULL
+  ) +
+  scale_color_identity() +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.25)),
+                     breaks = c(1, 5, 10, 20, 40)) +
+  facet_grid(region ~ ., scales = "free_y", space = "free_y", switch = "y") +
+  labs(x = expression("Fold above historical median — NO"[3]*"+NO"[2]*" (µmol/L)"),
+       y = NULL, tag = "C") +
+  theme_minimal(base_size = 9.5) +
+  theme(
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.y = element_blank(),
+    strip.text   = element_text(face = "bold", size = 9),
+    strip.placement = "outside",
+    legend.position = "bottom",
+    legend.text  = element_text(size = 8.5),
+    axis.text.y  = element_text(size = 7, lineheight = 0.85),
+    plot.tag     = element_text(face = "bold")
+  )
+
+pC_f4
+```
+
+```{r}
+#| label: fig4-assemble
+#| fig-height: 12
+#| fig-width: 12
+#| fig-cap: "**Figure 4.** Reef risk and biological response. **(A)** Proportion of samples exceeding published coral reef health thresholds. **(B)** VIIRS 750 m peak-bloom chlorophyll-a; PAM water-type clusters overlaid. **(C)** Independent validation: Hui o Ka Wai Ola NO₃+NO₂ fold-change above each station's 10-year historical median for March 2026 post-storm readings. Orange = above 95th percentile."
+
+fig4 <- (pA_f4 / pB_f4 / pC_f4) +
+  plot_layout(heights = c(1, 1.4, 1.5)) +
+  plot_annotation(theme = theme(plot.margin = margin(6, 6, 4, 6)))
+
+fig4
+ggsave(here("output", "fig4_consequences.pdf"), fig4,
+       width = 12, height = 12, device = cairo_pdf)
+ggsave(here("output", "fig4_consequences.png"), fig4,
+       width = 12, height = 12, dpi = 300)
+```
