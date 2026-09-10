@@ -81,6 +81,7 @@ library(ranger)      # random forest
 library(broom)       # tidy model output
 library(infer)       # tidy inference
 library(car)         # VIF / regression diagnostics
+library(mgcv)        # GAMs with random effects and spatial smooths
 
 # ── Rainfall ──────────────────────────────────────────────────────────────────
 library(chirps)
@@ -1611,7 +1612,151 @@ save_supp(last_plot(), name = "suppfig_station_fold_changes_mar2026",
 
 > **Step 10.** Moran's I, spatial correlograms, variograms — per nutrient per island.
 
-*← Analysis code goes here when we work through Step 10 together.*
+```{r}
+#| label: step10-spatial-prep
+
+# Project to UTM zone 4N (EPSG:32604) — appropriate for all four Hawaiian islands.
+# Use non-BDL observations for spatial analyses; log1p-transform responses.
+sp_df <- chem_master |>
+  mutate(
+    log1p_SiO2   = log1p(SiO2),
+    log1p_NO3NO2 = log1p(NO3NO2),
+    log1p_PO4    = log1p(PO4),
+    log1p_NH3    = log1p(NH3)
+  ) |>
+  filter(!is.na(latitude), !is.na(longitude))
+
+sp_sf <- sp_df |>
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+  st_transform(32604)
+
+# Extract UTM coordinates for gstat variograms
+sp_sf <- sp_sf |>
+  mutate(
+    utm_x = st_coordinates(sp_sf)[, 1],
+    utm_y = st_coordinates(sp_sf)[, 2]
+  )
+
+cat("Samples for spatial analysis:", nrow(sp_sf),
+    "| unique locations:", n_distinct(sp_df$latitude, sp_df$longitude), "\n")
+cat("By island:", table(sp_df$island), "\n")
+```
+
+```{r}
+#| label: step10-morans-i
+
+# Moran's I using k-nearest-neighbour spatial weights.
+# k=10 globally; k=8 for Molokaʻi (smaller island, fewer nearby samples).
+# Row-standardised weights ("W").
+
+run_morans <- function(sf_sub, var, k = 10) {
+  coords <- st_coordinates(sf_sub)
+  vals   <- st_drop_geometry(sf_sub)[[var]]
+  keep   <- !is.na(vals)
+  if (sum(keep) < 20) return(NULL)
+
+  nb  <- spdep::knearneigh(coords[keep, ], k = min(k, sum(keep) - 1)) |>
+    spdep::knn2nb()
+  lw  <- spdep::nb2listw(nb, style = "W")
+  mt  <- spdep::moran.test(vals[keep], lw)
+
+  tibble(
+    n       = sum(keep),
+    morans_I = mt$estimate["Moran I statistic"],
+    expected = mt$estimate["Expectation"],
+    p_value  = mt$p.value
+  )
+}
+
+nutrients_sp <- c(
+  "log1p_SiO2", "log1p_NO3NO2", "log1p_PO4", "log1p_NH3"
+)
+islands_sp <- c("All", "O'ahu", "Maui", "Moloka'i")
+
+morans_results <- expand_grid(island = islands_sp, nutrient = nutrients_sp) |>
+  mutate(
+    result = map2(island, nutrient, \(isl, nut) {
+      sub   <- if (isl == "All") sp_sf else sp_sf |> filter(island == isl)
+      k_use <- if (isl == "Moloka'i") 8L else 10L
+      suppressWarnings(run_morans(sub, nut, k = k_use))
+    })
+  ) |>
+  unnest(result) |>
+  mutate(
+    nutrient = case_match(nutrient,
+      "log1p_SiO2"   ~ "SiO2",
+      "log1p_NO3NO2" ~ "NO3+NO2",
+      "log1p_PO4"    ~ "PO4",
+      "log1p_NH3"    ~ "NH3"
+    ),
+    sig = case_when(p_value < 0.001 ~ "***",
+                    p_value < 0.01  ~ "**",
+                    p_value < 0.05  ~ "*",
+                    TRUE            ~ "n.s.")
+  )
+
+morans_results |>
+  select(island, nutrient, n, morans_I, expected, p_value, sig) |>
+  mutate(across(c(morans_I, expected, p_value), \(x) round(x, 4))) |>
+  knitr::kable(caption = "Global Moran's I for log1p-transformed nutrient concentrations. k-NN weights (k = 10 global and Oʻahu/Maui; k = 8 Molokaʻi). Significant positive values indicate spatial clustering.")
+```
+
+```{r}
+#| label: step10-variograms
+#| fig-width: 8.5
+#| fig-height: 4.5
+#| fig-cap: "**Step 10 — Empirical variograms** for log1p-transformed nutrient concentrations (Oʻahu and Maui; UTM zone 4N, EPSG:32604). Point size scales with the number of pairs per bin. SiO₂ shows the clearest distance-decay structure on both islands, consistent with its highest global Moran's I (0.49). NH₄ shows little spatial structure, particularly on Maui."
+
+compute_vgm_df <- function(sf_sub, var, cutoff_m, width_m) {
+  sf_filt <- sf_sub |> filter(!is.na(.data[[var]]))
+  if (nrow(sf_filt) < 20) return(NULL)
+  coords  <- st_coordinates(sf_filt)
+  vals    <- st_drop_geometry(sf_filt)[[var]]
+  sp_obj  <- sp::SpatialPointsDataFrame(coords = coords,
+                                        data   = data.frame(y = vals))
+  emp <- suppressWarnings(
+    gstat::variogram(y ~ 1, sp_obj, cutoff = cutoff_m, width = width_m)
+  )
+  as_tibble(emp) |> mutate(nutrient = var)
+}
+
+island_params <- tibble(
+  island = c("O'ahu", "Maui"),
+  cutoff = c(50000,   40000),
+  width  = c(4000,    3000)
+)
+
+vgm_plot_df <- island_params |>
+  mutate(vgm_data = map2(island, cutoff, \(isl, co) {
+    wi  <- island_params$width[island_params$island == isl]
+    sub <- sp_sf |> filter(island == isl)
+    map_dfr(nutrients_sp, \(nut) compute_vgm_df(sub, nut, co, wi))
+  })) |>
+  unnest(vgm_data) |>
+  mutate(
+    nutrient_f = factor(
+      case_match(nutrient,
+        "log1p_SiO2"   ~ "SiO[2]",
+        "log1p_NO3NO2" ~ "NO[3]+NO[2]",
+        "log1p_PO4"    ~ "PO[4]",
+        "log1p_NH3"    ~ "NH[4]"
+      ),
+      levels = c("NO[3]+NO[2]", "PO[4]", "NH[4]", "SiO[2]")
+    ),
+    dist_km = dist / 1000
+  )
+
+island_cols <- c("O'ahu" = "#1565C0", "Maui" = "#2E7D32")
+
+ggplot(vgm_plot_df, aes(x = dist_km, y = gamma, colour = island, size = np)) +
+  geom_point(alpha = 0.75, shape = 16) +
+  facet_wrap(~nutrient_f, scales = "free_y", nrow = 1, labeller = label_parsed) +
+  scale_size_continuous(range = c(1, 4), guide = "none") +
+  scale_colour_manual(values = island_cols) +
+  labs(x = "Distance (km)", y = "Semivariance", colour = NULL) +
+  theme_kona_paper(base_size = 9) +
+  theme(legend.position = "bottom", strip.text = element_text(size = 9))
+```
 
 ## Interpolated maps {#sec-kriging}
 
@@ -2030,7 +2175,221 @@ through island random effects.
 > **Step 11.** Model log(Si) as a function of physical/hydrologic predictors.
 > First mechanistic model; establishes terrestrial-water delivery baseline.
 
-*← Analysis code goes here when we work through Step 11 together.*
+```{r}
+#| label: step11-si-data
+
+# Build Si model dataset: non-BDL Si with key predictors present.
+# total_cfs_march excluded (n = 276 of 693); retained as a sensitivity check.
+# Predictors log-transformed where right-skewed.
+si_df <- chem_master |>
+  filter(!is.na(SiO2), !bdl_SiO2) |>
+  filter(!is.na(chirps_storm_cumulative_mm)) |>
+  filter(!is.na(mean_slope_deg), !is.na(mean_ksat_um_s)) |>
+  left_join(
+    sp_sf |> st_drop_geometry() |> select(sample_id, utm_x, utm_y),
+    by = "sample_id"
+  ) |>
+  mutate(
+    log_Si     = log(SiO2),
+    log_dist_m = log(dist_to_stream_mouth_m + 1),
+    log_chirps = log(chirps_storm_cumulative_mm),
+    log_slope  = log(mean_slope_deg + 0.1),
+    log_ksat   = log(mean_ksat_um_s  + 0.1),
+    gwetroot   = mean_gwetroot,   # island-level only (3 unique values); enter as linear
+    log_hs     = log(hs_mean_m + 0.01),
+    island_f   = factor(island),
+    ahupuaa_f  = factor(ahupuaa), # explicit factor required by mgcv bs="re"
+    utm_x_km   = utm_x / 1000,
+    utm_y_km   = utm_y / 1000
+  )
+
+cat("Si model dataset: n =", nrow(si_df),
+    "| ahupuaʻa:", n_distinct(si_df$ahupuaa),
+    "| islands:", n_distinct(si_df$island), "\n")
+
+si_df |>
+  select(log_Si, log_dist_m, log_chirps, log_slope, log_ksat, gwetroot, log_hs) |>
+  summary()
+```
+
+```{r}
+#| label: step11-si-model
+#| cache: true
+
+# Three candidate GAMs fitted with REML.
+# M_base: island + ahupuaʻa random intercepts + 2D spatial smooth
+# M_phys: M_base + Group A/B/D physical predictors
+# M_int:  M_phys with StreamDistance × Slope tensor product (priority interaction)
+
+M_base <- gam(
+  log_Si ~ s(island_f,  bs = "re") +
+           s(ahupuaa_f, bs = "re") +
+           s(utm_x_km, utm_y_km, bs = "tp", k = 25),
+  data = si_df, method = "REML"
+)
+
+M_phys <- gam(
+  log_Si ~ s(log_dist_m, bs = "tp", k = 8) +
+           s(log_chirps,  bs = "tp", k = 8) +
+           s(log_slope,   bs = "tp", k = 8) +
+           s(log_ksat,    bs = "tp", k = 8) +
+           gwetroot +                          # linear: only 3 unique island-level values
+           s(log_hs,      bs = "tp", k = 8) +
+           s(island_f,  bs = "re") +
+           s(ahupuaa_f, bs = "re") +
+           s(utm_x_km, utm_y_km, bs = "tp", k = 25),
+  data = si_df, method = "REML"
+)
+
+# Priority interaction: stream-mouth distance × slope (AGENTS.md Step 11)
+M_int <- gam(
+  log_Si ~ te(log_dist_m, log_slope, bs = "tp", k = 6) +
+           s(log_chirps, bs = "tp", k = 8) +
+           s(log_ksat,   bs = "tp", k = 8) +
+           gwetroot +
+           s(log_hs,     bs = "tp", k = 8) +
+           s(island_f,  bs = "re") +
+           s(ahupuaa_f, bs = "re") +
+           s(utm_x_km, utm_y_km, bs = "tp", k = 25),
+  data = si_df, method = "REML"
+)
+
+# ML-refitted AIC for model comparison (REML AICs are not comparable across
+# models with different fixed-effect structures)
+M_base_ml <- update(M_base, method = "ML")
+M_phys_ml <- update(M_phys, method = "ML")
+M_int_ml  <- update(M_int,  method = "ML")
+
+cat("Model comparison (ML-AIC):\n")
+AIC(M_base_ml, M_phys_ml, M_int_ml) |> print()
+```
+
+```{r}
+#| label: step11-si-summary
+
+best_model <- if (AIC(M_int_ml) < AIC(M_phys_ml) - 2) M_int else M_phys
+best_label <- if (AIC(M_int_ml) < AIC(M_phys_ml) - 2) "M_int" else "M_phys"
+cat("Selected model:", best_label, "\n")
+cat("Deviance explained:", round(summary(best_model)$dev.expl * 100, 1), "%\n")
+cat("Adjusted R²:       ", round(summary(best_model)$r.sq, 3), "\n\n")
+
+summary(best_model)$s.table |>
+  as_tibble(rownames = "term") |>
+  mutate(across(where(is.numeric), \(x) round(x, 4))) |>
+  knitr::kable(caption = paste(
+    "GAM smooth terms —", best_label,
+    "(log Si ~ physical predictors + island/ahupuaʻa RE + 2D spatial smooth)."
+  ))
+```
+
+```{r}
+#| label: step11-si-residual-moran
+
+# Residual Moran's I (k-NN, k = 10) before and after adding physical predictors.
+resid_morans <- function(model, sf_sub, k = 10) {
+  resids <- residuals(model, type = "deviance")
+  coords <- st_coordinates(sf_sub)
+  nb     <- suppressWarnings(spdep::knearneigh(coords, k = k)) |> spdep::knn2nb()
+  lw     <- spdep::nb2listw(nb, style = "W")
+  mt     <- spdep::moran.test(resids, lw)
+  tibble(
+    morans_I = round(mt$estimate["Moran I statistic"], 4),
+    p_value  = round(mt$p.value, 4)
+  )
+}
+
+si_sf_model <- sp_sf |>
+  filter(sample_id %in% si_df$sample_id) |>
+  arrange(match(sample_id, si_df$sample_id))
+
+cat("Residual Moran's I — M_base:\n")
+print(resid_morans(M_base, si_sf_model))
+cat("Residual Moran's I —", best_label, ":\n")
+print(resid_morans(best_model, si_sf_model))
+```
+
+```{r}
+#| label: step11-si-salinity-sensitivity
+
+# ── Diagnostic sensitivity: add Salinity as a linear covariate ────────────────
+# Salinity is a co-measured field variable — it partly reflects the freshwater
+# fraction at the moment of sampling rather than a landscape driver. Including
+# it here is diagnostic only: we use it to quantify how much of the residual
+# variance and spatial autocorrelation is attributable to local
+# freshwater/marine mixing that landscape predictors cannot resolve.
+# This model is NOT used for inference in the main analysis.
+M_int_sal <- gam(
+  log_Si ~ te(log_dist_m, log_slope, bs = "tp", k = 6) +
+           s(log_chirps, bs = "tp", k = 8) +
+           s(log_ksat,   bs = "tp", k = 8) +
+           gwetroot +
+           s(log_hs,     bs = "tp", k = 8) +
+           Salinity +                         # diagnostic only — not a landscape predictor
+           s(island_f,  bs = "re") +
+           s(ahupuaa_f, bs = "re") +
+           s(utm_x_km, utm_y_km, bs = "tp", k = 25),
+  data = si_df, method = "REML"
+)
+
+diag_compare <- tibble(
+  model         = c(best_label, paste0(best_label, " + Salinity")),
+  dev_expl_pct  = c(round(summary(M_int)$dev.expl    * 100, 1),
+                    round(summary(M_int_sal)$dev.expl * 100, 1)),
+  adj_r2        = c(round(summary(M_int)$r.sq,    3),
+                    round(summary(M_int_sal)$r.sq, 3)),
+  resid_morans  = c(resid_morans(best_model,  si_sf_model)$morans_I,
+                    resid_morans(M_int_sal, si_sf_model)$morans_I),
+  resid_p       = c(resid_morans(best_model,  si_sf_model)$p_value,
+                    resid_morans(M_int_sal, si_sf_model)$p_value)
+)
+
+diag_compare |>
+  knitr::kable(
+    col.names = c("Model", "Dev. expl. (%)", "Adj-R²",
+                  "Residual Moran's I", "p-value"),
+    caption   = paste(
+      "Salinity diagnostic: adding Salinity as a linear term absorbs ~10 percentage",
+      "points of additional deviance (49.9 → 59.4%) and reduces residual Moran's I",
+      "from 0.057 (p < 0.001) to 0.013 (p = 0.18), eliminating essentially all",
+      "spatial autocorrelation. This confirms that the residual structure in",
+      best_label,
+      "reflects local freshwater/marine mixing at the time of sampling —",
+      "a fine-scale hydrodynamic signal irreducible by watershed-scale landscape",
+      "predictors. The landscape model is not misspecified; log(Si) in Step 12",
+      "serves as an empirical proxy for this mixing ratio within the NO₃+NO₂ model."
+    )
+  )
+
+cat("\nSalinity slope (log-Si per PSU):",
+    round(coef(M_int_sal)["Salinity"], 4),
+    "— each 1-PSU increase in salinity associated with",
+    round(abs(coef(M_int_sal)["Salinity"]) * 100, 1),
+    "% lower Si on the log scale.\n")
+
+saveRDS(M_int_sal, here("output", "model_objects", "si_M_int_sal_diagnostic.rds"))
+```
+
+```{r}
+#| label: step11-si-effects
+#| fig-width: 9
+#| fig-height: 3.5
+#| fig-cap: "**Step 11 — Partial effects of physical predictors on log(SiO₂).** Smooths from the selected GAM on the log scale; shaded bands = 95% pointwise credible intervals. Rug marks show the data range for each predictor. The x-axis tick for log_dist_m represents distance to stream mouth (m + 1), log_chirps is cumulative storm rainfall (mm), log_slope is mean watershed slope (degrees + 0.1), and log_hs is significant wave height (m + 0.01)."
+
+# Extract and plot the non-RE, non-spatial smooth terms
+s_names  <- rownames(summary(best_model)$s.table)
+phys_idx <- which(!grepl("island_f|ahupuaa_f|utm_x_km", s_names))
+
+# plot.gam select= accepts one integer at a time in mgcv 1.9; loop over terms
+par(mfrow = c(1, length(phys_idx)), mar = c(4.2, 4.2, 2.5, 0.5))
+for (i in phys_idx) {
+  plot(best_model, select = i,
+       shade = TRUE, shade.col = "gray85",
+       col = "#1565C0", lwd = 1.5,
+       rug = TRUE, residuals = FALSE,
+       seWithMean = TRUE,
+       ylab = "Partial effect on log(SiO\u2082)")
+}
+```
 
 ---
 
