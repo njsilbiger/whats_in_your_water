@@ -3508,13 +3508,15 @@ cess_sens |>
     Nutrient      = factor(nut_lab[nutrient], levels = c("SiO\u2082", "NO\u2083+NO\u2082", "PO\u2084", "NH\u2084")),
     Specification = model,
     Metric        = metric_lab[str_remove(term, "z_")],
-    `Std. \u03b2`  = round(est, 3),
-    `95% CI`      = sprintf("[%.2f, %.2f]", lwr, upr),
+    std_beta      = round(est, 3),
+    ci95          = sprintf("[%.2f, %.2f]", lwr, upr),
     p             = signif(p, 2),
     n
   ) |>
   arrange(Nutrient, Specification) |>
-  knitr::kable(caption = "Table S. Cesspool-metric sensitivity (Oʻahu + Maui, identical rows per nutrient). Standardized coefficient for each cesspool metric under three specifications; distance-to-nearest and buffer counts are alternative local-proximity metrics, density is ahupuaʻa-scale.") |>
+  knitr::kable(
+    col.names = c("Nutrient", "Specification", "Metric", "Std. \u03b2", "95% CI", "p", "n"),
+    caption = "Table S. Cesspool-metric sensitivity (Oʻahu + Maui, identical rows per nutrient). Standardized coefficient for each cesspool metric under three specifications; distance-to-nearest and buffer counts are alternative local-proximity metrics, density is ahupuaʻa-scale.") |>
   kableExtra::kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
 ```
 
