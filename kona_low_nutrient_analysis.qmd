@@ -1844,9 +1844,9 @@ chem_master <- chem_master |>
 | Variable | n missing | % | Note |
 |---|--:|--:|---|
 | `total_cfs_march` | 470 | 63.0 | Gauge coverage gap — not absent streams |
-| `cesspool_density_per_km2` | 165 | 22.1 | Molokaʻi (103) + Lānaʻi (20) + ungauged ahupuaʻa |
-| `dist_to_nearest_cesspool_m` | 123 | 16.5 | Molokaʻi (103) + Lānaʻi (20) |
-| `n_cess_500m / n_cess_1km` | 103 | 13.8 | Molokaʻi only (layer 32 gap) |
+| `cesspool_density_per_km2` | 72 | 9.7 | Ahupuaʻa-level: Lānaʻi (20, no layer) + ungauged ahupuaʻa on other islands |
+| `dist_to_nearest_cesspool_m` | 20 | 2.7 | Lānaʻi only (no cesspool layer on the island) |
+| `n_cess_500m / n_cess_1km` | 0 | 0 | Complete coverage on all four islands, including Molokaʻi (DOH OSDS 2010 integration); this is now the **primary anthropogenic cesspool metric** used in the models below because of its fuller coverage and (per §Step 23) clearer nutrient signal relative to ahupuaʻa-level density |
 | `chirps_storm_cumulative_mm` | 32 | 4.3 | Ocean-pixel locations (offshore samples) |
 | `mean_ksat_um_s` | 19 | 2.5 | Ahupuaʻa with no SSURGO coverage |
 | `mean_slope_deg / pct_impervious / pct_agriculture / pop_density_km2` | 11 | 1.5 | Open Ocean ahupuaʻa |
@@ -2918,7 +2918,8 @@ coupling (log Si β ≈ 0.41 vs 0.81 for NO₃+NO₂) and a **clearer positive s
 effect** (β ≈ 0.19, p < 0.001), consistent with PO₄ mobilisation tracking event
 hydrology more than a fixed source signature. Anthropogenic land use again adds little
 (ΔAIC ≈ 6, ~1 percentage point of deviance): % impervious is significant but *negative*,
-% agriculture is null, and cesspool density is marginal (β ≈ 0.07, p ≈ 0.07, ΔAIC ≈ 2).
+% agriculture is null, and the 1 km cesspool count is not distinguishable from zero
+(β ≈ 0.03, p ≈ 0.47; the AIC comparison also favours the no-cesspool model by ≈ 4 points).
 As with NO₃+NO₂, there is no strong evidence that agricultural or urban land cover
 amplifies coastal PO₄ beyond terrestrial-water transport during this event.
 :::
@@ -3144,19 +3145,21 @@ saveRDS(nh3_sub_nocess,    here("output", "model_objects", "nh3_M_nocesspool_3is
 ```
 
 ::: {.callout-important}
-**Step 14 summary — the contrast holds, with one exception.** NH₄ is much more weakly
+**Step 14 summary — the contrast holds.** NH₄ is much more weakly
 predicted by watershed-scale variables than NO₃+NO₂ or PO₄: deviance explained falls
 to ~35%, terrestrial-water coupling is weak (log Si β ≈ 0.28), and there is no residual
 spatial structure to absorb (Moran's I ≈ 0 even before modelling). This is consistent
 with reduced inorganic N being controlled by localized sources and rapid biogeochemical
-cycling rather than watershed-to-coast transport. The exception worth flagging: in the
-three-island cesspool submodel, **cesspool density is a clear positive predictor of NH₄**
-(standardized β estimated from three-island fit; Molokaʻi included) — potentially the
-only nutrient/predictor combination in Steps 12–14 that matches the human-amplification
-prediction. Distance to the nearest cesspool typically adds nothing for NH₄. This is chemically
-plausible (reduced N dominates fresh effluent) and extends now to three islands; however, it
-remains correlational and should be stated as consistent-with, not proof of, localized wastewater inputs.
-Cross-island robustness testing (comparison with Oʻahu + Maui subset) is warranted.
+cycling rather than watershed-to-coast transport. In the three-island cesspool submodel,
+neither cesspool metric is a clear predictor of NH₄: the 1 km buffer count (β ≈ 0.07,
+p ≈ 0.45) and distance to the nearest cesspool (β ≈ 0.04, p ≈ 0.69) both have wide,
+zero-crossing confidence intervals, and the AIC comparison favours the no-cesspool model.
+(An earlier version of this analysis used ahupuaʻa-scale cesspool *density* instead of the
+1 km buffer count and found a significant positive NH₄ association; that signal does not
+survive the switch to the buffer-count metric, which has fuller sample coverage and — per
+the Step 23 sensitivity check — behaves as a local-proximity metric rather than a restatement
+of density. This metric-dependence is itself informative and is reported, not smoothed over.)
+Cross-island robustness testing (comparison with Oʻahu + Maui subset) remains warranted.
 :::
 
 ---
