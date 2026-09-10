@@ -622,12 +622,15 @@ write_csv(chem_master, here("data", "chem_master.csv"))
 ```{r}
 #| label: fig1-sampling-map
 #| fig-width: 9
-#| fig-height: 8.5
-#| fig-cap: "Figure 1. Sampling design and storm context. Four Hawaiian islands (Oʻahu, Maui, Molokaʻi, Lānaʻi) showing all unique coastal sampling sites (filled circles, coloured by island) and stream mouths (open white triangles, OpenStreetMap). Scale bars at bottom-left of each panel. Pacific inset shows archipelago location. Bottom timeline (left): 4-island mean daily rainfall (NCEP GDAS, March–April 2026); storm window (blue) and community science sampling window (green) are highlighted. Bottom timeline (right inset): daily discharge at three USGS gauges — Makaha Stream (Oʻahu, #16211600), Hanawi Stream (Maui, #16508000), and Hālawa Stream (Molokaʻi, #16400000). All three gauges peaked March 13–14. Basemap: Esri World Imagery."
+#| fig-height: 9
+#| fig-cap: "Figure 1. Sampling design and storm context. Four Hawaiian islands (Oʻahu, Maui, Molokaʻi, Lānaʻi) showing all unique coastal sampling sites (filled circles, coloured by island) and stream mouths (open white triangles, drawn on top; OpenStreetMap). Scale bars at bottom-left of each map panel. Pacific inset shows archipelago context. Bottom panels show 4-island mean daily rainfall (NCEP GDAS, upper) and daily discharge at three USGS key gauges (lower, log₁₀ scale) for March–April 2026 with aligned x-axes. All three gauges peaked March 13–14. Basemap: Esri World Imagery."
 
 library(maptiles); library(tidyterra); library(ggspatial)
+library(rnaturalearth); library(rnaturalearthdata)
 
-normalize_apos <- function(x) str_replace_all(x, "[\u2018\u2019\u02bc']", "'")
+STREAM_COL <- "#00ACC1"   # bright teal — distinct from all island colours and satellite imagery
+
+normalize_apos <- function(x) str_replace_all(x, "[\u2018\u2019\u02bc\u0027]", "'")
 
 # ── Satellite tile cache (downloaded once, reused on render) ──────────────────
 tile_dir <- here("data", "maptiles_cache")
@@ -645,14 +648,18 @@ make_bbox_sf <- function(xmin, xmax, ymin, ymax)
   st_bbox(c(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), crs=4326) |>
   st_as_sfc()
 
-tiles <- imap(island_bbox, \(bb, isl) {
-  cf <- file.path(tile_dir, paste0(gsub("[^A-Za-z]","_", isl), "_sat.rds"))
-  if (file.exists(cf)) return(readRDS(cf))
-  t <- get_tiles(make_bbox_sf(bb["xmin"], bb["xmax"], bb["ymin"], bb["ymax"]),
-                 provider = "Esri.WorldImagery",
-                 zoom = zoom_levels[[isl]], cachedir = tile_dir)
-  saveRDS(t, cf); t
-})
+# terra SpatRasters don't safely deserialise from RDS across sessions.
+# get_tiles() uses its own file cache (tile_dir) — no re-download after first render.
+tiles <- imap(island_bbox, \(bb, isl)
+  get_tiles(
+    st_as_sfc(st_bbox(c(xmin=unname(bb["xmin"]), xmax=unname(bb["xmax"]),
+                         ymin=unname(bb["ymin"]), ymax=unname(bb["ymax"])),
+                       crs=4326)),
+    provider = "Esri.WorldImagery",
+    zoom     = zoom_levels[[isl]],
+    cachedir = tile_dir
+  )
+)
 
 # ── Sample sites and stream mouths ────────────────────────────────────────────
 samples_plot <- chem_master |>
@@ -672,139 +679,216 @@ island_counts_norm <- chem_master |>
   mutate(island_n = normalize_apos(island)) |>
   count(island_n, name = "n_samples")
 
-# ── Island panel helper: satellite basemap + points ───────────────────────────
+# ── Island panel: satellite + scale bar, label at top ────────────────────────
 make_sat_panel <- function(isl) {
   isl_n <- normalize_apos(isl)
   bb    <- island_bbox[[isl]]
-  pts   <- samples_plot |> dplyr::filter(normalize_apos(island) == isl_n)
+  pts   <- samples_plot       |> dplyr::filter(normalize_apos(island) == isl_n)
   strm  <- stream_mouths_plot |> dplyr::filter(normalize_apos(island) == isl_n)
   ns    <- island_counts_norm$n_samples[island_counts_norm$island_n == isl_n]
   col   <- island_pal_norm[[isl_n]]
   lbl_x <- mean(c(bb["xmin"], bb["xmax"]))
-  lbl_y <- bb["ymin"] + 0.07 * (bb["ymax"] - bb["ymin"])
+  lbl_y <- bb["ymax"] - 0.06 * (bb["ymax"] - bb["ymin"])   # top of panel
   hw    <- (bb["xmax"] - bb["xmin"]) * 0.40
 
   ggplot() +
     geom_spatraster_rgb(data = tiles[[isl]]) +
-    # Stream mouths: open white triangles, dark outline — visible on satellite
+    # Stream mouths FIRST (below) — solid teal, visible through sample points
     geom_point(data = strm, aes(x = longitude, y = latitude),
-               shape = 24, size = 1.3, stroke = 0.5,
-               fill = "white", colour = "gray10", alpha = 0.85) +
-    # Sample sites: solid island-colour circles, white border
+               shape = 24, size = 1.5, stroke = 0.5,
+               fill = STREAM_COL, colour = "white", alpha = 0.80) +
+    # Sample sites ON TOP — island colour, semi-transparent so teal shows through
     geom_point(data = pts, aes(x = longitude, y = latitude),
-               shape = 21, size = 2.0, stroke = 0.4,
-               fill = col, colour = "white", alpha = 0.90) +
+               shape = 21, size = 1.8, stroke = 0.3,
+               fill = col, colour = "white", alpha = 0.60) +
+    annotation_scale(location = "bl", width_hint = 0.28,
+                     text_col = "white", bar_cols = c("white", "gray40"),
+                     line_col = "white", text_cex = 0.65,
+                     pad_x = unit(0.08, "in"), pad_y = unit(0.08, "in")) +
     coord_sf(xlim = c(bb["xmin"], bb["xmax"]),
              ylim = c(bb["ymin"], bb["ymax"]),
              expand = FALSE, crs = 4326) +
+    # Semi-transparent white label pill at top (readable on satellite)
     annotate("rect",
              xmin = lbl_x - hw, xmax = lbl_x + hw,
-             ymin = lbl_y - 0.010, ymax = lbl_y + 0.022,
-             fill = alpha("gray5", 0.72), colour = NA) +
+             ymin = lbl_y - 0.018, ymax = lbl_y + 0.009,
+             fill = alpha("white", 0.78), colour = NA) +
     annotate("text", x = lbl_x, y = lbl_y,
              label = sprintf("%s  (n = %d)", isl, ns),
-             hjust = 0.5, vjust = 0, size = 2.5, fontface = "bold", colour = col) +
+             hjust = 0.5, vjust = 1, size = 2.6, fontface = "bold", colour = col) +
     theme_void() +
-    theme(plot.background = element_rect(fill = "gray10", colour = NA),
-          panel.border    = element_rect(fill = NA, colour = "gray40",
-                                         linewidth = 0.4))
+    theme(
+      plot.background = element_rect(fill = "white", colour = NA),
+      panel.border    = element_rect(fill = NA, colour = "gray50", linewidth = 0.4)
+    )
 }
 
-# ── Pacific inset ─────────────────────────────────────────────────────────────
+# ── Pacific inset (light, print-friendly) ────────────────────────────────────
 p_inset <- ggplot() +
   geom_sf(data = ne_countries(scale = "medium", returnclass = "sf"),
-          fill = "gray30", colour = "gray50", linewidth = 0.15) +
+          fill = "gray80", colour = "gray55", linewidth = 0.15) +
   annotate("point", x = -157.8, y = 21.3, shape = 23,
-           fill = "#C62828", colour = "white", size = 2.5, stroke = 0.5) +
+           fill = "#C62828", colour = "white", size = 2.8, stroke = 0.5) +
   coord_sf(xlim = c(-210, -100), ylim = c(-10, 60), expand = FALSE) +
   theme_void() +
-  theme(plot.background = element_rect(fill = "#1a2a3a", colour = "gray50",
+  theme(plot.background = element_rect(fill = "#D6EAF8", colour = "gray60",
                                        linewidth = 0.5))
 
-# ── Event timeline ────────────────────────────────────────────────────────────
-ncep_trim <- read_csv(here("hawaii_ncep_janjun_cache.csv"), show_col_types = FALSE) |>
-  dplyr::filter(island %in% c("Oahu", "Maui", "Molokai", "Lanai"),
-                date >= as.Date("2026-03-01"), date <= as.Date("2026-04-12")) |>
+# ── Shared timeline theme (white, print-ready) ────────────────────────────────
+theme_tl <- function() {
+  theme_minimal(base_size = 8) +
+    theme(
+      plot.background    = element_rect(fill = "white", colour = NA),
+      panel.background   = element_rect(fill = "white", colour = NA),
+      panel.grid.major.y = element_line(colour = "gray88", linewidth = 0.3),
+      panel.grid.minor   = element_blank(),
+      panel.grid.major.x = element_blank(),
+      axis.text          = element_text(colour = "gray20", size = 7),
+      axis.title.y       = element_text(colour = "gray20", size = 7.5,
+                                        margin = margin(r = 4))
+    )
+}
+
+tl_limits <- c(as.Date("2026-03-01"), as.Date("2026-04-12"))
+win_rects  <- list(
+  annotate("rect", xmin=storm_start, xmax=storm_end,
+           ymin=-Inf, ymax=Inf, fill="#BDD7EE", alpha=0.60),
+  annotate("rect", xmin=samp_start,  xmax=samp_end,
+           ymin=-Inf, ymax=Inf, fill="#C6EFCE", alpha=0.60)
+)
+
+# ── NCEP rainfall (upper; x-axis labels hidden) ───────────────────────────────
+ncep_trim <- read_csv(here("hawaii_ncep_janjun_cache.csv"),
+                      show_col_types = FALSE) |>
+  dplyr::filter(island %in% c("Oahu","Maui","Molokai","Lanai"),
+                date >= tl_limits[1], date <= tl_limits[2]) |>
   group_by(date) |>
   summarise(precip_mmday = mean(precip_mmday, na.rm = TRUE), .groups = "drop")
 
-peak_mm <- max(ncep_trim$precip_mmday, na.rm = TRUE)
+peak_mm <- max(ncep_trim$precip_mmday)
 
-p_tl <- ggplot() +
-  annotate("rect", xmin=storm_start, xmax=storm_end,
-           ymin=-Inf, ymax=Inf, fill="#BBDEFB", alpha=0.55) +
-  annotate("rect", xmin=samp_start, xmax=samp_end,
-           ymin=-Inf, ymax=Inf, fill="#C8E6C9", alpha=0.55) +
-  geom_col(data = ncep_trim, aes(x=date, y=precip_mmday),
-           fill="#64B5F6", alpha=0.90, width=1) +
-  annotate("text", x=as.Date("2026-03-11"), y=peak_mm*0.93,
-           label="March Kona Low\n(peak ~65 mm day\u207b\u00b9)",
-           size=2.6, hjust=0, colour="#90CAF9", fontface="italic") +
-  annotate("text", x=as.Date("2026-03-29"), y=peak_mm*0.93,
-           label="Community science\nsampling window",
-           size=2.6, hjust=0, colour="#A5D6A7", fontface="italic") +
-  scale_x_date(date_breaks="1 week", date_labels="%b %d",
-               limits=c(as.Date("2026-03-01"), as.Date("2026-04-12")),
-               expand=expansion(add=1)) +
-  scale_y_continuous(expand=expansion(mult=c(0, 0.05))) +
-  labs(x=NULL, y="Rainfall (mm day\u207b\u00b9)\n4-island mean (NCEP)") +
-  theme_minimal(base_size=8) +
-  theme(plot.background    = element_rect(fill="gray10", colour=NA),
-        panel.background   = element_rect(fill="gray10", colour=NA),
-        panel.grid.major.y = element_line(colour="gray30", linewidth=0.3),
-        panel.grid.minor   = element_blank(),
-        panel.grid.major.x = element_blank(),
-        axis.text          = element_text(colour="gray80", size=7),
-        axis.title.y       = element_text(colour="gray80", size=7.5))
+# Window midpoints for inline labels
+storm_mid <- storm_start + as.numeric(storm_end - storm_start) / 2
+samp_mid  <- samp_start  + as.numeric(samp_end  - samp_start)  / 2
 
-# ── Legend panel ──────────────────────────────────────────────────────────────
+# Window label midpoints
+storm_mid <- storm_start + as.numeric(storm_end - storm_start) / 2
+samp_mid  <- samp_start  + as.numeric(samp_end  - samp_start)  / 2
+
+p_rain <- ggplot() +
+  win_rects +
+  geom_col(data = ncep_trim, aes(x = date, y = precip_mmday),
+           fill = "#2196F3", alpha = 0.80, width = 1) +
+  # Window names at TOP of their shaded regions (y=Inf, vjust places inside top)
+  annotate("text", x = storm_mid, y = Inf, vjust = 1.3,
+           label = "Storm window",
+           size = 2.4, hjust = 0.5, colour = "#1A5276", fontface = "bold") +
+  annotate("text", x = samp_mid, y = Inf, vjust = 1.3,
+           label = "Community\nscience sampling",
+           size = 2.3, hjust = 0.5, colour = "#1E8449",
+           fontface = "bold", lineheight = 0.85) +
+  # Storm peak label to the right of the peak bar
+  annotate("text", x = as.Date("2026-03-16"), y = peak_mm * 0.70,
+           label = "Peak\n~65 mm/day",
+           size = 2.2, hjust = 0, colour = "#0D47A1",
+           fontface = "italic", lineheight = 0.85) +
+  scale_x_date(limits = tl_limits, expand = expansion(add = 1),
+               date_breaks = "1 week", date_labels = "%b %d") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(x = NULL, y = "Rainfall\n(mm day\u207b\u00b9)") +
+  theme_tl() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+# ── USGS discharge (lower; island labels at storm-peak positions) ─────────────
+key_site_labels  <- c(`16211600`="O\u02BBahu",
+                      `16400000`="Moloka\u02BBi",
+                      `16508000`="Maui")
+discharge_colors <- c("O\u02BBahu"    ="#1565C0",
+                      "Moloka\u02BBi" ="#E65100",
+                      "Maui"          ="#2E7D32")
+
+usgs_key <- read_csv(here("data","usgs_discharge_cache.csv"),
+                     show_col_types = FALSE) |>
+  dplyr::filter(site_no %in% as.numeric(names(key_site_labels)),
+                Date >= tl_limits[1], Date <= tl_limits[2],
+                !is.na(Flow), Flow >= 0.5) |>
+  mutate(gauge_label = key_site_labels[as.character(site_no)])
+
+p_disch <- ggplot(usgs_key, aes(x = Date, y = Flow, colour = gauge_label)) +
+  win_rects +
+  geom_line(linewidth = 0.9, na.rm = TRUE) +
+  # Labels placed just after each line's storm peak — where lines are maximally separated
+  annotate("text", x = as.Date("2026-03-16"), y = 1040,
+           label = "Maui",          colour = "#2E7D32",
+           hjust = 0, vjust = -0.3, size = 2.6, fontface = "bold") +
+  annotate("text", x = as.Date("2026-03-16"), y = 669,
+           label = "Moloka\u02BBi", colour = "#E65100",
+           hjust = 0, vjust = -0.3, size = 2.6, fontface = "bold") +
+  annotate("text", x = as.Date("2026-03-16"), y = 231,
+           label = "O\u02BBahu",    colour = "#1565C0",
+           hjust = 0, vjust = -0.3, size = 2.6, fontface = "bold") +
+  scale_colour_manual(values = discharge_colors, guide = "none") +
+  scale_y_log10(labels = scales::label_comma(), breaks = c(1, 10, 100, 1000)) +
+  scale_x_date(limits = tl_limits, expand = expansion(add = 1),
+               date_breaks = "1 week", date_labels = "%b %d") +
+  labs(x = NULL, y = "Discharge\n(cfs, log\u2081\u2080)") +
+  theme_tl() +
+  coord_cartesian(clip = "off")
+
+p_timeline <- (p_rain / p_disch) + plot_layout(heights = c(1.8, 1.2))
+
+# ── Legend: symbols only; windows and gauge names are annotated directly ──────
+# Window shading and discharge gauge labels appear as inline annotations on
+# the timeline panels — no redundant legend entries needed.
 p_leg <- ggplot() + theme_void() +
-  theme(plot.background = element_rect(fill="gray10", colour=NA)) +
-  annotate("point", x=0.12, y=0.82, shape=21, size=3,
-           fill="gray50", colour="white", stroke=0.4) +
-  annotate("text",  x=0.22, y=0.82, label="Sample site",
-           hjust=0, size=2.6, colour="gray90") +
-  annotate("point", x=0.12, y=0.62, shape=24, size=2.2,
-           fill="white", colour="gray15", stroke=0.5) +
-  annotate("text",  x=0.22, y=0.62, label="Stream mouth",
-           hjust=0, size=2.6, colour="gray90") +
-  annotate("rect",  xmin=0.06, xmax=0.18, ymin=0.36, ymax=0.48,
-           fill="#BBDEFB", colour=NA) +
-  annotate("text",  x=0.22, y=0.42, label="Storm window",
-           hjust=0, size=2.6, colour="gray90") +
-  annotate("rect",  xmin=0.06, xmax=0.18, ymin=0.16, ymax=0.28,
-           fill="#C8E6C9", colour=NA) +
-  annotate("text",  x=0.22, y=0.22, label="Sampling window",
-           hjust=0, size=2.6, colour="gray90") +
+  theme(plot.background = element_rect(fill = "white", colour = NA)) +
+  # Sample site symbol + explanation
+  annotate("point", x=0.18, y=0.78, shape=21, size=3,
+           fill="#1565C0", colour="white", stroke=0.3, alpha=0.55) +
+  annotate("text",  x=0.30, y=0.78, label="Sample site\n(island colour)",
+           hjust=0, size=2.5, colour="gray20", lineheight=0.9) +
+  # Stream mouth symbol
+  annotate("point", x=0.18, y=0.52, shape=24, size=2.5,
+           fill=STREAM_COL, colour="white", stroke=0.5) +
+  annotate("text",  x=0.30, y=0.52, label="Stream mouth",
+           hjust=0, size=2.5, colour="gray20") +
+  # Island colour swatches
+  annotate("text",  x=0.50, y=0.25,
+           label="O\u02BBahu   Maui   Moloka\u02BBi   L\u0101na\u02BBi",
+           hjust=0.5, vjust=0, size=1.9, colour="gray40", fontface="italic") +
+  annotate("point", x=c(0.10,0.28,0.48,0.68), y=rep(0.12,4),
+           shape=21, size=3, stroke=0.3, alpha=0.7,
+           fill=c("#1565C0","#2E7D32","#E65100","#6A1B9A"), colour="white") +
   xlim(0,1) + ylim(0,1)
 
-# ── Assemble ──────────────────────────────────────────────────────────────────
+# ── Assemble and save ─────────────────────────────────────────────────────────
 caption_txt <- sprintf(
-  "n = %d samples  \u00b7  %d unique coastal sites  \u00b7  %d ahupua\u02BBa  \u00b7  4 islands  \u00b7  Mar 28\u2013Apr 8, 2026\nBasemap: Esri World Imagery. Stream mouth locations: OpenStreetMap.",
+  "n\u202F=\u202F%d samples  \u00b7  %d unique coastal sites  \u00b7  %d ahupua\u02BBa  \u00b7  4 islands  \u00b7  Mar\u202F28\u2013Apr\u202F8, 2026.\nBasemap: Esri World Imagery. Stream mouths: OpenStreetMap (teal triangles). Discharge: USGS gauges 16211600, 16508000, 16400000.",
   nrow(chem_master |> dplyr::filter(!offshore_reference)),
   nrow(samples_plot),
   n_distinct(chem_master$ahupuaa[!chem_master$offshore_reference])
 )
 
-top_row <- (make_sat_panel("O'ahu") | make_sat_panel("Maui")) +
+top_row <- (make_sat_panel("O'ahu")    | make_sat_panel("Maui")) +
   plot_layout(widths = c(1, 1))
 mid_row <- (make_sat_panel("Moloka'i") | make_sat_panel("Lāna'i") |
               p_inset | p_leg) +
-  plot_layout(widths = c(2.2, 1.3, 1.8, 1.5))
+  plot_layout(widths = c(2.2, 1.3, 1.8, 1.7))
 
-fig1 <- (top_row / mid_row / p_tl) +
-  plot_layout(heights = c(3.2, 2.2, 2.2)) +
+fig1 <- (top_row / mid_row / p_timeline) +
+  plot_layout(heights = c(3.2, 2.0, 3.0)) +
   plot_annotation(
     caption = caption_txt,
-    theme = theme(
-      plot.background = element_rect(fill = "gray10", colour = NA),
-      plot.caption = element_text(size=6.5, hjust=0.5,
-                                  colour="gray50", margin=margin(t=3))
+    theme   = theme(
+      plot.background = element_rect(fill = "white", colour = NA),
+      plot.caption    = element_text(size = 6.5, hjust = 0.5,
+                                     colour = "gray50", margin = margin(t = 3))
     )
   )
 
 suppressWarnings(fig1)
-save_fig(fig1, "Fig1_sampling_map", width = 9, height = 8)
+save_fig(fig1, "Fig1_sampling_map", width = 9, height = 9)
+invisible(NULL)   # suppress patchwork theme warning in output
 ```
 
 ---
