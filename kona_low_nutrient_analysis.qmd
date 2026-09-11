@@ -2581,7 +2581,7 @@ tibble(
 #| label: step12-nox-coefficients
 #| fig-width: 6.5
 #| fig-height: 4
-#| fig-cap: "**Step 12 — Standardized fixed effects on log(NO₃+NO₂), four-island primary model.** Points are standardized coefficients; bars are 95% Wald confidence intervals. A 1-SD change in log(SiO₂) is associated with a 0.81-SD change in log(NO₃+NO₂); the anthropogenic land-use terms (agriculture, impervious) do not differ clearly from zero after adjustment. Colours mark the four pre-registered predictor groups; island/ahupuaʻa random effects and the 2D spatial smooth are not shown."
+#| fig-cap: "**Step 12 — Standardized fixed effects on log(NO₃+NO₂), four-island primary model.** Points are standardized coefficients; bars are 95% Wald confidence intervals. A 1-SD change in log(SiO₂) is associated with a ≈0.80-SD change in log(NO₃+NO₂); among the anthropogenic terms, % impervious, NPDES distance, and the cesspool exposure index differ from zero, while % agriculture does not. Colours mark the four pre-registered predictor groups; island/ahupuaʻa random effects and the 2D spatial smooth are not shown."
 
 coef_ci <- function(model, label) {
   s <- summary(model)$p.table
@@ -2821,7 +2821,7 @@ tibble(
 #| label: step13-po4-coefficients
 #| fig-width: 6.5
 #| fig-height: 4
-#| fig-cap: "**Step 13 — Standardized fixed effects on log(PO₄), four-island primary model.** Points are standardized coefficients; bars are 95% Wald confidence intervals. log(SiO₂) is the leading predictor (β ≈ 0.41), with a clearer positive storm-rainfall contribution than NO₃+NO₂; anthropogenic land-use terms remain weak. Colours mark the four pre-registered predictor groups."
+#| fig-cap: "**Step 13 — Standardized fixed effects on log(PO₄), four-island primary model.** Points are standardized coefficients; bars are 95% Wald confidence intervals. log(SiO₂) is the leading predictor (β ≈ 0.40), with a clearer positive storm-rainfall contribution than NO₃+NO₂; anthropogenic land-use terms are mostly weak except for a small positive cesspool-exposure effect. Colours mark the four pre-registered predictor groups."
 
 po4_coefs <- coef_ci(po4_M_full, "PO4")
 
