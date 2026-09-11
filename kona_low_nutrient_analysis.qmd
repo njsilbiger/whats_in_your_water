@@ -3002,7 +3002,7 @@ tibble(
 #| label: step14-nh4-coefficients
 #| fig-width: 6.5
 #| fig-height: 4
-#| fig-cap: "**Step 14 — Standardized fixed effects on log(NH₄), four-island primary model.** log(SiO₂) remains the leading predictor but is markedly weaker than for NO₃+NO₂ or PO₄ (β ≈ 0.28). Both % impervious and % agriculture carry significant *negative* associations. Bars are 95% Wald confidence intervals."
+#| fig-cap: "**Step 14 — Standardized fixed effects on log(NH₄), four-island primary model.** log(SiO₂) remains the leading predictor but is markedly weaker than for NO₃+NO₂ or PO₄ (β ≈ 0.27). Both % impervious and % agriculture carry significant *negative* associations; unlike NO₃+NO₂ and PO₄, the cesspool exposure index is not distinguishable from zero. Bars are 95% Wald confidence intervals."
 
 nh3_coefs <- coef_ci(nh3_M_full, "NH4")
 
@@ -3139,25 +3139,22 @@ metric-dependence is itself informative and is reported, not smoothed over.)
 > **Step 15.** Coefficient plot — one row per predictor, four columns (nutrients).
 > Group rows: hydrologic forcing / watershed transport / anthropogenic / coastal dilution.
 
-Figure 5 shows both tiers of the design side by side. The **four-island** scope uses
-the primary `*_M_full` models (anthropogenic block = agriculture, impervious, NPDES);
-the **three-island** scope uses the submodels, which additionally include *both*
-cesspool metrics: the **1 km buffer count** (`n_cess_1km`, log1p-transformed — chosen over
-ahupuaʻa-scale density because it has complete sample-level coverage and, per the Step 23
-sensitivity check, carries the clearer nutrient signal) and distance-to-nearest cesspool.
-The two are moderately collinear (Spearman r ≈ −0.79, VIF ≈ 2.7 for both) but not dropped,
-per the project's policy against arbitrary VIF-based exclusion. Molokaʻi data from DOH OSDS
-2010 inventory; see comparability caveat.
-To place Si on the same footing in each scope we refit the connectivity model (Step 11) 
-as a **standardized linear comparability model**: `log(SiO₂)` as response, the same 
-predictor set *minus* `log(SiO₂)` (Si's own response). These comparability models are 
-for coefficient display only; the Step 11 GAM remains the primary inferential Si model.
+Because the cesspool exposure index has complete coverage on all four islands, one
+single four-island model per nutrient now carries the full predictor set (Steps 12–14);
+there is no longer a need for a separate reduced-island "cesspool submodel" scope. To
+place Si on the same footing we refit the connectivity model (Step 11) as a
+**standardized linear comparability model**: `log(SiO₂)` as response, the same predictor
+set *minus* `log(SiO₂)` (Si's own response), including cesspool exposure. This
+comparability model is for coefficient display only; the Step 11 GAM remains the primary
+inferential Si model.
 
 ```{r}
 #| label: step15-si-comparability-model
 #| cache: true
 
 # Standardized linear Si model — comparability with the N/P/NH4 models for Figure 5.
+# Includes log_cess_exposure like the other three nutrient models (complete on all
+# 4 islands), so this is now a single four-island model, not a two-scope design.
 si_std <- chem_master |>
   filter(!offshore_reference, !is.na(SiO2), !bdl_SiO2) |>
   left_join(sp_sf |> st_drop_geometry() |> select(sample_id, utm_x, utm_y), by = "sample_id") |>
@@ -3166,6 +3163,7 @@ si_std <- chem_master |>
     log_dist_stream_m = log(dist_to_stream_mouth_m + 1),
     log_ksat = log(mean_ksat_um_s + 1),
     log_dist_npdes_m = log(dist_to_nearest_npdes_m + 1),
+    log_cess_exposure = log1p(cess_exposure_idx),
     island_f = factor(island), ahupuaa_f = factor(ahupuaa),
     utm_x_km = utm_x / 1000, utm_y_km = utm_y / 1000
   )
@@ -3181,72 +3179,37 @@ si_M_std <- gam(
   data = si_std, method = "REML")
 saveRDS(si_M_std, here("output", "model_objects", "si_M_std_comparability.rds"))
 
-# Three-island Si comparability submodel — adds both cesspool metrics (Tier 2 scope).
-si_sub_vars <- c(si_std_vars, "log_n1km", "log_dist_cesspool_m")
-si_std_sub_3isl <- chem_master |>
-  filter(!offshore_reference, !is.na(SiO2), !bdl_SiO2,
-         island %in% c("O'ahu", "Maui", "Moloka'i"),
-         !is.na(n_cess_1km), !is.na(dist_to_nearest_cesspool_m)) |>
-  left_join(sp_sf |> st_drop_geometry() |> select(sample_id, utm_x, utm_y), by = "sample_id") |>
-  mutate(
-    log_SiO2 = log(SiO2),
-    log_dist_stream_m = log(dist_to_stream_mouth_m + 1),
-    log_ksat = log(mean_ksat_um_s + 1),
-    log_dist_npdes_m = log(dist_to_nearest_npdes_m + 1),
-    log_n1km = log1p(n_cess_1km),
-    log_dist_cesspool_m  = log(dist_to_nearest_cesspool_m + 1),
-    island_f = factor(island), ahupuaa_f = factor(ahupuaa),
-    utm_x_km = utm_x / 1000, utm_y_km = utm_y / 1000
-  ) |>
-  filter(if_all(all_of(si_sub_vars), ~ !is.na(.)), !is.na(utm_x_km)) |>
-  mutate(across(all_of(si_sub_vars), z, .names = "z_{.col}"))
-
-si_M_std_sub_3isl <- gam(
-  as.formula(paste("log_SiO2 ~", paste(paste0("z_", si_sub_vars), collapse = " + "),
-                   "+ s(island_f, bs='re') + s(ahupuaa_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)")),
-  data = si_std_sub_3isl, method = "REML")
-saveRDS(si_M_std_sub_3isl, here("output", "model_objects", "si_M_std_comparability_3island.rds"))
-
-cat("Si comparability models — four-island n =", nrow(si_std),
-    "| Three-island n =", nrow(si_std_sub_3isl), "\n")
+cat("Si comparability model (four-island): n =", nrow(si_std), "\n")
 ```
 
 ```{r}
 #| label: step15-combine-coefficients
 
-# Standardized coefficients across all four nutrients, two model scopes.
-scope4 <- "Four islands"
-scope3 <- "Three islands (+cesspool)"
+# Standardized coefficients across all four nutrients, single four-island scope.
 fig5_coefs <- bind_rows(
-  coef_ci(si_M_std,        "SiO2")   |> mutate(scope = scope4),
-  coef_ci(nox_M_full,      "NO3NO2") |> mutate(scope = scope4),
-  coef_ci(po4_M_full,      "PO4")    |> mutate(scope = scope4),
-  coef_ci(nh3_M_full,      "NH4")    |> mutate(scope = scope4),
-  coef_ci(si_M_std_sub_3isl, "SiO2")   |> mutate(scope = scope3),
-  coef_ci(nox_sub_full,    "NO3NO2") |> mutate(scope = scope3),
-  coef_ci(po4_sub_full,    "PO4")    |> mutate(scope = scope3),
-  coef_ci(nh3_sub_full,    "NH4")    |> mutate(scope = scope3)
+  coef_ci(si_M_std,   "SiO2"),
+  coef_ci(nox_M_full, "NO3NO2"),
+  coef_ci(po4_M_full, "PO4"),
+  coef_ci(nh3_M_full, "NH4")
 ) |>
   filter(term %in% paste0("z_", c(
     "log_SiO2", "chirps_storm_cumulative_mm", "log_dist_stream_m", "mean_slope_deg",
-    "log_ksat", "pct_agriculture", "pct_impervious", "log_n1km",
-    "log_dist_cesspool_m", "log_dist_npdes_m", "fetch_mean_km", "hs_mean_m")))
+    "log_ksat", "pct_agriculture", "pct_impervious", "log_cess_exposure",
+    "log_dist_npdes_m", "fetch_mean_km", "hs_mean_m")))
 
-# Response-specific sample sizes by scope
+# Response-specific sample sizes
 fig5_n <- tibble(
-  Scope    = c(rep(scope4, 4), rep(scope3, 4)),
-  Nutrient = rep(c("SiO\u2082", "NO\u2083+NO\u2082", "PO\u2084", "NH\u2084"), 2),
-  n        = c(nrow(si_std), nrow(nox_primary), nrow(po4_primary), nrow(nh3_primary),
-               nrow(si_std_sub_3isl), nrow(nox_sub_3isl), nrow(po4_sub_3isl), nrow(nh3_sub_3isl))
+  Nutrient = c("SiO\u2082", "NO\u2083+NO\u2082", "PO\u2084", "NH\u2084"),
+  n        = c(nrow(si_std), nrow(nox_primary), nrow(po4_primary), nrow(nh3_primary))
 )
-fig5_n |> knitr::kable(caption = "Response-specific sample sizes for the four-nutrient comparison, by model scope.")
+fig5_n |> knitr::kable(caption = "Response-specific sample sizes for the four-nutrient comparison (all four-island models).")
 ```
 
 ```{r}
 #| label: fig5-effect-sizes
-#| fig-width: 9
+#| fig-width: 7.5
 #| fig-height: 6.5
-#| fig-cap: "**Figure 5.** Standardized fixed effects on each nutrient (log scale) from the mixed models, shown for two model scopes: the four-island primary models (left) and the three-island cesspool submodels (right; Oʻahu, Maui, Molokaʻi). Rows are predictors grouped by mechanistic role; points are standardized coefficients with 95% Wald confidence intervals; colour distinguishes the four nutrients. Filled points mark effects whose 95% CI excludes zero (also encoded so the figure is interpretable in grayscale). log(SiO₂) enters the N/P/NH₄ models as an empirical terrestrial-water proxy and is Si's own response (so Si has no terrestrial-delivery row). Cesspool rows are populated only in the three-island scope (Molokaʻi data from DOH OSDS 2010 inventory; Lānaʻi lacks cesspool coverage). Sample sizes are given in the table above. Cross-island magnitude comparisons account for inventory vintage differences (see text). Island/ahupuaʻa random effects and the 2D spatial smooth are not shown."
+#| fig-cap: "**Figure 5.** Standardized fixed effects on each nutrient (log scale) from the four-island mixed models. Rows are predictors grouped by mechanistic role; points are standardized coefficients with 95% Wald confidence intervals; colour distinguishes the four nutrients. Filled points mark effects whose 95% CI excludes zero (also encoded so the figure is interpretable in grayscale). log(SiO₂) enters the N/P/NH₄ models as an empirical terrestrial-water proxy and is Si's own response (so Si has no terrestrial-delivery row). The cesspool exposure index (distance-decay weighted cesspool count, Step 2) is complete on all four islands, including Lānaʻi (Molokaʻi data from DOH OSDS 2010 inventory; see comparability caveat). Sample sizes are given in the table above. Island/ahupuaʻa random effects and the 2D spatial smooth are not shown."
 
 nut_levels <- c("SiO2", "NO3NO2", "PO4", "NH4")
 nut_labels <- c(SiO2 = "SiO\u2082", NO3NO2 = "NO\u2083+NO\u2082", PO4 = "PO\u2084", NH4 = "NH\u2084")
@@ -3255,7 +3218,7 @@ group_levels <- c("Terrestrial delivery", "Hydrologic forcing", "Watershed trans
                   "Anthropogenic", "Coastal dilution")
 pred_order <- paste0("z_", c("log_SiO2", "chirps_storm_cumulative_mm", "log_dist_stream_m",
                              "mean_slope_deg", "log_ksat", "pct_agriculture", "pct_impervious",
-                             "log_n1km", "log_dist_cesspool_m",
+                             "log_cess_exposure",
                              "log_dist_npdes_m", "fetch_mean_km", "hs_mean_m"))
 
 fig5_df <- fig5_coefs |>
@@ -3263,7 +3226,6 @@ fig5_df <- fig5_coefs |>
     nutrient  = factor(model, levels = nut_levels),
     Predictor = factor(pred_label[term], levels = rev(pred_label[pred_order])),
     Group     = factor(pred_group[term], levels = group_levels),
-    scope     = factor(scope, levels = c(scope4, scope3)),
     sig       = if_else(lwr > 0 | upr < 0, "sig", "ns")
   )
 
@@ -3271,7 +3233,7 @@ fig5 <- ggplot(fig5_df, aes(est, Predictor, colour = nutrient, shape = sig)) +
   geom_vline(xintercept = 0, linetype = 2, colour = "grey60") +
   geom_pointrange(aes(xmin = lwr, xmax = upr),
                   position = position_dodge(width = 0.65), linewidth = 0.5) +
-  facet_grid(Group ~ scope, scales = "free_y", space = "free_y", switch = "y") +
+  facet_grid(Group ~ ., scales = "free_y", space = "free_y", switch = "y") +
   scale_colour_manual(values = nut_cols, labels = nut_labels, name = NULL) +
   scale_shape_manual(values = c(sig = 19, ns = 1), guide = "none") +
   labs(x = "Standardized effect (\u00b195% CI)", y = NULL) +
@@ -3281,43 +3243,45 @@ fig5 <- ggplot(fig5_df, aes(est, Predictor, colour = nutrient, shape = sig)) +
         panel.grid.major.y = element_blank(),
         legend.position = "top")
 
-save_fig(fig5, "fig5_effect_sizes", width = 9, height = 6.5)
+save_fig(fig5, "fig5_effect_sizes", width = 7.5, height = 6.5)
 fig5
 ```
 
 ::: {.callout-important}
 **Figure 5 — what the four models show together.** The nutrients record different
 stages of the land-to-sea pathway. **Si** is driven by hydrologic forcing (storm
-rainfall, standardized β ≈ 0.43), stream proximity, and coastal dilution — the
-physical-connectivity signature, with anthropogenic land cover *negatively* associated
-(drier, more-developed watersheds deliver less terrestrial water). **NO₃+NO₂** is
-dominated by terrestrial delivery (log Si β ≈ 0.81); once that is accounted for, only
-NPDES proximity and wave dilution remain. **PO₄** shows moderate terrestrial coupling
-(β ≈ 0.41) plus its own positive storm-rainfall response. **NH₄** is weakly tied to all
-watershed-scale predictors. Across every nutrient, agricultural and urban land cover
-provide **no positive amplification** in either scope; the anthropogenic signals that
-do appear are NPDES proximity (N, P). In the three-island cesspool scope — where the two
-cesspool metrics are the 1 km buffer count and distance-to-nearest — the buffer count is a
-marginal positive predictor of NO₃+NO₂ (β ≈ 0.17, p ≈ 0.06, 95% CI barely crosses zero) and
-is not distinguishable from zero for PO₄ or NH₄; distance-to-nearest adds little for any
-nutrient. Cross-island robustness of these patterns (with/without Molokaʻi) warrants sensitivity testing.
-This figure supports the "watershed structure predicts exposure" framing more than a
-general "human amplification" claim; the formal test follows in Step 17.
+rainfall, standardized β ≈ 0.44), stream proximity, and coastal dilution — the
+physical-connectivity signature — with agricultural and impervious land cover
+*negatively* associated (drier, more-developed watersheds deliver less terrestrial
+water) but cesspool exposure *positively* associated (β ≈ 0.15). **NO₃+NO₂** is
+dominated by terrestrial delivery (log Si β ≈ 0.80); once that is accounted for,
+% impervious, NPDES proximity, and the **cesspool exposure index** (β ≈ 0.14) all
+differ from zero. **PO₄** shows moderate terrestrial coupling (β ≈ 0.40), its own
+positive storm-rainfall response, and a smaller but still clearly positive cesspool
+exposure effect (β ≈ 0.07). **NH₄** is weakly tied to nearly all watershed-scale
+predictors, including cesspool exposure (β ≈ 0.03, not distinguishable from zero) —
+the exception to the pattern. Agricultural land cover shows **no positive amplification**
+for any nutrient; the anthropogenic signals that are robust are NPDES proximity (N) and,
+for NO₃+NO₂ and PO₄ specifically, **cesspool exposure**, which remains stable whether or
+not Lānaʻi is included (Steps 12–13). This is the strongest evidence in the analysis for
+Hypothesis 4: human wastewater infrastructure is associated with additional coastal N and
+P enrichment beyond what terrestrial-water delivery alone predicts, though NH₄ does not
+share this pattern. The formal cross-validated test follows in Step 17.
 :::
 
 ## Explicit human-amplification test {#sec-amplification-test}
 
 > **Step 17.** Compare Model A (physical only) vs B (+anthropogenic) vs C (+interactions).
 
-The formal amplification test for NO₃+NO₂, using the **1 km cesspool buffer count** as
-the anthropogenic wastewater metric (Step 23 found it carried the clearer NO₃+NO₂
-signal, and it covers more samples than density). Three nested models on the
-**three-island scope** (Oʻahu, Maui, Molokaʻi). Molokaʻi cesspool data from DOH OSDS 
-2010 inventory; see comparability caveat:
+The formal amplification test for NO₃+NO₂, using the **cesspool exposure index**
+(Step 12) as the anthropogenic wastewater metric — it has complete coverage on all four
+islands and carries a robust positive NO₃+NO₂ signal (Step 12). Three nested models on
+the **full four-island scope** (Oʻahu, Maui, Molokaʻi, Lānaʻi). Molokaʻi cesspool data
+from DOH OSDS 2010 inventory; see comparability caveat:
 
 - **Model A — delivery:** log(Si) + storm rainfall + connectivity + coastal dilution.
-- **Model B — + anthropogenic:** A + % agriculture + % impervious + NPDES distance + 1 km cesspool count.
-- **Model C — + interactions:** B + storm-rainfall × cesspool-count and storm-rainfall × agriculture.
+- **Model B — + anthropogenic:** A + % agriculture + % impervious + NPDES distance + cesspool exposure.
+- **Model C — + interactions:** B + storm-rainfall × cesspool-exposure and storm-rainfall × agriculture.
 
 Because neighbouring samples are not independent, predictive skill is assessed with
 **leave-one-ahupuaʻa-out spatial cross-validation** (random splits would be optimistic;
@@ -3331,45 +3295,45 @@ requires Model B/C to beat Model A out of sample, not merely in sample.
 #| cache: true
 
 amp_d <- chem_master |>
-  filter(island %in% c("O'ahu", "Maui", "Moloka'i"), !is.na(NO3NO2), !bdl_NO3NO2,
-         !is.na(SiO2), !bdl_SiO2, !is.na(n_cess_1km)) |>
+  filter(!is.na(NO3NO2), !bdl_NO3NO2, !is.na(SiO2), !bdl_SiO2, !is.na(cess_exposure_idx)) |>
   left_join(sp_sf |> st_drop_geometry() |> select(sample_id, utm_x, utm_y), by = "sample_id") |>
   mutate(
     y = log(NO3NO2), log_SiO2 = log(SiO2),
     log_dist_stream_m = log(dist_to_stream_mouth_m + 1), log_ksat = log(mean_ksat_um_s + 1),
-    log_dist_npdes_m = log(dist_to_nearest_npdes_m + 1), log_n1km = log1p(n_cess_1km),
+    log_dist_npdes_m = log(dist_to_nearest_npdes_m + 1), log_cess_exposure = log1p(cess_exposure_idx),
     island_f = factor(island), ahupuaa_f = factor(ahupuaa),
     utm_x_km = utm_x / 1000, utm_y_km = utm_y / 1000
   )
 
 amp_base   <- c("log_SiO2", "chirps_storm_cumulative_mm", "log_dist_stream_m",
                 "mean_slope_deg", "log_ksat", "fetch_mean_km", "hs_mean_m")
-amp_anthro <- c("pct_agriculture", "pct_impervious", "log_dist_npdes_m", "log_n1km")
+amp_anthro <- c("pct_agriculture", "pct_impervious", "log_dist_npdes_m", "log_cess_exposure")
 
 amp_d <- amp_d |>
   filter(if_all(all_of(c("y", amp_base, amp_anthro)), ~ !is.na(.)), !is.na(utm_x_km)) |>
   mutate(across(all_of(c(amp_base, amp_anthro)), \(x) as.numeric(scale(x)), .names = "z_{.col}"))
 
-# Three islands: use random intercept for island (now meaningful with 3 levels)
+# Four islands: random intercept for island
 amp_sp <- "s(island_f, bs='re') + s(ahupuaa_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)"
 zb <- paste0("z_", amp_base); za <- paste0("z_", amp_anthro)
 fA <- as.formula(paste("y ~", paste(zb, collapse = " + "), "+", amp_sp))
 fB <- as.formula(paste("y ~", paste(c(zb, za), collapse = " + "), "+", amp_sp))
 fC <- as.formula(paste("y ~", paste(c(zb, za,
-        "z_chirps_storm_cumulative_mm:z_log_n1km",
+        "z_chirps_storm_cumulative_mm:z_log_cess_exposure",
         "z_chirps_storm_cumulative_mm:z_pct_agriculture"), collapse = " + "), "+", amp_sp))
 
 amp_A <- gam(fA, data = amp_d, method = "REML")
 amp_B <- gam(fB, data = amp_d, method = "REML")
 amp_C <- gam(fC, data = amp_d, method = "REML")
 
-saveRDS(amp_A, here("output", "model_objects", "nox_amp_A_delivery_3island.rds"))
-saveRDS(amp_B, here("output", "model_objects", "nox_amp_B_anthro_buffercount_3island.rds"))
-saveRDS(amp_C, here("output", "model_objects", "nox_amp_C_interactions_3island.rds"))
+saveRDS(amp_A, here("output", "model_objects", "nox_amp_A_delivery_4island.rds"))
+saveRDS(amp_B, here("output", "model_objects", "nox_amp_B_anthro_exposure_4island.rds"))
+saveRDS(amp_C, here("output", "model_objects", "nox_amp_C_interactions_4island.rds"))
 
-cat("Amplification subset (NO\u2083+NO\u2082, 1 km buffer count, three-island): n =", nrow(amp_d),
+cat("Amplification subset (NO\u2083+NO\u2082, cesspool exposure index, four-island): n =", nrow(amp_d),
     "| sites:", n_distinct(amp_d$site_id),
-    "| ahupua\u02BBa:", n_distinct(amp_d$ahupuaa), "| islands: O\u02BBahu, Maui, Moloka\u02BBi\n")
+    "| ahupua\u02BBa:", n_distinct(amp_d$ahupuaa),
+    "| islands:", n_distinct(amp_d$island), "\n")
 ```
 
 ```{r}
