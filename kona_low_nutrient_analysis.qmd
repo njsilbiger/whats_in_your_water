@@ -2947,8 +2947,7 @@ nh3_all <- chem_master |>
     log_dist_stream_m    = log(dist_to_stream_mouth_m + 1),
     log_ksat             = log(mean_ksat_um_s + 1),
     log_dist_npdes_m     = log(dist_to_nearest_npdes_m + 1),
-    log_n1km             = log1p(n_cess_1km),
-    log_dist_cesspool_m  = log(dist_to_nearest_cesspool_m + 1),
+    log_cess_exposure    = log1p(cess_exposure_idx),
     log_pop_density_km2  = log(pop_density_km2 + 1),
     island_f             = factor(island),
     ahupuaa_f            = factor(ahupuaa),
@@ -2974,7 +2973,8 @@ nh3_primary |> count(island) |> knitr::kable(caption = "Primary NH\u2084 model �
 
 z_primary  <- paste0("z_", nox_primary_vars)
 z_delivery <- setdiff(z_primary,
-                      c("z_pct_agriculture", "z_pct_impervious", "z_log_dist_npdes_m"))
+                      c("z_pct_agriculture", "z_pct_impervious", "z_log_dist_npdes_m",
+                        "z_log_cess_exposure"))
 
 nh3_M_delivery <- gam(
   as.formula(paste("log_NH3 ~", paste(z_delivery, collapse = " + "), "+", re_terms)),
@@ -3039,56 +3039,28 @@ bind_rows(
 ```
 
 ```{r}
-#| label: step14-nh4-cesspool-submodel
+#| label: step14-nh4-lanai-robustness
 #| cache: true
 
-# Tier 2: Three-island cesspool submodel for NH₄ (same structure as Steps 12–13).
-nh3_sub_vars <- c(nox_primary_vars, "log_n1km", "log_dist_cesspool_m")
-nh3_sub_3isl <- nh3_all |>
-  filter(island %in% c("O'ahu", "Maui", "Moloka'i"), !is.na(n_cess_1km)) |>
-  filter(if_all(all_of(c("log_NH3", nh3_sub_vars)), ~ !is.na(.)), !is.na(utm_x_km)) |>
-  mutate(across(all_of(nh3_sub_vars), z, .names = "z_{.col}"), 
-         island_f = factor(island),
-         ahupuaa_f = factor(ahupuaa))
+# Robustness check: same specification excluding Lānaʻi (see Step 12 rationale).
+nh3_excl_lanai <- nh3_primary |> filter(island != "L\u0101na\u2018i")
 
-cat("Tier 2 — Three-island cesspool submodel (NH\u2084): n =", nrow(nh3_sub_3isl),
-    "| sites:", n_distinct(nh3_sub_3isl$site_id),
-    "| ahupua\u02BBa:", n_distinct(nh3_sub_3isl$ahupuaa), "| islands: O\u02BBahu, Maui, Moloka\u02BBi\n")
-nh3_sub_3isl |> count(island) |> knitr::kable(caption = "Tier 2 cesspool submodel (three-island) — NH\u2084 samples by island.")
+cat("Robustness (excl. L\u0101na\u02BBi) \u2014 NH\u2084: n =", nrow(nh3_excl_lanai),
+    "| sites:", n_distinct(nh3_excl_lanai$site_id),
+    "| ahupua\u02BBa:", n_distinct(nh3_excl_lanai$ahupuaa), "\n")
 
-z_sub  <- paste0("z_", nh3_sub_vars)
-re_sub_3isl <- "s(island_f, bs='re') + s(ahupuaa_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)"
-nh3_sub_nocess <- gam(
-  as.formula(paste("log_NH3 ~", paste(setdiff(z_sub, c("z_log_n1km", "z_log_dist_cesspool_m")), collapse = " + "), "+", re_sub_3isl)),
-  data = nh3_sub_3isl, method = "REML")
-nh3_sub_full <- gam(
-  as.formula(paste("log_NH3 ~", paste(z_sub, collapse = " + "), "+", re_sub_3isl)),
-  data = nh3_sub_3isl, method = "REML")
+nh3_M_excl_lanai <- gam(
+  as.formula(paste("log_NH3 ~", paste(z_primary, collapse = " + "), "+", re_terms)),
+  data = nh3_excl_lanai, method = "REML")
 
-delta_aic_nh3_cess <- AIC(update(nh3_sub_nocess, method = "ML")) -
-                      AIC(update(nh3_sub_full,   method = "ML"))
-
-tibble(
-  Model            = c("No cesspool terms", "+ cesspool metrics"),
-  `Dev. expl. (%)` = c(round(summary(nh3_sub_nocess)$dev.expl * 100, 1),
-                       round(summary(nh3_sub_full)$dev.expl    * 100, 1)),
-  `Adj. R²`        = c(round(summary(nh3_sub_nocess)$r.sq, 3),
-                       round(summary(nh3_sub_full)$r.sq,    3))
+bind_rows(
+  coef_ci(nh3_M_full,       "All 4 islands")        |> filter(term == "z_log_cess_exposure"),
+  coef_ci(nh3_M_excl_lanai, "Excl. L\u0101na\u02BBi") |> filter(term == "z_log_cess_exposure")
 ) |>
-  knitr::kable(caption = paste0(
-    "Tier 2 — Three-island cesspool submodel (NH\u2084). Comparison of models ",
-    "with/without cesspool metrics on three-island subset (n = ", nrow(nh3_sub_3isl),
-    " samples; \u0394AIC = ", round(delta_aic_nh3_cess, 1), ")."))
-
-coef_ci(nh3_sub_full, "3isl") |>
-  mutate(across(c(est, se, lwr, upr), \(x) round(x, 3)), p = signif(p, 2),
-         Predictor = pred_label[term]) |>
-  arrange(desc(abs(est))) |>
-  select(Predictor, est, lwr, upr, p) |>
-  knitr::kable(caption = paste0(
-    "Standardized coefficients — Tier 2 three-island NH\u2084 cesspool submodel (n = ", nrow(nh3_sub_3isl),
-    "; Oʻahu, Maui, Molokāʻi)."),
-    col.names = c("Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
+  mutate(across(c(est, se, lwr, upr), \(x) round(x, 3)), p = signif(p, 2)) |>
+  select(model, est, lwr, upr, p) |>
+  knitr::kable(caption = "Cesspool-exposure coefficient on log(NH\u2084): full four-island model vs. excluding L\u0101na\u02BBi.",
+               col.names = c("Model", "Std. \u03b2", "2.5%", "97.5%", "p"))
 ```
 
 ```{r}
@@ -3138,26 +3110,24 @@ tibble(
 #| label: step14-nh4-save
 saveRDS(nh3_M_full,        here("output", "model_objects", "nh3_M_full_4island.rds"))
 saveRDS(nh3_M_delivery,    here("output", "model_objects", "nh3_M_delivery_4island.rds"))
-saveRDS(nh3_sub_full,      here("output", "model_objects", "nh3_M_cesspool_3island.rds"))
-saveRDS(nh3_sub_nocess,    here("output", "model_objects", "nh3_M_nocesspool_3island.rds"))
+saveRDS(nh3_M_excl_lanai,  here("output", "model_objects", "nh3_M_full_excl_lanai.rds"))
 ```
 
 ::: {.callout-important}
 **Step 14 summary — the contrast holds.** NH₄ is much more weakly
-predicted by watershed-scale variables than NO₃+NO₂ or PO₄: deviance explained falls
-to ~35%, terrestrial-water coupling is weak (log Si β ≈ 0.28), and there is no residual
+predicted by watershed-scale variables than NO₃+NO₂ or PO₄: deviance explained is lower
+for the full model than the delivery-only model (~35% vs ~37%; the anthropogenic block does
+not help), terrestrial-water coupling is weak (log Si β ≈ 0.27), and there is no residual
 spatial structure to absorb (Moran's I ≈ 0 even before modelling). This is consistent
 with reduced inorganic N being controlled by localized sources and rapid biogeochemical
-cycling rather than watershed-to-coast transport. In the three-island cesspool submodel,
-neither cesspool metric is a clear predictor of NH₄: the 1 km buffer count (β ≈ 0.07,
-p ≈ 0.45) and distance to the nearest cesspool (β ≈ 0.04, p ≈ 0.69) both have wide,
-zero-crossing confidence intervals, and the AIC comparison favours the no-cesspool model.
-(An earlier version of this analysis used ahupuaʻa-scale cesspool *density* instead of the
-1 km buffer count and found a significant positive NH₄ association; that signal does not
-survive the switch to the buffer-count metric, which has fuller sample coverage and — per
-the Step 23 sensitivity check — behaves as a local-proximity metric rather than a restatement
-of density. This metric-dependence is itself informative and is reported, not smoothed over.)
-Cross-island robustness testing (comparison with Oʻahu + Maui subset) remains warranted.
+cycling rather than watershed-to-coast transport. Unlike NO₃+NO₂ and PO₄, the **cesspool
+exposure index is not a clear predictor of NH₄** (β ≈ 0.03, 95% CI −0.10 to 0.16, p ≈ 0.67;
+stable at β ≈ 0.02, p ≈ 0.78 excluding Lānaʻi); % impervious and % agriculture instead carry
+significant *negative* associations. (An earlier version of this analysis used ahupuaʻa-scale
+cesspool *density* instead of the exposure index and found a significant positive NH₄
+association; that signal does not survive the switch to a metric with fuller sample coverage
+and a demonstrated local-proximity signature — see the Step 23 sensitivity comparison. This
+metric-dependence is itself informative and is reported, not smoothed over.)
 :::
 
 ---
