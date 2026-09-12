@@ -6175,21 +6175,23 @@ tbl1 |>
 # Missingness column is computed live from chem_master so it never goes stale.
 miss_pct <- function(col) sprintf("%.0f%%", 100 * mean(is.na(chem_master[[col]])))
 
+# Only predictors entering at least one of the four final models are listed.
+# Si delivery model (best_model): chirps, stream distance, slope, ksat, gwetroot,
+#   wave height. N/P/NH4 interaction models (nox_primary_vars): chirps, stream
+#   distance, slope, ksat, agriculture, impervious, NPDES distance, cesspool
+#   exposure, fetch, wave height. Sensitivity-only predictors (total_cfs_march,
+#   dist_to_nearest_cesspool_m, n_cess_1km, cesspool_density_per_km2,
+#   pop_density_km2) are excluded here — see the sensitivity section.
 tbl2 <- tibble::tribble(
   ~variable,                    ~process,                                       ~scale,                            ~source,                          ~transformation,
   "chirps_storm_cumulative_mm", "Storm rainfall (event exposure)",              "~5 km pixel",                     "CHIRPS (CHC), Mar 10\u201331 2026", "none",
-  "total_cfs_march",            "Storm discharge",                              "Ahupua\u02bba (gauge \u226415 km)", "USGS gauges, Mar 2026",          "log10",
   "mean_gwetroot",              "Antecedent soil wetness",                      "Island",                          "NASA POWER GWETROOT",            "none",
   "dist_to_stream_mouth_m",     "Terrestrial connectivity (stream proximity)",  "Sample",                          "OpenStreetMap stream mouths",    "log",
   "mean_slope_deg",             "Watershed topography",                         "Ahupua\u02bba",                    "NASA SRTM v3 (elevatr)",         "none",
   "mean_ksat_um_s",             "Soil saturated hydraulic conductivity",        "Ahupua\u02bba",                    "USDA SSURGO (soilDB)",           "log",
   "cess_exposure_idx",          "Cesspool exposure (distance-decay index)",     "Sample",                          "HCPT layer 32 + DOH OSDS 2010",  "log1p",
-  "dist_to_nearest_cesspool_m", "Cesspool proximity",                           "Sample",                          "HCPT layer 32 + DOH OSDS 2010",  "log",
-  "n_cess_1km",                 "Cesspool abundance (1 km buffer)",             "Sample",                          "HCPT layer 32 + DOH OSDS 2010",  "log1p",
-  "cesspool_density_per_km2",   "Cesspool density",                             "Ahupua\u02bba",                    "HCPT layer 32 + DOH OSDS 2010",  "log1p",
   "pct_agriculture",            "Agricultural land cover",                      "Ahupua\u02bba",                    "NOAA C-CAP (classes 6\u20137)",     "none",
   "pct_impervious",             "Impervious / developed cover",                 "Ahupua\u02bba",                    "NOAA C-CAP (classes 2\u20134)",     "none",
-  "pop_density_km2",            "Population density",                           "Ahupua\u02bba",                    "US Census ACS 2022",             "log",
   "dist_to_nearest_npdes_m",    "Distance to permitted discharge",              "Sample",                          "US EPA ECHO 2025",               "log",
   "fetch_mean_km",              "Coastal wave exposure / flushing",             "Sample",                          "Fetch computation (coastline)",  "none",
   "hs_mean_m",                  "Significant wave height",                      "Sample",                          "WW3 PacIOOS",                    "none"
@@ -6202,15 +6204,16 @@ tbl2 |>
       "Table 2. Data sources and predictor reference. Missingness is the percent ",
       "of the ", nrow(chem_master), " coordinate-bearing samples with a missing value ",
       "for each variable (computed from chem_master). Transformation is the form ",
-      "entered into the models before z-standardization. Rows are grouped by the ",
+      "entered into the models before z-standardization. Only predictors used in ",
+      "at least one of the four final models are listed, grouped by the ",
       "pre-registered conceptual driver groups (Step 4)."),
     col.names = c("Variable", "Process represented", "Spatial scale", "Source",
                   "Transformation", "Missingness"),
     align = "lllllr") |>
   kableExtra::pack_rows(index = c(
-    "Storm / hydrologic forcing"          = 3,
+    "Storm / hydrologic forcing"          = 2,
     "Watershed transport & connectivity"  = 3,
-    "Anthropogenic nutrient sources"      = 8,
+    "Anthropogenic nutrient sources"      = 4,
     "Coastal dilution / retention"        = 2)) |>
   kableExtra::kable_styling(
     bootstrap_options = c("striped", "condensed", "hover"),

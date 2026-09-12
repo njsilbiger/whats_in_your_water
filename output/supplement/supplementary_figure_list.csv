@@ -1,6 +1,6 @@
 figure,chunk,file_stem,content,pdf,png,exported
 S1,suppfig-station-fold-changes,suppfig_station_fold_changes_mar2026,"Station-level fold enrichment (Hui, Mar 2026)",TRUE,TRUE,✓
-S2,step10-variograms,figS2_variograms,"Empirical variograms (O'ahu, Maui)",FALSE,FALSE,✗
+S2,step10-variograms,figS2_variograms,"Empirical variograms (O'ahu, Maui)",TRUE,TRUE,✓
 S3,step3-correlation-matrix,FigS_predictor_correlations,Predictor Spearman correlations / VIF,TRUE,TRUE,✓
 S4,figS-po4-nh4-models,figS_po4_nh4_comparison,Standardized effects for PO4 + NH4,TRUE,TRUE,✓
 S5,figS-si-partial-effects,figS_si_partial_effects_sig,SiO2 delivery-model partial effects,TRUE,TRUE,✓
