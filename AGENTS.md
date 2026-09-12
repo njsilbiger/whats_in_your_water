@@ -68,6 +68,11 @@ Do not create a single composite "water quality" index as the main response. The
 
 Prior Hawaiʻi studies demonstrate that terrestrial groundwater and storm runoff can rapidly deliver nutrients to coastal ecosystems and that land use strongly modifies nutrient concentrations and fluxes. Knee et al. found inverse salinity relationships for nitrate+nitrite, phosphate, and silica along the Kona coast, while Bishop et al. showed that land use and groundwater flow paths strongly determine nutrient fluxes to Maui coastal waters. Storm studies in Kāneʻohe Bay have additionally shown that steep tropical watersheds can deliver rapid freshwater, sediment, and nutrient pulses to coastal waters on time scales that traditional monitoring often misses.
 
+Detection limits for each variable are:
+nitrite <0.07
+p < 0.07
+s <0.01
+NH3<0.08
 ---
 
 ## Storm Context — March 2026 Kona Low
@@ -363,7 +368,7 @@ If Bayesian models: compare nested models with LOO and calculate changes in Baye
 
 M0 = random/spatial effects only → M1 = M0 + hydrology → M2 = M1 + watershed connectivity → M3 = M2 + anthropogenic → M4 = M3 + coastal dilution
 
-**Figure 6 candidate:** Stacked/grouped variance figure for four nutrients.
+**Figure S3 candidate (moved to supplementary):** Stacked/grouped variance figure for four nutrients. Figure 6 in the main text is now the interaction marginal-effects plot (Step 21 / fig6-interaction-effects chunk).
 
 | Response | Hydrology | Connectivity | Human | Coastal | Residual |
 |---|---|---|---|---|---|
@@ -498,8 +503,17 @@ Report n samples, n sites, n ahupuaʻa, n islands for every primary model.
 | 2 | NO₃+NO₂, PO₄, NH₄, Si distributions + storm/background contrasts | Magnitude of enrichment differed strongly among nutrient forms |
 | 3 | CHIRPS rainfall + Hui long-term nutrient anomalies | March 2026 generated conditions outside normal variability |
 | 4 | Spatial distributions of four nutrients | Coastal nutrient exposure was highly heterogeneous and nutrient-specific |
-| 5 | Standardized coefficient/effect-size plot for four nutrient models | Physical connectivity determines delivery; human land use explains additional N/P enrichment |
-| 6 | Variance partitioning by driver group OR spatially cross-validated vulnerability map | Landscape characteristics allow hotspot prediction before sampling |
+| 5 | Standardized coefficient/effect-size plot for four nutrient models (nox_M_int as primary for NOx, includes interaction rows with dashed lines) | Physical connectivity determines delivery; human land use explains additional N/P enrichment |
+| **6** | **Interaction marginal-effects plot: Rainfall × Cesspool (Panel A) + Rainfall × Agriculture (Panel B) for NO₃+NO₂** | **Extreme rainfall conditionally amplifies coastal N where anthropogenic sources are denser — core mechanism for primary title** |
+| S3 | Variance partitioning by driver group (moved to supplementary) | Connectivity block dominates Si; Human block adds ~4–8 pp for N/P |
+
+**Figure 6 export:** `output/main_figures/fig6_interactions.pdf` + `.png` (8 × 4.5 in)
+**Figure S3 export:** `output/supplement/figS3_variance_partition.pdf` + `.png` (7 × 5 in)
+
+**Figure 6 technical notes:**
+- Both panels y-axis capped at 78 µmol L⁻¹ (99th pct of observed NO₃+NO₂; log-scale position 4.36). Tick marks displayed in µmol L⁻¹ (log-spaced) via `scale_y_continuous(breaks = log(...), labels = ...)`.
+- Panel B High-agriculture line (35%) exceeds this cap at extreme rainfall — extrapolation beyond sparse predictor space; magnitude is not reliable but the divergence direction is.
+- Labels positioned with ggrepel; `clip = "off"` to show line endpoints beyond plot area.
 
 ---
 
@@ -900,3 +914,55 @@ Cached at: `data/aca_hawaii_coral.rds`, `data/aca_reef_kriged_NO3.rds`
 - **Salinity thresholds:** Storm-influenced ≤ 34 PSU (any freshwater dilution); Marine background > 34 PSU. No samples excluded — the former middle zone (32–34 PSU) is included in the storm-influenced group.
 - **Kriging:** Ordinary kriging, log1p transform, spherical variogram, min_range = island_diagonal/5, 250 m grid, 3 km coastal band.
 - **Island palette:** O'ahu = #1565C0, Maui = #2E7D32, Moloka'i = #E65100, Lāna'i = #6A1B9A
+
+---
+
+## Analyses Tested and Removed (2026-09-11)
+
+These analyses were implemented, reviewed, and removed from `kona_low_nutrient_analysis.qmd`
+to streamline the document around the central interaction story. Do not re-add unless there
+is a specific new scientific reason.
+
+### Two-stage residual analysis (§sec-two-stage-residuals)
+**Removed 2026-09-11.** Three chunks: `step17-stage2-residuals` (OLS of Model A residuals
+on anthropogenic predictors), `step17-stage2-plot` (standardized coefficient plot), and
+`step17-stage2-scatter` (partial-residual scatterplots coloured by island).
+**Result:** Cesspool exposure and % agriculture were positive and significant on the
+delivery residuals, consistent with the full model. BUT: (a) this is algebraically
+equivalent to the full model in expectation; (b) two-stage OLS understates uncertainty
+relative to the GAM CIs in Step 12; (c) the LOAO CV in Step 17 already provides the
+out-of-sample validation. Removed because it adds complexity without independent evidence,
+and its own embedded caveats directed readers back to Step 12 for inference.
+
+### Intermediate interaction screening plots (`step21-int-plots`)
+**Removed 2026-09-11.** ~90-line chunk producing exploratory marginal-effects plots on
+z-score axes for all significant interactions (Rainfall × Cesspool, Rainfall × Agriculture,
+etc.) from the interaction screening phase.
+**Result:** These plots served their purpose in selecting which interactions to include.
+Figure 6 (`fig6-interaction-effects`) is the publication-quality replacement — back-transformed
+axes, µmol L⁻¹ units, ggrepel labels, shared y-axis cap at 99th percentile. The intermediate
+z-score plots were removed as redundant once Figure 6 existed.
+
+### Si salinity sensitivity (originally in §step11-si-model)
+**Moved 2026-09-11 to §Sensitivity Analyses** (now `step11-si-salinity-sensitivity` in
+`#sec-sens-si-salinity`). Adding Salinity as a linear covariate to the Si GAM increased
+deviance explained by ~10 pp and reduced residual Moran's I to near-zero, confirming that
+residual spatial autocorrelation in the landscape Si model reflects fine-scale
+freshwater/marine mixing irreducible by watershed predictors. Salinity is NOT a landscape
+predictor and was never used for inference; it was moved out of the main model narrative
+to avoid confusion.
+
+### Vulnerability maps stub (§sec-vulnerability-maps)
+**Removed 2026-09-11.** Empty placeholder section with no code. The random forest section
+(Step 19, `#sec-random-forest`) already addresses the applied hotspot-prediction question
+via LOAO CV and variable importance. If vulnerability maps are built in the future they
+should go in the RF section or as a new supplementary figure.
+
+### Publication Figures assembly stub (§sec-pub-figures)
+**Removed 2026-09-11.** Empty placeholder (all figures already built and saved inline).
+
+### Nutrient stoichiometry stub (§sec-stoichiometry)
+**Removed 2026-09-11.** Empty placeholder. AGENTS.md Step 22 explicitly discourages this
+analysis in the main paper — Si:N and N:P ratios are mathematically coupled to the response
+variables and can generate misleading correlations. If ever added, must be supplementary
+and descriptive only, with explicit caveats against causal interpretation.
