@@ -709,16 +709,68 @@ names(rain_template) <- "cum_rain_mm"
 
 # Use ahupua'a union for the land mask — same precise coastline as all other
 # spatial analysis in this project; avoids the ne_states coastline mismatch
-# with Esri World Imagery.  Disaggregate 5× (0.02° → 0.004° ≈ 440 m) with
-# bilinear resampling so rainfall gradients are smooth at map scale.
-hi_land_precise <- ahupuaa_sf |>
+# with Esri World Imagery.  Read directly here so this chunk is self-contained
+# (ahupuaa_sf is defined later in the fig4 section and not yet available).
+hi_land_precise <- sf::st_read(
+    here::here("data", "ahupuaa_boundaries.geojson"), quiet = TRUE) |>
   sf::st_union() |>
   sf::st_transform(terra::crs(rain_template))
 rain_fine <- terra::disagg(rain_template, fact = 5, method = "bilinear")
 rain_land  <- terra::mask(rain_fine, terra::vect(hi_land_precise))
 
 # ── Island panel: satellite + rainfall overlay + sample sites ─────────────────
-make_sat_panel <- function(isl) {
+# Colorbar inset: smooth geom_raster strip with right-side labels, white text
+# for legibility over dark satellite background. Embedded inside the Lāna'i
+# panel via inset_element (explicit panel-fraction coordinates).
+# Log-scale colorbar: fill values are log-spaced (100–1200 mm); a linear 0–1
+# proxy y-axis avoids scale-limit clipping while tick marks are positioned at
+# their log-normalised locations on the 0–1 range.
+RAIN_LOG_MIN <- 100L; RAIN_LOG_MAX <- 1200L
+log_min <- log10(RAIN_LOG_MIN); log_max <- log10(RAIN_LOG_MAX)
+brk_raw <- c(100, 200, 400, 800, 1200)
+brk_pos <- (log10(brk_raw) - log_min) / (log_max - log_min)
+
+cb_df_rain <- data.frame(
+  x    = 0,
+  y    = seq(0, 1, length.out = 600),
+  fill = 10^seq(log_min, log_max, length.out = 600)
+)
+
+p_cb_inset <- ggplot(cb_df_rain, aes(x = x, y = y, fill = fill)) +
+  geom_tile(width = 0.6, height = 1/599 * 1.02, show.legend = FALSE) +
+  scale_fill_distiller(palette = "Blues", direction = 1,
+                       trans   = "log10",
+                       limits  = c(RAIN_LOG_MIN, RAIN_LOG_MAX)) +
+  scale_y_continuous(breaks   = brk_pos,
+                     labels   = c("100", "200", "400", "800", "1200"),
+                     position = "right",
+                     limits   = c(0, 1), expand = c(0, 0)) +
+  coord_cartesian(xlim = c(-0.5, 0.5)) +
+  labs(title = "Cumul.\nrainfall\nMar 10\u201325\n(mm)") +
+  theme_void() +
+  theme(
+    plot.title        = element_text(size = 5.5, colour = "white",
+                                     lineheight = 1.1, hjust = 0.5,
+                                     margin = margin(b = 3)),
+    axis.text.y.right = element_text(size = 5.0, colour = "white",
+                                     hjust = 0, margin = margin(l = 2)),
+    plot.background   = element_rect(fill = alpha("gray15", 0.55), colour = NA),
+    plot.margin       = margin(5, 7, 5, 5)
+  )
+
+# ── Panel letter helper: bold white text on dark pill, top-left corner ────────
+add_panel_letter <- function(p, letter, bb) {
+  lx <- bb["xmin"] + 0.055 * (bb["xmax"] - bb["xmin"])
+  ly <- bb["ymax"] - 0.075 * (bb["ymax"] - bb["ymin"])
+  p + annotate("label", x = lx, y = ly,
+               label = letter, hjust = 0.5, vjust = 0.5,
+               size = 3.2, fontface = "bold",
+               colour = "white", fill = alpha("gray10", 0.65),
+               label.padding = unit(0.18, "lines"),
+               label.r = unit(0, "pt"))
+}
+
+make_sat_panel <- function(isl, panel_label = NULL) {
   isl_n     <- normalize_apos(isl)
   bb        <- island_bbox[[isl]]
   pts       <- samples_plot |> dplyr::filter(normalize_apos(island) == isl_n)
@@ -730,12 +782,13 @@ make_sat_panel <- function(isl) {
                            terra::ext(bb["xmin"], bb["xmax"],
                                       bb["ymin"], bb["ymax"]))
 
-  ggplot() +
+  p <- ggplot() +
     geom_spatraster_rgb(data = tiles[[isl]]) +
     geom_spatraster(data = rain_crop, aes(fill = cum_rain_mm),
                     alpha = 0.70, maxcell = Inf) +
     scale_fill_distiller(palette = "Blues", direction = 1,
-                         limits = c(RAIN_MIN, RAIN_MAX),
+                         trans    = "log10",
+                         limits   = c(RAIN_LOG_MIN, RAIN_LOG_MAX),
                          na.value = NA, guide = "none") +
     geom_point(data = pts, aes(x = longitude, y = latitude),
                shape = 21, size = 1.8, stroke = 0.4,
@@ -753,38 +806,37 @@ make_sat_panel <- function(isl) {
              colour = col, fill = alpha("white", 0.78),
              label.padding = unit(0.20, "lines"), label.r = unit(0, "pt")) +
     theme_void() +
-    theme(
-      plot.background = element_rect(fill = "white", colour = NA),
-      panel.border    = element_rect(fill = NA, colour = "gray50", linewidth = 0.4)
-    )
+    theme(plot.background = element_rect(fill = "white", colour = NA),
+          panel.border    = element_rect(fill = NA, colour = "gray50", linewidth = 0.4))
+
+  if (!is.null(panel_label)) p <- add_panel_letter(p, panel_label, bb)
+  p
 }
 
-# Shared rainfall colorbar panel
-p_cb <- ggplot(data.frame(z = c(RAIN_MIN, RAIN_MAX), x = 1, y = c(0, 1)),
-               aes(x = x, y = y, fill = z)) +
-  geom_tile(alpha = 0) +
-  scale_fill_distiller(palette = "Blues", direction = 1,
-                       limits = c(RAIN_MIN, RAIN_MAX),
-                       name = "Cumulative\nstorm rainfall\nMar 10\u201325 (mm)",
-                       breaks = c(0, 400, 800, 1200)) +
-  guides(fill = guide_colorbar(barwidth = 0.45, barheight = 2.2,
-                               title.position = "top",
-                               title.theme = element_text(size = 6.5, lineheight = 1.2),
-                               label.theme  = element_text(size = 6.0))) +
-  theme_void() +
-  theme(legend.position = "right",
-        plot.background = element_rect(fill = "white", colour = NA))
+# (colorbar lives inside the Lāna'i panel as p_cb_inset — see above)
 
-# ── Pacific inset (light, print-friendly) ────────────────────────────────────
+# ── Pacific inset (E) — dark navy North Pacific, cleaner than cartoon blue ────
+# scale="small" avoids overly-detailed coastlines; dark fill makes the ocean
+# look like a real map; white box frames the Hawaiian Islands location.
+land_sm <- rnaturalearth::ne_countries(scale = "small", returnclass = "sf")
+hi_box  <- sf::st_as_sfc(sf::st_bbox(
+  c(xmin = -160.5, xmax = -154.5, ymin = 18.5, ymax = 22.5), crs = 4326))
+
 p_inset <- ggplot() +
-  geom_sf(data = ne_countries(scale = "medium", returnclass = "sf"),
-          fill = "gray80", colour = "gray55", linewidth = 0.15) +
-  annotate("point", x = -157.8, y = 21.3, shape = 23,
-           fill = "#C62828", colour = "white", size = 2.8, stroke = 0.5) +
-  coord_sf(xlim = c(-210, -100), ylim = c(-10, 60), expand = FALSE) +
+  geom_sf(data = land_sm, fill = "#6B7B6B", colour = "#4A5A4A",
+          linewidth = 0.08) +
+  geom_sf(data = hi_box, fill = NA, colour = "white",
+          linewidth = 0.55) +
+  annotate("point", x = -157.5, y = 20.5, shape = 21,
+           fill = "#FF6B35", colour = "white", size = 2.2, stroke = 0.5) +
+  annotate("text", x = -199, y = 57, label = "E",
+           fontface = "bold", size = 3.2, colour = "white",
+           hjust = 0, vjust = 1) +
+  coord_sf(xlim = c(-200, -65), ylim = c(5, 60), expand = FALSE) +
   theme_void() +
-  theme(plot.background = element_rect(fill = "#D6EAF8", colour = "gray60",
-                                       linewidth = 0.5))
+  theme(panel.background = element_rect(fill = "#1B3A5C", colour = NA),
+        plot.background  = element_rect(fill = "#1B3A5C", colour = "gray50",
+                                        linewidth = 0.5))
 
 # ── Shared timeline theme (white, print-ready) ────────────────────────────────
 theme_tl <- function() {
@@ -890,24 +942,48 @@ caption_txt <- sprintf(
 # 2×2 map grid — wrap_plots() with explicit nrow/ncol avoids operator-precedence
 # and patchwork-flattening issues entirely
 map_grid <- wrap_plots(
-  make_sat_panel("O'ahu"),
-  make_sat_panel("Maui"),
-  make_sat_panel("Moloka'i"),
-  make_sat_panel("Lāna'i"),
+  make_sat_panel("O'ahu",    "A"),
+  make_sat_panel("Maui",     "B"),
+  make_sat_panel("Moloka'i", "C"),
+  # Lāna'i (D) carries the rainfall colorbar as an inset on its right side
+  make_sat_panel("Lāna'i",   "D") +
+    inset_element(p_cb_inset,
+                  left = 0.81, right = 0.99,
+                  bottom = 0.06, top = 0.94,
+                  align_to = "panel", clip = TRUE),
   nrow = 2, ncol = 2
 )
 
-# Pacific inset + rainfall colorbar, centred under the 2×2 map grid
-aux_row <- wrap_plots(plot_spacer(), p_inset, p_cb, plot_spacer(),
-                      widths = c(0.5, 2.0, 0.8, 0.3))
+# Pacific inset (E) centred under the 2×2 map grid
+aux_row <- wrap_plots(plot_spacer(), p_inset, plot_spacer(), widths = c(1, 1, 1))
+
+# Timeline panels with subplot letters F and G
+p_rain_lbl  <- p_rain  +
+  annotate("text", x = as.Date("2026-03-01"), y = Inf, label = "F",
+           fontface = "bold", size = 3.2, hjust = -0.2, vjust = 1.4,
+           colour = "gray20")
+p_disch_lbl <- p_disch +
+  annotate("text", x = as.Date("2026-03-01"), y = Inf, label = "G",
+           fontface = "bold", size = 3.2, hjust = -0.2, vjust = 1.4,
+           colour = "gray20")
+p_timeline_lbl <- (p_rain_lbl / p_disch_lbl) + plot_layout(heights = c(1.8, 1.2))
 
 # wrap_elements() treats map_grid as a single opaque unit so the outer /
 # stack sees exactly 3 rows (map_grid, aux_row, p_timeline), not 4+2+2 panels
-fig1 <- (wrap_elements(full = map_grid) / aux_row / p_timeline) +
+fig1 <- (wrap_elements(full = map_grid) / aux_row / p_timeline_lbl) +
   plot_layout(heights = c(6.0, 1.3, 3.0)) +
   plot_annotation(
-    caption = caption_txt,
-    theme   = theme(
+    caption = paste0(
+      "Panels A\u2013D: unique coastal sampling sites (white circles) and ",
+      "cumulative storm rainfall Mar 10\u201325 (blue gradient, log\u2081\u2080 scale; ",
+      "CHIRPS IDW, masked to land). ",
+      "E: North Pacific context; orange circle = Hawai\u02BBi, white box shows ",
+      "archipelago extent. ",
+      "F: 4-island mean daily rainfall (NCEP GDAS). ",
+      "G: Stream discharge, Hanawi Stream, Maui (USGS 16508000). ",
+      "Basemap: Esri World Imagery."
+    ),
+    theme = theme(
       plot.background = element_rect(fill = "white", colour = NA),
       plot.caption    = element_text(size = 6.5, hjust = 0.5,
                                      colour = "gray50", margin = margin(t = 3))
@@ -916,6 +992,8 @@ fig1 <- (wrap_elements(full = map_grid) / aux_row / p_timeline) +
 
 suppressWarnings(fig1)
 save_fig(fig1, "Fig1_sampling_map", width = 9, height = 11)
+ggsave(here("output","main_figures","Fig1_sampling_map.png"),
+       plot = suppressWarnings(fig1), width = 9, height = 11, dpi = 300)
 invisible(NULL)   # suppress patchwork theme warning in output
 ```
 
