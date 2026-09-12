@@ -631,10 +631,8 @@ write_csv(chem_master, here("data", "chem_master.csv"))
 ```{r}
 #| label: fig1-sampling-map
 #| fig-width: 9
-#| fig-height: 9
-#| fig-cap: "Figure 1. Sampling design and storm context. Four Hawaiian islands (Oʻahu, Maui, Molokaʻi, Lānaʻi) showing all unique coastal sampling sites (filled circles, coloured by island) and stream mouths (open white triangles, drawn on top; OpenStreetMap). Scale bars at bottom-left of each map panel. Pacific inset shows archipelago context. Bottom panels show 4-island mean daily rainfall (NCEP GDAS, upper) and daily discharge at three USGS key gauges (lower, log₁₀ scale) for March–April 2026 with aligned x-axes. All three gauges peaked March 13–14. Basemap: Esri World Imagery."
-
-STREAM_COL <- "#00ACC1"   # bright teal — distinct from all island colours and satellite imagery
+#| fig-height: 11
+#| fig-cap: "Figure 1. Sampling design and storm context. Four Hawaiian islands (Oʻahu, Maui, Molokaʻi, Lānaʻi) showing all unique coastal sampling sites (filled circles, coloured by island). Scale bars at bottom-left of each map panel. Pacific inset shows archipelago context. Bottom panels show 4-island mean daily rainfall (NCEP GDAS, upper) and daily discharge at three USGS key gauges (lower, log₁₀ scale) for March–April 2026 with aligned x-axes. All three gauges peaked March 13–14. Basemap: Esri World Imagery."
 
 normalize_apos <- function(x) str_replace_all(x, "[\u2018\u2019\u02bc\u0027]", "'")
 
@@ -645,10 +643,10 @@ dir.create(tile_dir, showWarnings = FALSE)
 island_bbox <- list(
   "O'ahu"    = c(xmin=-158.33, xmax=-157.60, ymin=21.22, ymax=21.73),
   "Maui"     = c(xmin=-156.72, xmax=-155.95, ymin=20.50, ymax=21.05),
-  "Moloka'i" = c(xmin=-157.38, xmax=-156.68, ymin=21.02, ymax=21.27),
+  "Moloka'i" = c(xmin=-157.38, xmax=-156.68, ymin=20.90, ymax=21.40),
   "Lāna'i"   = c(xmin=-157.08, xmax=-156.72, ymin=20.71, ymax=20.97)
 )
-zoom_levels <- c("O'ahu"=11, "Maui"=11, "Moloka'i"=12, "Lāna'i"=12)
+zoom_levels <- c("O'ahu"=11, "Maui"=11, "Moloka'i"=11, "Lāna'i"=12)
 
 make_bbox_sf <- function(xmin, xmax, ymin, ymax)
   st_bbox(c(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), crs=4326) |>
@@ -673,10 +671,6 @@ samples_plot <- chem_master |>
   distinct(site_id, .keep_all = TRUE) |>
   select(sample_id, island, latitude, longitude)
 
-stream_mouths_plot <- read_csv(here("data", "osm_stream_mouths.csv"),
-                               show_col_types = FALSE) |>
-  dplyr::filter(island %in% c("O'ahu", "Maui", "Moloka'i", "Lāna'i"))
-
 island_pal_norm <- island_pal
 names(island_pal_norm) <- normalize_apos(names(island_pal_norm))
 
@@ -685,28 +679,67 @@ island_counts_norm <- chem_master |>
   mutate(island_n = normalize_apos(island)) |>
   count(island_n, name = "n_samples")
 
-# ── Island panel: satellite + scale bar, label at top ────────────────────────
+# ── Cumulative storm rainfall raster (Mar 10–25, IDW from CHIRPS points) ──────
+RAIN_MIN <- 0L; RAIN_MAX <- 1200L
+
+chirps_raw <- readRDS(here("data", "chirps_march2026_daily_raw.rds"))
+
+storm_cumulative <- chirps_raw |>
+  dplyr::filter(date >= as.Date("2026-03-10"),
+                date <= as.Date("2026-03-25")) |>
+  mutate(chirps = if_else(chirps < 0, NA_real_, chirps)) |>
+  group_by(lon, lat) |>
+  summarise(cum_rain_mm = sum(chirps, na.rm = FALSE), .groups = "drop")
+
+pts_rain  <- storm_cumulative |>
+  dplyr::filter(!is.na(cum_rain_mm)) |>
+  sf::st_as_sf(coords = c("lon", "lat"), crs = 4326)
+
+# Template must extend east past -155.95° (Maui east coast) — original -156.1
+# cutoff caused east Maui to be blank.  Buffer: -155.70° on the east side.
+rain_template <- terra::rast(terra::ext(-158.65, -155.70, 20.35, 22.85),
+                              resolution = 0.02, crs = "EPSG:4326")
+grid_sf <- terra::xyFromCell(rain_template, seq_len(terra::ncell(rain_template))) |>
+  as.data.frame() |>
+  sf::st_as_sf(coords = c("x", "y"), crs = 4326)
+
+idw_fit <- gstat::idw(cum_rain_mm ~ 1, pts_rain, grid_sf, idp = 2, nmax = 15)
+terra::values(rain_template) <- idw_fit$var1.pred
+names(rain_template) <- "cum_rain_mm"
+
+# Use ahupua'a union for the land mask — same precise coastline as all other
+# spatial analysis in this project; avoids the ne_states coastline mismatch
+# with Esri World Imagery.  Disaggregate 5× (0.02° → 0.004° ≈ 440 m) with
+# bilinear resampling so rainfall gradients are smooth at map scale.
+hi_land_precise <- ahupuaa_sf |>
+  sf::st_union() |>
+  sf::st_transform(terra::crs(rain_template))
+rain_fine <- terra::disagg(rain_template, fact = 5, method = "bilinear")
+rain_land  <- terra::mask(rain_fine, terra::vect(hi_land_precise))
+
+# ── Island panel: satellite + rainfall overlay + sample sites ─────────────────
 make_sat_panel <- function(isl) {
-  isl_n <- normalize_apos(isl)
-  bb    <- island_bbox[[isl]]
-  pts   <- samples_plot       |> dplyr::filter(normalize_apos(island) == isl_n)
-  strm  <- stream_mouths_plot |> dplyr::filter(normalize_apos(island) == isl_n)
-  ns    <- island_counts_norm$n_samples[island_counts_norm$island_n == isl_n]
-  col   <- island_pal_norm[[isl_n]]
-  lbl_x <- mean(c(bb["xmin"], bb["xmax"]))
-  lbl_y <- bb["ymax"] - 0.06 * (bb["ymax"] - bb["ymin"])   # top of panel
-  hw    <- (bb["xmax"] - bb["xmin"]) * 0.40
+  isl_n     <- normalize_apos(isl)
+  bb        <- island_bbox[[isl]]
+  pts       <- samples_plot |> dplyr::filter(normalize_apos(island) == isl_n)
+  ns        <- island_counts_norm$n_samples[island_counts_norm$island_n == isl_n]
+  col       <- island_pal_norm[[isl_n]]
+  lbl_x     <- mean(c(bb["xmin"], bb["xmax"]))
+  lbl_y     <- bb["ymax"] - 0.06 * (bb["ymax"] - bb["ymin"])
+  rain_crop <- terra::crop(rain_land,
+                           terra::ext(bb["xmin"], bb["xmax"],
+                                      bb["ymin"], bb["ymax"]))
 
   ggplot() +
     geom_spatraster_rgb(data = tiles[[isl]]) +
-    # Stream mouths FIRST (below) — solid teal, visible through sample points
-    geom_point(data = strm, aes(x = longitude, y = latitude),
-               shape = 24, size = 1.5, stroke = 0.5,
-               fill = STREAM_COL, colour = "white", alpha = 0.80) +
-    # Sample sites ON TOP — island colour, semi-transparent so teal shows through
+    geom_spatraster(data = rain_crop, aes(fill = cum_rain_mm),
+                    alpha = 0.70, maxcell = Inf) +
+    scale_fill_distiller(palette = "Blues", direction = 1,
+                         limits = c(RAIN_MIN, RAIN_MAX),
+                         na.value = NA, guide = "none") +
     geom_point(data = pts, aes(x = longitude, y = latitude),
-               shape = 21, size = 1.8, stroke = 0.3,
-               fill = col, colour = "white", alpha = 0.60) +
+               shape = 21, size = 1.8, stroke = 0.4,
+               fill = "white", colour = "gray20", alpha = 0.85) +
     annotation_scale(location = "bl", width_hint = 0.28,
                      text_col = "white", bar_cols = c("white", "gray40"),
                      line_col = "white", text_cex = 0.65,
@@ -714,20 +747,33 @@ make_sat_panel <- function(isl) {
     coord_sf(xlim = c(bb["xmin"], bb["xmax"]),
              ylim = c(bb["ymin"], bb["ymax"]),
              expand = FALSE, crs = 4326) +
-    # Semi-transparent white label pill at top (readable on satellite)
-    annotate("rect",
-             xmin = lbl_x - hw, xmax = lbl_x + hw,
-             ymin = lbl_y - 0.018, ymax = lbl_y + 0.009,
-             fill = alpha("white", 0.78), colour = NA) +
-    annotate("text", x = lbl_x, y = lbl_y,
+    annotate("label", x = lbl_x, y = lbl_y,
              label = sprintf("%s  (n = %d)", isl, ns),
-             hjust = 0.5, vjust = 1, size = 2.6, fontface = "bold", colour = col) +
+             hjust = 0.5, vjust = 1, size = 2.6, fontface = "bold",
+             colour = col, fill = alpha("white", 0.78),
+             label.padding = unit(0.20, "lines"), label.r = unit(0, "pt")) +
     theme_void() +
     theme(
       plot.background = element_rect(fill = "white", colour = NA),
       panel.border    = element_rect(fill = NA, colour = "gray50", linewidth = 0.4)
     )
 }
+
+# Shared rainfall colorbar panel
+p_cb <- ggplot(data.frame(z = c(RAIN_MIN, RAIN_MAX), x = 1, y = c(0, 1)),
+               aes(x = x, y = y, fill = z)) +
+  geom_tile(alpha = 0) +
+  scale_fill_distiller(palette = "Blues", direction = 1,
+                       limits = c(RAIN_MIN, RAIN_MAX),
+                       name = "Cumulative\nstorm rainfall\nMar 10\u201325 (mm)",
+                       breaks = c(0, 400, 800, 1200)) +
+  guides(fill = guide_colorbar(barwidth = 0.45, barheight = 2.2,
+                               title.position = "top",
+                               title.theme = element_text(size = 6.5, lineheight = 1.2),
+                               label.theme  = element_text(size = 6.0))) +
+  theme_void() +
+  theme(legend.position = "right",
+        plot.background = element_rect(fill = "white", colour = NA))
 
 # ── Pacific inset (light, print-friendly) ────────────────────────────────────
 p_inset <- ggplot() +
@@ -846,43 +892,34 @@ p_timeline <- (p_rain / p_disch) + plot_layout(heights = c(1.8, 1.2))
 # ── Legend: symbols only; windows and gauge names are annotated directly ──────
 # Window shading and discharge gauge labels appear as inline annotations on
 # the timeline panels — no redundant legend entries needed.
-p_leg <- ggplot() + theme_void() +
-  theme(plot.background = element_rect(fill = "white", colour = NA)) +
-  # Sample site symbol + explanation
-  annotate("point", x=0.18, y=0.78, shape=21, size=3,
-           fill="#1565C0", colour="white", stroke=0.3, alpha=0.55) +
-  annotate("text",  x=0.30, y=0.78, label="Sample site\n(island colour)",
-           hjust=0, size=2.5, colour="gray20", lineheight=0.9) +
-  # Stream mouth symbol
-  annotate("point", x=0.18, y=0.52, shape=24, size=2.5,
-           fill=STREAM_COL, colour="white", stroke=0.5) +
-  annotate("text",  x=0.30, y=0.52, label="Stream mouth",
-           hjust=0, size=2.5, colour="gray20") +
-  # Island colour swatches
-  annotate("text",  x=0.50, y=0.25,
-           label="O\u02BBahu   Maui   Moloka\u02BBi   L\u0101na\u02BBi",
-           hjust=0.5, vjust=0, size=1.9, colour="gray40", fontface="italic") +
-  annotate("point", x=c(0.10,0.28,0.48,0.68), y=rep(0.12,4),
-           shape=21, size=3, stroke=0.3, alpha=0.7,
-           fill=c("#1565C0","#2E7D32","#E65100","#6A1B9A"), colour="white") +
-  xlim(0,1) + ylim(0,1)
+# (legend removed — white dots explained in figure caption)
 
 # ── Assemble and save ─────────────────────────────────────────────────────────
 caption_txt <- sprintf(
-  "n\u202F=\u202F%d samples  \u00b7  %d unique coastal sites  \u00b7  %d ahupua\u02BBa  \u00b7  4 islands  \u00b7  Mar\u202F28\u2013Apr\u202F8, 2026.\nBasemap: Esri World Imagery. Stream mouths: OpenStreetMap (teal triangles). Discharge: USGS gauges 16211600, 16508000, 16400000.",
+  "n\u202F=\u202F%d samples  \u00b7  %d unique coastal sites  \u00b7  %d ahupua\u02BBa  \u00b7  4 islands  \u00b7  Mar\u202F28\u2013Apr\u202F8, 2026.\nBasemap: Esri World Imagery. Discharge: USGS gauges 16211600, 16508000, 16400000.",
   nrow(chem_master |> dplyr::filter(!offshore_reference)),
   nrow(samples_plot),
   n_distinct(chem_master$ahupuaa[!chem_master$offshore_reference])
 )
 
-top_row <- (make_sat_panel("O'ahu")    | make_sat_panel("Maui")) +
-  plot_layout(widths = c(1, 1))
-mid_row <- (make_sat_panel("Moloka'i") | make_sat_panel("Lāna'i") |
-              p_inset | p_leg) +
-  plot_layout(widths = c(2.2, 1.3, 1.8, 1.7))
+# 2×2 map grid — wrap_plots() with explicit nrow/ncol avoids operator-precedence
+# and patchwork-flattening issues entirely
+map_grid <- wrap_plots(
+  make_sat_panel("O'ahu"),
+  make_sat_panel("Maui"),
+  make_sat_panel("Moloka'i"),
+  make_sat_panel("Lāna'i"),
+  nrow = 2, ncol = 2
+)
 
-fig1 <- (top_row / mid_row / p_timeline) +
-  plot_layout(heights = c(3.2, 2.0, 3.0)) +
+# Pacific inset + rainfall colorbar, centred under the 2×2 map grid
+aux_row <- wrap_plots(plot_spacer(), p_inset, p_cb, plot_spacer(),
+                      widths = c(0.5, 2.0, 0.8, 0.3))
+
+# wrap_elements() treats map_grid as a single opaque unit so the outer /
+# stack sees exactly 3 rows (map_grid, aux_row, p_timeline), not 4+2+2 panels
+fig1 <- (wrap_elements(full = map_grid) / aux_row / p_timeline) +
+  plot_layout(heights = c(6.0, 1.3, 3.0)) +
   plot_annotation(
     caption = caption_txt,
     theme   = theme(
@@ -893,7 +930,7 @@ fig1 <- (top_row / mid_row / p_timeline) +
   )
 
 suppressWarnings(fig1)
-save_fig(fig1, "Fig1_sampling_map", width = 9, height = 9)
+save_fig(fig1, "Fig1_sampling_map", width = 9, height = 11)
 invisible(NULL)   # suppress patchwork theme warning in output
 ```
 
@@ -1416,7 +1453,7 @@ preds |>
 #| label: fig3-rain-nutrient
 #| fig-width: 8.5
 #| fig-height: 6
-#| fig-cap: "**Figure 3.** Long-term context for the March 2026 Kona Low. **(A)** Monthly Maui island-mean rainfall (CHIRPS, Jun 2016–Mar 2026); March 2026 (373 mm, orange triangle) was the highest single month in the 10-year record by more than 2×. **(B–D)** Monthly station-median fold change (observed / station historical median) vs monthly rainfall for NO₃+NO₂, PO₄, and SiO₂. Line = log-log regression fit to pre-2026 months (n = 114); shaded band = 95% prediction interval; orange triangle = March 2026. R² and slope p-value from log(fc) ~ log(rain) model. The slope for SiO₂ is not significant (p = 0.87), indicating no historical rainfall–SiO₂ relationship in this fixed-station network."
+#| fig-cap: "**Figure 3.** Long-term context for the March 2026 Kona Low. **(A)** Monthly Maui island-mean rainfall (CHIRPS, Jun 2016–Mar 2026); March 2026 (373 mm, orange triangle) was the highest single month in the 10-year record by more than 2×. **(B–D)** Monthly station-median fold change (observed / station historical median) vs monthly rainfall for NO₃+NO₂, PO₄, and SiO₂ on log–log axes. Both axes are log-scaled to match the fitted model: log(fold change) ~ log(rainfall). The regression line is therefore straight on these axes and the 95% prediction interval is symmetric in model space. Orange triangle = March 2026 (373 mm); R² and slope p-value from log–log model fit to pre-2026 months only (n = 114). Dashed line = fold change of 1 (no anomaly). The slope for SiO₂ is not significant (p = 0.87), indicating no historical rainfall–SiO₂ relationship in this fixed-station network."
 
 # ── Build prediction ribbons for plotting ─────────────────────────────────────
 rain_seq <- tibble(log_rain = seq(log(10), log(400), length.out = 200)) |>
@@ -1504,16 +1541,21 @@ pBD <- ggplot(scatter_df, aes(x = chirps_mm, y = fc)) +
              shape = 17, size = 3.5, colour = "#D55E00") +
   geom_text(data = annot_df,
             aes(label = r2_lab),
-            x = -Inf, y = -Inf, hjust = -0.05, vjust = -0.5,
+            x = -Inf, y = Inf, hjust = -0.05, vjust = 1.4,
             size = 2.3, colour = "gray30", inherit.aes = FALSE) +
   facet_wrap(~nutrient_f, scales = "free_y", nrow = 1,
              labeller = label_parsed) +
-  scale_x_continuous(
-    limits = c(0, 400),
-    breaks = c(0, 100, 200, 300, 373),
-    labels = c("0", "100", "200", "300", "373")
+  # Log-log axes: model is log(fc) ~ log(rain); log scale makes the
+  # regression line straight, the PI symmetric in model space, and the
+  # March 2026 exceedance visually unambiguous.
+  scale_x_log10(
+    limits = c(8, 430),
+    breaks = c(10, 30, 100, 373),
+    labels = c("10", "30", "100", "373")
   ) +
-  labs(x = "Monthly rainfall (mm)", y = "Fold change\n(station median / historical baseline)",
+  scale_y_log10(breaks = c(0.1, 0.3, 1, 3, 10, 30)) +
+  labs(x = "Monthly rainfall (mm, log scale)",
+       y = "Fold change\n(station median / historical baseline, log scale)",
        tag = "B") +
   theme_kona_paper(base_size = 9) +
   theme(strip.text = element_text(size = 9))
@@ -2755,20 +2797,20 @@ print(resid_morans(best_model, si_sf_model))
 #| fig-height: 3.5
 #| fig-cap: "**Step 11 — Partial effects of physical predictors on log(SiO₂).** Smooths from the selected GAM on the log scale; shaded bands = 95% pointwise credible intervals. Rug marks show the data range for each predictor. The x-axis tick for log_dist_m represents distance to stream mouth (m + 1), log_chirps is cumulative storm rainfall (mm), log_slope is mean watershed slope (degrees + 0.1), and log_hs is significant wave height (m + 0.01)."
 
-# Extract and plot the non-RE, non-spatial smooth terms
-s_names  <- rownames(summary(best_model)$s.table)
-phys_idx <- which(!grepl("island_f|ahupuaa_f|utm_x_km", s_names))
+# Physical smooth terms (exclude random effects and spatial TPRS)
+phys_terms <- c("te(log_dist_m,log_slope)", "s(log_chirps)",
+                "s(log_ksat)", "s(log_hs)")
 
-# plot.gam select= accepts one integer at a time in mgcv 1.9; loop over terms
-par(mfrow = c(1, length(phys_idx)), mar = c(4.2, 4.2, 2.5, 0.5))
-for (i in phys_idx) {
-  plot(best_model, select = i,
-       shade = TRUE, shade.col = "gray85",
-       col = "#1565C0", lwd = 1.5,
-       rug = TRUE, residuals = FALSE,
-       seWithMean = TRUE,
-       ylab = "Partial effect on log(SiO\u2082)")
-}
+# gratia::draw() produces ggplot2 panels; works with both 1D and 2D smooths.
+# The te() term renders as a filled contour; 1D terms render as line + CI band.
+gratia::draw(best_model,
+             select    = phys_terms,
+             residuals = FALSE,
+             rug       = TRUE,
+             ci_level  = 0.95,
+             nrow      = 1) &
+  theme_kona_paper(base_size = 9) &
+  labs(y = "Partial effect on log(SiO\u2082)")
 ```
 
 ---
