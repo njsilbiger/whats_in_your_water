@@ -1813,7 +1813,7 @@ morans_results |>
 #| label: step10-variograms
 #| fig-width: 8.5
 #| fig-height: 4.5
-#| fig-cap: "**Step 10 — Empirical variograms** for log1p-transformed nutrient concentrations (Oʻahu and Maui; UTM zone 4N, EPSG:32604). Point size scales with the number of pairs per bin. SiO₂ shows the clearest distance-decay structure on both islands, consistent with its highest global Moran's I (0.49). NH₄ shows the weakest spatial structure, particularly on Maui (global Moran's I ≈ 0.23, the lowest of the four nutrients)."
+#| fig-cap: "**Supplementary Figure S2.** Empirical variograms for log1p-transformed nutrient concentrations (Oʻahu and Maui; UTM zone 4N, EPSG:32604). Point size scales with the number of pairs per bin. SiO₂ shows the clearest distance-decay structure on both islands, consistent with its highest global Moran's I (0.49). NH₄ shows the weakest spatial structure, particularly on Maui (global Moran's I ≈ 0.23, the lowest of the four nutrients)."
 
 compute_vgm_df <- function(sf_sub, var, cutoff_m, width_m) {
   sf_filt <- sf_sub |> filter(!is.na(.data[[var]]))
@@ -2571,7 +2571,7 @@ cat("Predictor data frame:", nrow(pred_df), "samples (11 offshore reference excl
 #| label: step3-correlation-matrix
 #| fig-width: 7
 #| fig-height: 6
-#| fig-cap: "Figure S1. Spearman rank correlations among candidate predictors. Values shown where |ρ| ≥ 0.5. Offshore reference samples excluded."
+#| fig-cap: "Figure S3. Spearman rank correlations among candidate predictors. Values shown where |ρ| ≥ 0.5. Offshore reference samples excluded."
 
 # Predictor variables entered in the correlation (log-transformed where skewed)
 corr_vars <- c(
@@ -2858,27 +2858,6 @@ cat("Residual Moran's I —", best_label, ":\n")
 print(resid_morans(best_model, si_sf_model))
 ```
 
-```{r}
-#| label: step11-si-effects
-#| fig-width: 9
-#| fig-height: 3.5
-#| fig-cap: "**Step 11 — Partial effects of physical predictors on log(SiO₂).** Smooths from the selected GAM on the log scale; shaded bands = 95% pointwise credible intervals. Rug marks show the data range for each predictor. The x-axis tick for log_dist_m represents distance to stream mouth (m + 1), log_chirps is cumulative storm rainfall (mm), log_slope is mean watershed slope (degrees + 0.1), and log_hs is significant wave height (m + 0.01)."
-
-# Physical smooth terms (exclude random effects and spatial TPRS)
-phys_terms <- c("te(log_dist_m,log_slope)", "s(log_chirps)",
-                "s(log_ksat)", "s(log_hs)")
-
-# gratia::draw() produces ggplot2 panels; works with both 1D and 2D smooths.
-# The te() term renders as a filled contour; 1D terms render as line + CI band.
-gratia::draw(best_model,
-             select    = phys_terms,
-             residuals = FALSE,
-             rug       = TRUE,
-             ci_level  = 0.95,
-             nrow      = 1) &
-  theme_kona_paper(base_size = 9) &
-  labs(y = expression("Partial effect on"~log(SiO[2])))
-```
 
 ---
 
@@ -3073,9 +3052,6 @@ tibble(
 
 ```{r}
 #| label: step12-nox-coefficients
-#| fig-width: 6.5
-#| fig-height: 4
-#| fig-cap: "**Step 12 — Standardized fixed effects on log(NO₃+NO₂), four-island primary model.** Points are standardized coefficients; bars are 95% Wald confidence intervals. A 1-SD change in log(SiO₂) is associated with a ≈0.80-SD change in log(NO₃+NO₂); among the anthropogenic terms, % impervious, NPDES distance, and the cesspool exposure index differ from zero, while % agriculture does not. Colours mark the four pre-registered predictor groups; island/ahupuaʻa random effects and the 2D spatial smooth are not shown."
 
 coef_ci <- function(model, label) {
   s <- summary(model)$p.table
@@ -3116,18 +3092,6 @@ nox_coefs |>
   knitr::kable(caption = "Standardized coefficients — primary four-island NO\u2083+NO\u2082 model.",
                col.names = c("Group", "Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
 
-group_cols <- c("Terrestrial delivery" = "#1565C0", "Hydrologic forcing" = "#00838F",
-                "Watershed transport" = "#2E7D32", "Anthropogenic" = "#C62828",
-                "Coastal dilution" = "#6A1B9A")
-nox_coefs |>
-  mutate(Group = factor(pred_group[term], levels = names(group_cols)),
-         Predictor = fct_reorder(pred_label[term], est)) |>
-  ggplot(aes(est, Predictor, colour = Group)) +
-  geom_vline(xintercept = 0, linetype = 2, colour = "grey60") +
-  geom_pointrange(aes(xmin = lwr, xmax = upr)) +
-  scale_colour_manual(values = group_cols, name = NULL) +
-  labs(x = expression("Standardized effect on"~log(NO[3]+NO[2])), y = NULL) +
-  theme_kona_paper()
 ```
 
 ```{r}
@@ -3352,9 +3316,6 @@ tibble(
 
 ```{r}
 #| label: step13-po4-coefficients
-#| fig-width: 6.5
-#| fig-height: 4
-#| fig-cap: "**Step 13 — Standardized fixed effects on log(PO₄), four-island primary model.** Points are standardized coefficients; bars are 95% Wald confidence intervals. log(SiO₂) is the leading predictor (β ≈ 0.40), with a clearer positive storm-rainfall contribution than NO₃+NO₂; anthropogenic land-use terms are mostly weak except for a small positive cesspool-exposure effect. Colours mark the four pre-registered predictor groups."
 
 po4_coefs <- coef_ci(po4_M_full, "PO4")
 
@@ -3366,15 +3327,6 @@ po4_coefs |>
   knitr::kable(caption = "Standardized coefficients — primary four-island PO\u2084 model.",
                col.names = c("Group", "Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
 
-po4_coefs |>
-  mutate(Group = factor(pred_group[term], levels = names(group_cols)),
-         Predictor = fct_reorder(pred_label[term], est)) |>
-  ggplot(aes(est, Predictor, colour = Group)) +
-  geom_vline(xintercept = 0, linetype = 2, colour = "grey60") +
-  geom_pointrange(aes(xmin = lwr, xmax = upr)) +
-  scale_colour_manual(values = group_cols, name = NULL) +
-  labs(x = expression("Standardized effect on"~log(PO[4])), y = NULL) +
-  theme_kona_paper()
 ```
 
 ```{r}
@@ -3565,9 +3517,6 @@ tibble(
 
 ```{r}
 #| label: step14-nh4-coefficients
-#| fig-width: 6.5
-#| fig-height: 4
-#| fig-cap: "**Step 14 — Standardized fixed effects on log(NH₄), four-island primary model.** log(SiO₂) remains the leading predictor but is markedly weaker than for NO₃+NO₂ or PO₄ (β ≈ 0.27). Both % impervious and % agriculture carry significant *negative* associations; unlike NO₃+NO₂ and PO₄, the cesspool exposure index is not distinguishable from zero. Bars are 95% Wald confidence intervals."
 
 nh3_coefs <- coef_ci(nh3_M_full, "NH4")
 
@@ -3579,15 +3528,6 @@ nh3_coefs |>
   knitr::kable(caption = "Standardized coefficients — primary four-island NH\u2084 model.",
                col.names = c("Group", "Predictor", "Std. \u03b2", "2.5%", "97.5%", "p"))
 
-nh3_coefs |>
-  mutate(Group = factor(pred_group[term], levels = names(group_cols)),
-         Predictor = fct_reorder(pred_label[term], est)) |>
-  ggplot(aes(est, Predictor, colour = Group)) +
-  geom_vline(xintercept = 0, linetype = 2, colour = "grey60") +
-  geom_pointrange(aes(xmin = lwr, xmax = upr)) +
-  scale_colour_manual(values = group_cols, name = NULL) +
-  labs(x = expression("Standardized effect on"~log(NH[4])), y = NULL) +
-  theme_kona_paper()
 ```
 
 ```{r}
@@ -3845,7 +3785,7 @@ fig5_new
 ::: {.callout-important}
 **Figure 5 — Primary NO₃+NO₂ response model.** The main figure focuses on NO₃+NO₂, the nutrient where evidence for anthropogenic amplification is strongest. After accounting for terrestrial-water delivery (log SiO₂, β ≈ 0.77) and storm forcing (β ≈ 0.61), coastal NO₃+NO₂ enrichment increases significantly with the **cesspool exposure index** (β ≈ 0.14, p < 0.001) and shows a conditional interaction with rainfall (Rainfall × Cesspool, β ≈ 0.20; Rainfall × Agriculture, β ≈ 0.66). These two interactions demonstrate that extreme rainfall conditionally amplifies coastal nitrogen enrichment where anthropogenic nutrient sources are denser — the mechanistic core of the "human amplification" hypothesis. Non-significant watershed-transport predictors (distance to stream, slope, Ksat) are shown as open circles to emphasize that coastal N delivery is dominated by delivery capacity (Si) and human sources rather than fine-scale catchment properties.
 
-Supplementary Figure S1 shows that **PO₄** exhibits a more modest cesspool response, while **NH₄** shows minimal statistical linkage to watershed-scale variables, suggesting reduced-nitrogen cycling is controlled by shorter-timescale biogeochemical processes. Supplementary Figure S2 shows the **SiO₂** delivery model in its own partial-effects figure: the terrestrial-water connectivity signature that NO₃+NO₂ builds upon.
+Supplementary Figure S4 shows that **PO₄** exhibits a more modest cesspool response, while **NH₄** shows minimal statistical linkage to watershed-scale variables, suggesting reduced-nitrogen cycling is controlled by shorter-timescale biogeochemical processes. Supplementary Figure S5 shows the **SiO₂** delivery model in its own partial-effects figure: the terrestrial-water connectivity signature that NO₃+NO₂ builds upon.
 :::
 
 ## Supplementary Figure: PO₄ and NH₄ models {#sec-supp-po4-nh4}
@@ -3856,7 +3796,7 @@ The PO₄ and NH₄ response models show contrasting patterns relative to the Si
 #| label: figS-po4-nh4-models
 #| fig-width: 7
 #| fig-height: 6.5
-#| fig-cap: "**Supplementary Figure S1.** Standardized fixed effects on PO₄ (green) and NH₄ (orange) from the four-island models, overlaid in a single figure and reordered by effect size within each mechanistic group. Grey boxes around group labels are consistent with Figure 5. Filled circles mark significant effects; open circles mark non-significant effects. Unlike the strong NO₃+NO₂ response to cesspool exposure (Figure 5), PO₄ shows moderate affinity to anthropogenic predictors and NH₄ shows minimal statistical linkage to any watershed-scale variable, suggesting reduced-inorganic nitrogen is controlled by finer-scale or shorter-timescale biogeochemical processes rather than landscape factors. The color legend distinguishes nutrient responses: orange dots spread across predictors indicate NH₄'s weak predictability, while green dots cluster at key anthropogenic predictors for PO₄."
+#| fig-cap: "**Supplementary Figure S4.** Standardized fixed effects on PO₄ (green) and NH₄ (orange) from the four-island models, overlaid in a single figure and reordered by effect size within each mechanistic group. Grey boxes around group labels are consistent with Figure 5. Filled circles mark significant effects; open circles mark non-significant effects. Unlike the strong NO₃+NO₂ response to cesspool exposure (Figure 5), PO₄ shows moderate affinity to anthropogenic predictors and NH₄ shows minimal statistical linkage to any watershed-scale variable, suggesting reduced-inorganic nitrogen is controlled by finer-scale or shorter-timescale biogeochemical processes rather than landscape factors. The color legend distinguishes nutrient responses: orange dots spread across predictors indicate NH₄'s weak predictability, while green dots cluster at key anthropogenic predictors for PO₄."
 
 # (Data prepared earlier: po4_fig_df, nh4_fig_df)
 
@@ -3932,7 +3872,7 @@ The SiO₂ model serves as the mechanistic baseline for terrestrial-water delive
 #| label: figS-si-partial-effects
 #| fig-width: 10
 #| fig-height: 6
-#| fig-cap: "**Supplementary Figure S2.** Significant partial effects of watershed and hydrologic predictors on SiO₂, from the four-island standardized model (`si_M_std`). Each panel shows the model-predicted SiO₂ concentration (µmol L⁻¹, blue line ± 95% CI ribbon) as one predictor varies across its 3rd–97th percentile range with all other predictors held at their median value; island/ahupuaʻa random effects and the spatial smooth are excluded (population-level prediction). Rug marks along the x-axis show the distribution of observed values. Panels are ordered left-to-right, top-to-bottom by |standardized effect size| (Figure 5 predictor ordering). Only the eight predictors with 95% CI excluding zero are shown; slope and Ksat (non-significant) are omitted."
+#| fig-cap: "**Supplementary Figure S5.** Significant partial effects of watershed and hydrologic predictors on SiO₂, from the four-island standardized model (`si_M_std`). Each panel shows the model-predicted SiO₂ concentration (µmol L⁻¹, blue line ± 95% CI ribbon) as one predictor varies across its 3rd–97th percentile range with all other predictors held at their median value; island/ahupuaʻa random effects and the spatial smooth are excluded (population-level prediction). Rug marks along the x-axis show the distribution of observed values. Panels are ordered left-to-right, top-to-bottom by |standardized effect size| (Figure 5 predictor ordering). Only the eight predictors with 95% CI excluding zero are shown; slope and Ksat (non-significant) are omitted."
 
 exclude_terms <- c("s(island_f)", "s(ahupuaa_f)", "s(utm_x_km,utm_y_km)")
 
@@ -4585,7 +4525,7 @@ save_fig(fig6, "fig6_interactions", width = 8, height = 4.5)
 
 # Variance Partitioning {#sec-variance-partitioning}
 
-> **Step 16 (Figure S3 — Supplementary).** Unique and shared explanatory power for each driver group
+> **Step 16 (Supplementary Figure S6).** Unique and shared explanatory power for each driver group
 > across all four nutrients. The interaction marginal-effects figure is now Figure 6 in the main text.
 
 For each nutrient we quantify the unique contribution of the pre-registered driver
@@ -4717,7 +4657,7 @@ vp_table |>
 #| label: fig6-variance-partition
 #| fig-width: 7
 #| fig-height: 5
-#| fig-cap: "**Figure S3 (Supplementary).** Variance partitioning among five mechanistic driver-group blocks (four-island primary scope), shown as % deviance explained from the nested M0\u2192M4 GAM sequence (Step 16). M0 retains only an island random intercept and a 2D spatial smooth — no ahupua\u02BBa random effect — so the Connectivity and Human blocks are free to explain between-watershed variation rather than having it pre-absorbed by ahupua\u02BBa identity. Blocks are entered in the pre-registered order Hydrology \u2192 Connectivity \u2192 Human \u2192 Coastal; log(SiO\u2082) is folded into Connectivity for NO\u2083+NO\u2082, PO\u2084, and NH\u2084 as the empirical terrestrial-delivery proxy. Shares are descriptive increments, not independent/causal contributions, and are sensitive to the fixed entry order when blocks share variance. Tiny negative increments (coastal block for PO\u2084 and NH\u2084; REML numerical artifact) are set to zero for display."
+#| fig-cap: "**Supplementary Figure S6.** Variance partitioning among five mechanistic driver-group blocks (four-island primary scope), shown as % deviance explained from the nested M0\u2192M4 GAM sequence (Step 16). M0 retains only an island random intercept and a 2D spatial smooth — no ahupua\u02BBa random effect — so the Connectivity and Human blocks are free to explain between-watershed variation rather than having it pre-absorbed by ahupua\u02BBa identity. Blocks are entered in the pre-registered order Hydrology \u2192 Connectivity \u2192 Human \u2192 Coastal; log(SiO\u2082) is folded into Connectivity for NO\u2083+NO\u2082, PO\u2084, and NH\u2084 as the empirical terrestrial-delivery proxy. Shares are descriptive increments, not independent/causal contributions, and are sensitive to the fixed entry order when blocks share variance. Tiny negative increments (coastal block for PO\u2084 and NH\u2084; REML numerical artifact) are set to zero for display."
 
 comp_levels <- c("Spatial/Island", "Hydrologic forcing", "Watershed transport",
                   "Anthropogenic", "Coastal dilution", "Residual")
@@ -5096,7 +5036,7 @@ left_join(loao_tbl, loio_tbl, by = "Nutrient") |>
 #| label: step18-obs-pred-plot
 #| fig-width: 8
 #| fig-height: 7
-#| fig-cap: "**Step 18B — Leave-one-island-out CV: observed vs predicted.** Each panel shows one nutrient (log scale). Points represent individual samples from the *held-out* island; predictions use only the fixed-effect landscape covariates (island RE, ahupuaʻa RE, and 2D spatial smooth all excluded). The 1:1 line is solid grey; a dashed LOESS trend shows systematic bias. Colour encodes island. All four nutrients produce negative overall LOIO R², indicating that fixed-effect landscape predictors alone cannot recover island-level concentration baselines. This result underscores that island-level random effects capture substantial variation driven by unmeasured factors such as bedrock geology, aquifer characteristics, and island-scale land-use context."
+#| fig-cap: "**Supplementary Figure S7 — Leave-one-island-out CV: observed vs predicted.** Each panel shows one nutrient (log scale). Points represent individual samples from the *held-out* island; predictions use only the fixed-effect landscape covariates (island RE, ahupuaʻa RE, and 2D spatial smooth all excluded). The 1:1 line is solid grey; a dashed LOESS trend shows systematic bias. Colour encodes island. All four nutrients produce negative overall LOIO R², indicating that fixed-effect landscape predictors alone cannot recover island-level concentration baselines. This result underscores that island-level random effects capture substantial variation driven by unmeasured factors such as bedrock geology, aquifer characteristics, and island-scale land-use context."
 
 island_pal <- c(
   "O\u02BBahu"     = "#1565C0",
@@ -5417,7 +5357,7 @@ bind_rows(step19_loao_rf, .id = "Nutrient") |>
 
 ```{r}
 #| label: step19-rf-performance
-#| fig-cap: "**Step 19 — RF vs GAM LOAO spatial CV R².** Each point is one nutrient. The GAM LOAO values plotted here are the Step 18A primary models; for NOx this is the interaction model (nox_M_int, R² = 0.376; the additive nox_M_full reaches only 0.300). RF (with island as a categorical predictor) achieves R² = 0.445 for NOx and outperforms the GAM for all four nutrients — for NOx the RF advantage over the interaction model narrows to ΔR² = 0.069 — reflecting the RF's ability to capture interaction and non-linear effects without explicit specification."
+#| fig-cap: "**Supplementary Figure S8 — RF vs GAM LOAO spatial CV R².** Each point is one nutrient. The GAM LOAO values plotted here are the Step 18A primary models; for NOx this is the interaction model (nox_M_int, R² = 0.376; the additive nox_M_full reaches only 0.300). RF (with island as a categorical predictor) achieves R² = 0.445 for NOx and outperforms the GAM for all four nutrients — for NOx the RF advantage over the interaction model narrows to ΔR² = 0.069 — reflecting the RF's ability to capture interaction and non-linear effects without explicit specification."
 
 # RF vs GAM LOAO R² comparison
 perf_df <- tibble(
@@ -5450,7 +5390,7 @@ ggplot(perf_df, aes(GAM_LOAO, RF_LOAO, label = Nutrient)) +
 #| label: step19-rf-importance
 #| fig-width: 8
 #| fig-height: 6
-#| fig-cap: "**Step 19 — Permutation variable importance for all four random forests.** Importance is the mean decrease in R² when a predictor's values are randomly permuted across out-of-bag samples (larger = more important). Colours mark predictor groups from the pre-registered conceptual framework. Variable importance reflects predictive contribution and must not be interpreted as causal attribution — correlated predictors share importance (e.g. island and cesspool exposure index are likely positively correlated)."
+#| fig-cap: "**Supplementary Figure S9 — Permutation variable importance for all four random forests.** Importance is the mean decrease in R² when a predictor's values are randomly permuted across out-of-bag samples (larger = more important). Colours mark predictor groups from the pre-registered conceptual framework. Variable importance reflects predictive contribution and must not be interpreted as causal attribution — correlated predictors share importance (e.g. island and cesspool exposure index are likely positively correlated)."
 
 imp_df <- bind_rows(lapply(names(rf_full), \(nut) {
   imp <- rf_full[[nut]]$variable.importance
@@ -5487,153 +5427,7 @@ imp_df |>
         strip.text = element_text(size = 8))
 ```
 
-```{r}
-#| label: step19-rf-pdp
-#| fig-width: 9
-#| fig-height: 7
-#| fig-cap: "**Step 19 — Partial dependence plots for the top continuous predictors.** Computed by varying one predictor across its 5–95th percentile range while averaging predictions over all observed values of other predictors (c-ICE marginalisation). Each panel shows the most important continuous predictor for that nutrient's RF, ordered by permutation importance rank. Shaded rug marks show the observed data distribution. Curves are on the log-response scale."
 
-# Manual PDP: for each predictor × nutrient, vary the predictor on a grid
-# and average RF predictions over all training rows
-compute_pdp <- function(rf_model, data, var, n_grid = 40) {
-  rng <- quantile(data[[var]], c(0.05, 0.95), na.rm = TRUE)
-  grid <- seq(rng[1], rng[2], length.out = n_grid)
-  y    <- vapply(grid, function(v) {
-    d_mod <- data; d_mod[[var]] <- v
-    mean(predict(rf_model, data = d_mod)$predictions)
-  }, numeric(1))
-  tibble(x = grid, y = y, var = var)
-}
-
-# For each nutrient, identify top-2 continuous predictors by permutation importance
-top_continuous <- imp_df |>
-  filter(predictor != "island") |>
-  group_by(Nutrient) |>
-  slice_max(importance, n = 2) |>
-  ungroup()
-
-# Map back to original dataset/predictor-column names
-nut_map <- list(
-  "SiO\u2082"       = list(model = rf_full$Si,  data = si_rf_df),
-  "NO\u2083+NO\u2082" = list(model = rf_full$NOx, data = nox_rf_df),
-  "PO\u2084"        = list(model = rf_full$PO4, data = po4_rf_df),
-  "NH\u2084"        = list(model = rf_full$NH4, data = nh3_rf_df)
-)
-
-pdp_all <- bind_rows(lapply(
-  split(top_continuous, top_continuous$Nutrient),
-  function(df) {
-    nut   <- as.character(df$Nutrient[1])
-    m_obj <- nut_map[[nut]]
-    bind_rows(lapply(df$predictor, function(pvar) {
-      compute_pdp(m_obj$model, m_obj$data, pvar) |>
-        mutate(Nutrient = nut, group_lbl = rf_group[pvar],
-               label    = rf_label[pvar])
-    }))
-  }
-))
-
-# Rug data (observed values for each predictor per nutrient)
-rug_all <- bind_rows(lapply(
-  split(top_continuous, top_continuous$Nutrient),
-  function(df) {
-    nut   <- as.character(df$Nutrient[1])
-    m_obj <- nut_map[[nut]]
-    bind_rows(lapply(df$predictor, function(pvar) {
-      tibble(Nutrient = nut, label = rf_label[pvar],
-             x = m_obj$data[[pvar]])
-    }))
-  }
-))
-
-ggplot(pdp_all, aes(x, y)) +
-  geom_rug(data = rug_all, aes(x = x, y = NULL),
-           sides = "b", alpha = 0.3, linewidth = 0.3) +
-  geom_line(colour = "#1565C0", linewidth = 1) +
-  facet_wrap(~ Nutrient + label, scales = "free_x", ncol = 4) +
-  labs(x = NULL, y = "Predicted response (log scale, averaged)") +
-  theme_kona_paper() +
-  theme(strip.text = element_text(size = 7.5))
-```
-
-```{r}
-#| label: step19-rf-obs-pred
-#| fig-width: 8
-#| fig-height: 7
-#| fig-cap: "**Step 19 — RF LOAO CV: observed vs predicted.** Points represent samples from the held-out ahupuaʻa; predictions come from the RF trained on all other ahupuaʻa. The 1:1 line is solid grey. Colour encodes island. Unlike the LOIO test (Step 18B), island is a predictor in the RF so the model can use island-level context when predicting held-out ahupuaʻa."
-
-# Reconstruct LOAO predictions (re-run or use saved loao_cv_rf with return_preds)
-# Simpler: re-run with a thin wrapper that also returns predictions
-get_loao_preds_rf <- function(formula, data, response_col, num_trees = 500, seed = SEED) {
-  aps   <- unique(data$ahupuaa)
-  preds <- rep(NA_real_, nrow(data))
-  for (a in aps) {
-    idx <- data$ahupuaa == a
-    tr  <- data[!idx, ]; te <- data[idx, ]
-    if (nrow(tr) < 30) next
-    m <- try(ranger(formula, data = tr, num.trees = num_trees,
-                    seed = seed, importance = "none"), silent = TRUE)
-    if (inherits(m, "try-error")) next
-    preds[idx] <- predict(m, data = te)$predictions
-  }
-  tibble(obs = data[[response_col]], pred = preds,
-         island = as.character(data$island),
-         ahupuaa = data$ahupuaa)
-}
-
-# Cache the prediction vectors alongside LOAO metrics
-loao_pred_path <- here("output", "model_objects", "step19_rf_loao_preds.rds")
-if (file.exists(loao_pred_path)) {
-  loao_pred_df <- readRDS(loao_pred_path)
-} else {
-  set.seed(SEED)
-  cat("Reconstructing LOAO predictions for obs-vs-pred plot...\n")
-  loao_pred_df <- bind_rows(
-    get_loao_preds_rf(si_rf_form,  si_rf_df,  "log_Si",     seed = SEED) |>
-      mutate(Nutrient = "SiO\u2082"),
-    get_loao_preds_rf(nox_rf_form, nox_rf_df, "log_NO3NO2", seed = SEED) |>
-      mutate(Nutrient = "NO\u2083+NO\u2082"),
-    get_loao_preds_rf(po4_rf_form, po4_rf_df, "log_PO4",    seed = SEED) |>
-      mutate(Nutrient = "PO\u2084"),
-    get_loao_preds_rf(nh3_rf_form, nh3_rf_df, "log_NH3",    seed = SEED) |>
-      mutate(Nutrient = "NH\u2084")
-  )
-  saveRDS(loao_pred_df, loao_pred_path)
-}
-
-# Reuse the island palette from global-constants (same encoding as data)
-island_pal_rf <- island_pal
-
-nut_order <- c("SiO\u2082", "NO\u2083+NO\u2082", "PO\u2084", "NH\u2084")
-
-loao_r2_labels <- loao_pred_df |>
-  filter(!is.na(pred)) |>
-  group_by(Nutrient) |>
-  summarise(CV_R2 = round(1 - sum((obs-pred)^2)/sum((obs-mean(obs))^2), 3),
-            .groups = "drop") |>
-  mutate(Nutrient = factor(Nutrient, levels = nut_order))
-
-ggplot(loao_pred_df |>
-         filter(!is.na(pred)) |>
-         mutate(Nutrient = factor(Nutrient, levels = nut_order)),
-       aes(pred, obs, colour = island)) +
-  geom_abline(slope = 1, intercept = 0, colour = "grey50", linewidth = 0.5) +
-  geom_point(alpha = 0.45, size = 1.2) +
-  geom_smooth(aes(group = 1), method = "loess", se = FALSE,
-              colour = "black", linewidth = 0.6, linetype = "dashed") +
-  geom_text(data = loao_r2_labels,
-            aes(x = -Inf, y = Inf,
-                label = paste0("CV R\u00b2 = ", CV_R2)),
-            inherit.aes = FALSE, hjust = -0.1, vjust = 1.4,
-            size = 2.8, colour = "gray30") +
-  facet_wrap(~ Nutrient, scales = "free", ncol = 2) +
-  scale_colour_manual(values = island_pal_rf, name = NULL,
-                      na.value = "grey70") +
-  labs(x = "Predicted (RF LOAO, log scale)",
-       y = "Observed (log scale)") +
-  theme_kona_paper() +
-  theme(legend.position = "bottom", strip.text = element_text(size = 8))
-```
 
 ---
 

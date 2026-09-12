@@ -533,7 +533,7 @@ Requirements:
 - Interpretable in grayscale where possible
 - Save: PDF vector + 600-dpi TIFF or PNG
 - Never put statistical interpretation only in figure captions
-
+- Never put a title in the figure, only in the figure caption
 ---
 
 ### STEP 27 — Produce Model-Diagnostic Figures Automatically
@@ -542,6 +542,7 @@ For every final model save: residual vs fitted, QQ plot, posterior predictive ch
 
 A model is not final if residual spatial autocorrelation remains strong.
 
+Save them in the diagnostics folder
 ---
 
 ### STEP 28 — Generate Publication Tables
@@ -554,6 +555,7 @@ A model is not final if residual spatial autocorrelation remains strong.
 
 **Supplementary table:** Sensitivity-analysis results.
 
+Save in the tables folder
 ---
 
 ### STEP 29 — Primary Results Story to Test
