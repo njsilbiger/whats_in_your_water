@@ -137,6 +137,22 @@ height). Sources and transformations are in @tbl-sources. Cesspool coverage comb
 HCPT layer (Oʻahu/Maui) with the DOH OSDS 2010 inventory for Molokaʻi; the cross-source vintage
 difference is a documented comparability caveat, and models were re-run with and without Molokaʻi.
 
+**Cesspool exposure index.** The primary cesspool metric is a distance-decay exposure index computed
+per sample from the combined cesspool point layer. For each sample $i$, exposure is the sum of
+exponentially distance-weighted contributions from every cesspool $j$ within a 2,500 m cutoff:
+
+$$\text{exposure}_i = \sum_{j:\,d_{ij} \le 2500\text{ m}} \exp\!\left(-\,d_{ij}\,/\,b\right),$$
+
+where $d_{ij}$ is the sample-to-cesspool distance (m) and $b = 500$ m is the bandwidth (the cutoff of
+2,500 m is five bandwidths, at which the weight is ≈0.007 and negligible beyond). A nearby cesspool
+therefore contributes more than a distant one, and multiple nearby cesspools accumulate, so the index
+increases with both proximity and abundance. Distances were computed in projected UTM zone 4N
+(EPSG:32604). This single index supersedes the separately collinear buffer-count and
+distance-to-nearest metrics (Spearman |r| ≈ 0.79), and yields a well-defined value of 0 on Lānaʻi
+(no cesspools within the cutoff) rather than a missing value, so cesspool exposure enters the primary
+four-island model directly. The index was `log1p`-transformed and then standardized (z-scored) for
+modeling (reported as `log(cesspool exposure)` in @tbl-coefs).
+
 ### Data analysis
 
 *The analysis is fully scripted and reproducible in `kona_low_nutrient_analysis.qmd`, with a single
@@ -189,7 +205,11 @@ dropped on an arbitrary VIF rule.
 spatial cross-validation: **Model A** (delivery + connectivity + coastal), **Model B** (A +
 additive anthropogenic terms), and **Model C** (B + rainfall × anthropogenic interactions). We
 additionally partitioned deviance across driver blocks (M0 spatial/island → M1 hydrology → M2
-connectivity → M3 anthropogenic → M4 coastal) for all nutrients (@fig-varpart).
+connectivity → M3 anthropogenic → M4 coastal) for all nutrients (@fig-varpart). To probe whether the
+amplification slope differed among islands, we also refit the primary NO₃+NO₂ interaction model with
+an island-level random slope on the rainfall × cesspool product term (`s(island_f, rc, bs = "re")` in
+`mgcv`), and — because a random-effect variance over only four islands is weakly identified — we
+complemented it with leave-one-island-out refits of the fixed interaction (@tbl-loio).
 
 **Cross-validation.** Because neighboring samples are not independent, we used blocked spatial
 cross-validation: leave-one-ahupuaʻa-out (LOAO) for realistic predictive skill and
@@ -299,7 +319,12 @@ that this is genuine amplification rather than an artifact:
    changed sign when Oʻahu — the majority of samples and the dominant cesspool gradient — was
    removed (β = −0.42, p = 0.28). The rainfall × agriculture interaction, by contrast, is strong
    overall but concentrated on Maui (β = 0.24, p = 0.57 with Maui removed) and should be interpreted
-   as island-specific.
+   as island-specific. A complementary model with an island-level random slope on the
+   rainfall × cesspool term left the population-level interaction unchanged (β = 0.20, p = 0.002) and
+   estimated a negligible between-island slope variance (SD ≈ 0.005 on the standardized scale;
+   ΔAIC ≈ 0), but with only four islands that variance component is effectively unidentifiable (95%
+   CI spanning dozens of orders of magnitude), so the leave-one-island-out refits above — not the
+   random slope — carry the informative evidence on between-island heterogeneity.
 3. *Sources add nutrients even before conditioning on rainfall.* The additive cesspool effect is
    also significant within-sample (β ≈ 0.14, p ≈ 0.03) and stable across most sensitivity
    specifications (@tbl-sensitivity); its small additive-only contribution to variance partitioning
@@ -397,9 +422,9 @@ the connectivity signal.
 - A large *additive*, rainfall-independent human offset. The anthropogenic signature is expressed
   chiefly as amplification (conditional on rainfall); additive-only terms add little to variance
   partitioning or out-of-sample skill.
-coastlines"* — is justified: the amplification is a cross-validated, spatially structured
-interaction whose cesspool term survives excluding any of the three smaller islands (though it is
-Oʻahu-anchored; @tbl-loio). The nutrient-form contrast is a well-supported supporting result.er, or specific NH₄ mechanisms — these remain
+- Strong cross-island predictive generalization of the full models: leave-one-island-out CV of
+  absolute concentrations was poor, so magnitudes should not be extrapolated to unsampled islands.
+- PO₄ as a specific wastewater tracer, or specific NH₄ mechanisms — these remain
   descriptive/hypothetical.
 
 **Which title is justified.** The strongest title —
@@ -413,14 +438,14 @@ Oʻahu-anchored; @tbl-loio). The nutrient-form contrast is a well-supported supp
 ![Sampling design and storm context. Four Hawaiian islands (Oʻahu, Maui, Molokaʻi, Lānaʻi) showing all unique coastal sampling sites (filled circles, colored by island); the Pacific inset gives archipelago context. Bottom panels show four-island mean daily rainfall (NCEP GDAS, upper) and daily discharge at three USGS key gauges (lower, log₁₀ scale) for March–April 2026 on aligned time axes; all three gauges peaked 13–14 March. The community science network sampled 746 coastal locations across 132 ahupuaʻa on 28 March–8 April, 12–26 days after peak rainfall — a window in which conventional monitoring recorded no samples. Scale bars at lower-left of each map panel; basemap Esri World Imagery.](output/main_figures/Fig1_sampling_map.png){#fig-sampling}
 
 ![Coastal nutrient concentrations by salinity group: storm-influenced (≤34 PSU; orange) and marine background (>34 PSU; blue), for NO₃+NO₂, PO₄, NH₄, and SiO₂ (µmol L⁻¹). Each point is one sample (jittered); violins show the empirical distribution and the bold crossbar the median. Annotations give the median fold enrichment, median(storm)/median(background), with 95% bootstrap CI (4,999 replicates). Below-detection samples are excluded from the plotted points (NO₃+NO₂ n = 44; PO₄ n = 77; NH₄ n = 185; SiO₂ n = 27); medians lie well above detection limits so fold estimates are unaffected. Enrichment is strongest for SiO₂ (~4.8×) and NO₃+NO₂ (~2.0×) and weakest for NH₄ (~1.6×).](output/main_figures/fig2_nutrient_distributions.png){#fig-distributions}
-![Conditional amplification of coastal NO₃+NO₂ by anthropogenic land use during extreme rainfall. Marginal predictions from the primary NO₃+NO₂ model show how the storm-rainfall relationship with predicted NO₃+NO₂ steepens with (A) cesspool exposure index — the primary and most robust amplification result — and (B) % agricultural land cover. Lines are population-level predictions (island, ahupuaʻa, and spatial random effects excluded) holding other predictors at their means; the three lines per panel correspond to the 10th (low; blue dashed), 50th (median; grey solid), and 90th (high; red dashed) percentiles of the moderator. Positive interaction slopes indicate stronger rainfall-driven enrichment where sources are denser. **Panel A (primary result):** the rainfall × cesspool interaction is significant (β = 0.20, p = 0.002), improves spatially blocked out-of-sample prediction (Model C leave-one-ahupuaʻa-out R² = 0.38 vs 0.32 for delivery-only), and holds when any one of the three smaller islands is excluded, though it is anchored in Oʻahu (@tbl-loio). **Panel B:** the rainfall × agriculture interaction is strong in the pooled data (β = 0.66, p = 0.002) but concentrated on Maui (β = 0.24, p = 0.57 without Maui) and is interpreted as island-specific. The y-axis is capped at 78 µmol L⁻¹ (99th percentile of observed NO₃+NO₂); in Panel B the high-agriculture line exceeds this cap at extreme rainfall, a sparse region of predictor space where the divergence direction is meaningful but the absolute magnitude is not reliable.](output/main_figures/fig6_interactions.png){#fig-interactions}
+
 ![Long-term context for March 2026. (A) Monthly Maui island-mean rainfall (CHIRPS, 2016–2026); March 2026 (373 mm; orange triangle) was the wettest month in the record (rank 1 of 117). (B–D) Monthly station-median fold change (observed / station pre-2026 median) versus monthly rainfall for NO₃+NO₂, PO₄, and SiO₂ on log–log axes, with the pre-2026 fit (n = 116 months) and its 95% prediction interval; the orange triangle marks March 2026. The routine rainfall–nutrient relationship is weak (R² = 0.05–0.08) and non-significant for SiO₂ (slope p = 0.87). At the network-median level, only PO₄ exceeded the prediction interval; NO₃+NO₂ and SiO₂ were at the 98th percentile but within the interval, while individual stations reached far higher fold changes.](output/main_figures/fig3_rainfall_nutrient_context.png){#fig-context}
 
 ![Spatial distribution of coastal nutrient concentrations following the March 2026 Kona Low. Rows: NO₃+NO₂, PO₄, SiO₂, NH₄ (µmol L⁻¹); columns: Oʻahu, Maui, Molokaʻi, Lānaʻi. Oʻahu, Maui, and Molokaʻi use ordinary kriging on log1p concentrations (spherical variogram; minimum range = island diagonal/5; 3 km coastal band; 250 m grid; sample-coverage masking prevents extrapolation into unsurveyed coast). Lānaʻi shows raw sample locations only (n = 20). Filled circles are individual samples on the same color scale as the surface; the scale is shared across islands within each nutrient row. Kriging is for visualization only. NO₃+NO₂ and SiO₂ form the most spatially coherent hotspots, whereas NH₄ is the most localized (global Moran's I 0.23 vs 0.49 for SiO₂). Scale bars at lower-left of each panel.](output/main_figures/fig4_spatial_nutrients.png){#fig-spatial}
 
 ![Standardized fixed effects on NO₃+NO₂ from the four-island model, ordered by effect size within each mechanistic group. Filled circles mark effects whose 95% CI excludes zero; open circles mark non-significant effects. Predictors are grouped by mechanism: terrestrial delivery (log SiO₂), hydrologic forcing (storm rainfall), watershed transport (topography, soils), anthropogenic sources (cesspool exposure, agricultural and impervious cover, distance to permitted discharge), coastal dilution (wave exposure), and the two significant rainfall × source interaction terms. Terrestrial delivery and hydrologic forcing are the largest effects; agriculture and cesspool exposure add positive anthropogenic signal, and the interaction terms show that rainfall conditionally amplifies NO₃+NO₂ where anthropogenic sources are denser. Island/ahupuaʻa random effects and the spatial smooth are not shown. Parallel standardized effects for PO₄, NH₄, and the SiO₂ delivery model appear in the Supplement.](output/main_figures/fig5_nox_primary.png){#fig-effects}
 
-![Conditional amplification of coastal NO₃+NO₂ by anthropogenic land use during extreme rainfall. Marginal predictions from the primary NO₃+NO₂ model show how the storm-rainfall relationship with predicted NO₃+NO₂ changes with (A) cesspool exposure index and (B) % agricultural land cover. Lines are population-level predictions (island, ahupuaʻa, and spatial random effects excluded) holding other predictors at their means; the three lines per panel correspond to the 10th (low; blue dashed), 50th (median; grey solid), and 90th (high; red dashed) percentiles of the moderator. Positive interaction slopes indicate stronger rainfall-driven enrichment where sources are denser; leave-one-ahupuaʻa-out CV supports out-of-sample gain from these interactions (Model C R² = 0.38 vs 0.32 for delivery-only). The y-axis is capped at 78 µmol L⁻¹ (99th percentile of observed NO₃+NO₂); in Panel B the high-agriculture line exceeds this cap at extreme rainfall, a sparse region of predictor space where the divergence direction is meaningful but the absolute magnitude is not reliable.](output/main_figures/fig6_interactions.png){#fig-interactions}
+![Conditional amplification of coastal NO₃+NO₂ by anthropogenic land use during extreme rainfall. Marginal predictions from the primary NO₃+NO₂ model show how the storm-rainfall relationship with predicted NO₃+NO₂ steepens with (A) cesspool exposure index — the primary and most robust amplification result — and (B) % agricultural land cover. Lines are population-level predictions (island, ahupuaʻa, and spatial random effects excluded) holding other predictors at their means; the three lines per panel correspond to the 10th (low; blue dashed), 50th (median; grey solid), and 90th (high; red dashed) percentiles of the moderator. Positive interaction slopes indicate stronger rainfall-driven enrichment where sources are denser. **Panel A (primary result):** the rainfall × cesspool interaction is significant (β = 0.20, p = 0.002), improves spatially blocked out-of-sample prediction (Model C leave-one-ahupuaʻa-out R² = 0.38 vs 0.32 for delivery-only), and holds when any one of the three smaller islands is excluded, though it is anchored in Oʻahu (@tbl-loio). **Panel B:** the rainfall × agriculture interaction is strong in the pooled data (β = 0.66, p = 0.002) but concentrated on Maui (β = 0.24, p = 0.57 without Maui) and is interpreted as island-specific. The y-axis is capped at 78 µmol L⁻¹ (99th percentile of observed NO₃+NO₂); in Panel B the high-agriculture line exceeds this cap at extreme rainfall, a sparse region of predictor space where the divergence direction is meaningful but the absolute magnitude is not reliable.](output/main_figures/fig6_interactions.png){#fig-interactions}
 
 ## Tables
 
@@ -455,9 +480,9 @@ read_tbl("tableS_loio_interactions.csv") |>
                       "Rain × agriculture β", "p", ""))
 ```
 
-## Supplementary figures
-
-![Station-level fold enrichment primary NO₃+NO₂ result across analytical specifications: deviance explained, standardized cesspool coefficient, its p-value, and whether the sign/magnitude is consistent with the primary model."
+```{r}
+#| label: tbl-sensitivity
+#| tbl-cap: "Sensitivity of the primary NO₃+NO₂ result across analytical specifications: deviance explained, standardized cesspool coefficient, its p-value, and whether the sign/magnitude is consistent with the primary model."
 read_tbl("tableS_sensitivity_overview.csv") |>
   kable(col.names = c("Specification", "Dev. expl. (%)", "Cesspool β", "Cesspool p", "Consistent"))
 ```
