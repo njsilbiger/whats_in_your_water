@@ -2395,6 +2395,21 @@ chem_master |> group_by(island) |>
   knitr::kable(caption = "Cesspool exposure index by island (distance-decay weighted cesspool count, 500 m bandwidth).")
 ```
 
+The exposure index combines both proximity and abundance into a single number: each cesspool
+within 2.5 km contributes $\exp(-d/500)$ to the sum, so a cesspool immediately adjacent
+contributes 1.0, one at 500 m contributes ≈ 0.37, and one at 1,500 m contributes ≈ 0.05.
+The total is interpretable as an **effective nearby cesspool count** — the number of cesspools
+that would need to be located immediately adjacent to produce the same exposure signal as the
+actual spatial arrangement. Some reference anchors:
+
+| Index value | Natural interpretation |
+|---|---|
+| 0 | No cesspools within 2.5 km (Lānaʻi by construction) |
+| ≈ 1 | One cesspool immediately adjacent, or 2–3 scattered within a few hundred meters |
+| ≈ 5 | A small cluster within the immediate neighborhood (~500 m) |
+| ≈ 20 | Moderate density: dozens of cesspools within 500–800 m (mid-century residential subdivision) |
+| ≈ 45 | High exposure: equivalent to ~45 cesspools right next door — in practice, ~80–120 cesspools within a 500 m radius, or hundreds spread across 1–1.5 km |
+
 ::: {.callout-note}
 **Step 2 missingness summary.**
 
