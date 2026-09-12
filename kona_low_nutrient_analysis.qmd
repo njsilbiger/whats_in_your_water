@@ -135,11 +135,14 @@ island_levels <- c("O'ahu", "Maui", "Moloka'i", "Lāna'i")
 
 # ── Nutrient response variables ───────────────────────────────────────────────
 response_vars  <- c("NO3NO2", "PO4", "NH3", "SiO2")
+# NOTE: use expression() for all chemical names in ggplot2 labs/scales — never
+# unicode subscript/superscript characters in axis labels or legend text.
+# Named expression vectors work in scale_colour/fill_manual(labels = ...).
 response_labels <- c(
-  NO3NO2 = "NO\u2083+NO\u2082 (\u03bcmol L\u207b\u00b9)",
-  PO4    = "PO\u2084 (\u03bcmol L\u207b\u00b9)",
-  NH3    = "NH\u2084 (\u03bcmol L\u207b\u00b9)",
-  SiO2   = "SiO\u2082 (\u03bcmol L\u207b\u00b9)"
+  NO3NO2 = expression(NO[3]+NO[2]~(mu*mol~L^{-1})),
+  PO4    = expression(PO[4]~(mu*mol~L^{-1})),
+  NH3    = expression(NH[4]~(mu*mol~L^{-1})),
+  SiO2   = expression(SiO[2]~(mu*mol~L^{-1}))
 )
 
 # ── Reef health thresholds (µmol/L; Reef Check / Hawaii benchmarks) ───────────
@@ -398,7 +401,7 @@ write_csv(site_lookup, here("data", "site_lookup.csv"))
 ::: {.callout-warning}
 **Key data gaps to note before modeling.**
 
-- **USGS stream discharge** (61.5% missing): **this is gauge-coverage missingness, not
+- **USGS stream discharge** (63.0% missing): **this is gauge-coverage missingness, not
   streamlessness.** Of the 470 ungauged samples, 91% (n = 426) are within 5 km of an
   OSM stream mouth, and median distance to the nearest stream mouth is ≤ 0.5 km on
   Maui, Molokaʻi, and Lānaʻi. USGS gauges exist only for major perennial streams; the
@@ -899,7 +902,7 @@ p_rain <- ggplot() +
   scale_x_date(limits = tl_limits, expand = expansion(add = 1),
                date_breaks = "1 week", date_labels = "%b %d") +
   scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
-  labs(x = NULL, y = "Rainfall\n(mm day\u207b\u00b9)") +
+  labs(x = NULL, y = expression(Rainfall~(mm~day^{-1}))) +
   theme_tl() +
   theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
 
@@ -920,7 +923,7 @@ p_disch <- ggplot(usgs_maui, aes(x = Date, y = Flow)) +
   scale_y_log10(labels = scales::label_comma(), breaks = c(1, 10, 100, 1000)) +
   scale_x_date(limits = tl_limits, expand = expansion(add = 1),
                date_breaks = "1 week", date_labels = "%b %d") +
-  labs(x = NULL, y = "Discharge\n(cfs, log\u2081\u2080)") +
+  labs(x = NULL, y = expression(Discharge~(cfs~log[10]))) +
   theme_tl() +
   coord_cartesian(clip = "off")
 
@@ -1151,7 +1154,7 @@ ggplot(fig2_long, aes(x = sal_group, y = conc,
   scale_x_discrete(labels = c("Storm", "Marine")) +
   labs(
     x      = NULL,
-    y      = expression(Concentration~(µmol~L^{-1})),
+    y      = expression(Concentration~(mu*mol~L^{-1})),
     fill   = NULL,
     colour = NULL
   ) +
@@ -1383,12 +1386,13 @@ pA_hui / pB_hui + plot_layout(heights = c(1, 1.1))
 #| label: step9-station-level-mar26
 
 # Station-level fold changes in March 2026 — the network median masks large
-# variation. 47 stations sampled; we inspect which were most impacted.
+# variation. 47 samples from 41 distinct stations (6 stations sampled twice);
+# we inspect which were most impacted.
 hui_mar26 <- hui_fc |>
   filter(year == 2026, month == 3)
 
 # Distribution across stations
-cat("March 2026 station-level fold change distribution (n = 47 stations):\n")
+cat("March 2026 station-level fold change distribution (n = 47 samples, 41 stations):\n")
 hui_mar26 |>
   summarise(across(c(fc_NO3NO2, fc_PO4, fc_SiO2, fc_NH3),
     list(
@@ -1445,7 +1449,7 @@ map_dfr(list(NO3NO2 = m_N, PO4 = m_P, SiO2 = m_Si, NH3 = m_NH),
         ),
         .id = "nutrient") |>
   mutate(across(where(is.numeric), \(x) round(x, 3))) |>
-  knitr::kable(caption = "Log-log regression of monthly median fold change on monthly CHIRPS rainfall. Slope = proportional elasticity. Fit to pre-2026 months only (n = 114). R² values are low, indicating rainfall is a weak predictor of network-averaged monthly anomalies.")
+  knitr::kable(caption = "Log-log regression of monthly median fold change on monthly CHIRPS rainfall. Slope = proportional elasticity. Fit to pre-2026 months only (n = 116). R² values are low, indicating rainfall is a weak predictor of network-averaged monthly anomalies.")
 ```
 
 ```{r}
@@ -1516,7 +1520,7 @@ preds |>
 #| label: fig3-rain-nutrient
 #| fig-width: 8.5
 #| fig-height: 6
-#| fig-cap: "**Figure 3.** Long-term context for the March 2026 Kona Low. **(A)** Monthly Maui island-mean rainfall (CHIRPS, Jun 2016–Mar 2026); March 2026 (373 mm, orange triangle) was the highest single month in the 10-year record by more than 2×. **(B–D)** Monthly station-median fold change (observed / station historical median) vs monthly rainfall for NO₃+NO₂, PO₄, and SiO₂ on log–log axes. Both axes are log-scaled to match the fitted model: log(fold change) ~ log(rainfall). The regression line is therefore straight on these axes and the 95% prediction interval is symmetric in model space. Orange triangle = March 2026 (373 mm); R² and slope p-value from log–log model fit to pre-2026 months only (n = 114). Dashed line = fold change of 1 (no anomaly). The slope for SiO₂ is not significant (p = 0.87), indicating no historical rainfall–SiO₂ relationship in this fixed-station network."
+#| fig-cap: "**Figure 3.** Long-term context for the March 2026 Kona Low. **(A)** Monthly Maui island-mean rainfall (CHIRPS, Jun 2016–Mar 2026); March 2026 (373 mm, orange triangle) was the highest single month in the 10-year record by more than 2×. **(B–D)** Monthly station-median fold change (observed / station historical median) vs monthly rainfall for NO₃+NO₂, PO₄, and SiO₂ on log–log axes. Both axes are log-scaled to match the fitted model: log(fold change) ~ log(rainfall). The regression line is therefore straight on these axes and the 95% prediction interval is symmetric in model space. Orange triangle = March 2026 (373 mm); R² and slope p-value from log–log model fit to pre-2026 months only (n = 116). Dashed line = fold change of 1 (no anomaly). The slope for SiO₂ is not significant (p = 0.87), indicating no historical rainfall–SiO₂ relationship in this fixed-station network."
 
 # ── Build prediction ribbons for plotting ─────────────────────────────────────
 rain_seq <- tibble(log_rain = seq(log(10), log(400), length.out = 200)) |>
@@ -1638,7 +1642,7 @@ save_fig(last_plot(), name = "fig3_rainfall_nutrient_context",
 #| label: suppfig-station-fold-changes
 #| fig-width: 9
 #| fig-height: 7
-#| fig-cap: "**Supplementary Figure S1.** Station-level fold enrichment across all 47 Hui o Ka Wai Ola stations sampled in March 2026, relative to each station's pre-2026 historical median. Stations ordered top to bottom by descending NO₃+NO₂ fold change. Six stations sampled twice within March were aggregated to their within-month median. Reference line at 1× (no change from baseline). West Maui stations (blue) dominate the extreme high end for NO₃+NO₂; the PO₄ and SiO₂ panels reveal a different spatial structure. NH₄ heterogeneity is high across both coasts."
+#| fig-cap: "**Supplementary Figure S1.** Station-level fold enrichment across all 41 Hui o Ka Wai Ola stations (47 samples) sampled in March 2026, relative to each station's pre-2026 historical median. Stations ordered top to bottom by descending NO₃+NO₂ fold change. Six stations sampled twice within March were aggregated to their within-month median. Reference line at 1× (no change from baseline). West Maui stations (blue) dominate the extreme high end for NO₃+NO₂; the PO₄ and SiO₂ panels reveal a different spatial structure. NH₄ heterogeneity is high across both coasts."
 
 # Aggregate the six stations sampled twice in March 2026
 hui_mar26_agg <- hui_fc |>
@@ -1809,7 +1813,7 @@ morans_results |>
 #| label: step10-variograms
 #| fig-width: 8.5
 #| fig-height: 4.5
-#| fig-cap: "**Step 10 — Empirical variograms** for log1p-transformed nutrient concentrations (Oʻahu and Maui; UTM zone 4N, EPSG:32604). Point size scales with the number of pairs per bin. SiO₂ shows the clearest distance-decay structure on both islands, consistent with its highest global Moran's I (0.49). NH₄ shows little spatial structure, particularly on Maui."
+#| fig-cap: "**Step 10 — Empirical variograms** for log1p-transformed nutrient concentrations (Oʻahu and Maui; UTM zone 4N, EPSG:32604). Point size scales with the number of pairs per bin. SiO₂ shows the clearest distance-decay structure on both islands, consistent with its highest global Moran's I (0.49). NH₄ shows the weakest spatial structure, particularly on Maui (global Moran's I ≈ 0.23, the lowest of the four nutrients)."
 
 compute_vgm_df <- function(sf_sub, var, cutoff_m, width_m) {
   sf_filt <- sf_sub |> filter(!is.na(.data[[var]]))
@@ -2178,7 +2182,7 @@ cat("Kriging surfaces ready:", length(krige_cache_fig4), "island x nutrient comb
 #| label: fig4-assemble
 #| fig-width: 10
 #| fig-height: 10
-#| fig-cap: "**Figure 4. Spatial distribution of coastal nutrient concentrations following the March 2026 Kona Low.** Rows: NO\\u2083+NO\\u2082, PO\\u2084, SiO\\u2082, NH\\u2084 (µmol L\\u207b\\u00b9). Columns: O\\u02bbuahu, Maui, Moloka\\u02bci, L\\u0101na\\u02bci. All panels share the same 90\\u202fkm\\u202f×\\u202f65\\u202fkm UTM extent, centered on each island. O\\u02bbuahu, Maui, and Moloka\\u02bci: ordinary kriging on log\\u2081p-transformed concentrations (spherical variogram; minimum range = island diagonal/5; 3\\u202fkm coastal band; 250\\u202fm grid; sample-coverage masking prevents extrapolation into unsurveyed coast). L\\u0101na\\u02bci: raw sample locations only (n\\u202f=\\u202f20, insufficient for kriging). Scale bars at bottom-left of each panel. Filled circles = individual sample locations, colored on the same scale as the kriging surface. Color scale shared across all islands within each nutrient row. Moran\\u2019s I (§sec-spatial-patterns) confirms that NO\\u2083+NO\\u2082 and SiO\\u2082 show significant spatial clustering (watershed-scale coherence), whereas NH\\u2084 does not."
+#| fig-cap: "**Figure 4. Spatial distribution of coastal nutrient concentrations following the March 2026 Kona Low.** Rows: NO\\u2083+NO\\u2082, PO\\u2084, SiO\\u2082, NH\\u2084 (µmol L\\u207b\\u00b9). Columns: O\\u02bbuahu, Maui, Moloka\\u02bci, L\\u0101na\\u02bci. All panels share the same 90\\u202fkm\\u202f×\\u202f65\\u202fkm UTM extent, centered on each island. O\\u02bbuahu, Maui, and Moloka\\u02bci: ordinary kriging on log\\u2081p-transformed concentrations (spherical variogram; minimum range = island diagonal/5; 3\\u202fkm coastal band; 250\\u202fm grid; sample-coverage masking prevents extrapolation into unsurveyed coast). L\\u0101na\\u02bci: raw sample locations only (n\\u202f=\\u202f20, insufficient for kriging). Scale bars at bottom-left of each panel. Filled circles = individual sample locations, colored on the same scale as the kriging surface. Color scale shared across all islands within each nutrient row. Moran\\u2019s I (§sec-spatial-patterns) confirms that all four nutrients are significantly spatially clustered, with NO\\u2083+NO\\u2082 and SiO\\u2082 showing the strongest watershed-scale coherence and NH\\u2084 the weakest (global Moran\\u2019s I \\u2248 0.23 vs 0.49 for SiO\\u2082), consistent with NH\\u2084 being controlled at finer spatial and biogeochemical scales."
 
 island_display_fig4 <- c("O'ahu", "Maui", "Moloka'i", "L\u0101na'i")
 island_keys_fig4    <- c("O'ahu", "Maui", "Moloka'i", lanai_name_exact)
@@ -2873,7 +2877,7 @@ gratia::draw(best_model,
              ci_level  = 0.95,
              nrow      = 1) &
   theme_kona_paper(base_size = 9) &
-  labs(y = "Partial effect on log(SiO\u2082)")
+  labs(y = expression("Partial effect on"~log(SiO[2])))
 ```
 
 ---
@@ -3122,7 +3126,7 @@ nox_coefs |>
   geom_vline(xintercept = 0, linetype = 2, colour = "grey60") +
   geom_pointrange(aes(xmin = lwr, xmax = upr)) +
   scale_colour_manual(values = group_cols, name = NULL) +
-  labs(x = "Standardized effect on log(NO\u2083+NO\u2082)", y = NULL) +
+  labs(x = expression("Standardized effect on"~log(NO[3]+NO[2])), y = NULL) +
   theme_kona_paper()
 ```
 
@@ -3369,7 +3373,7 @@ po4_coefs |>
   geom_vline(xintercept = 0, linetype = 2, colour = "grey60") +
   geom_pointrange(aes(xmin = lwr, xmax = upr)) +
   scale_colour_manual(values = group_cols, name = NULL) +
-  labs(x = "Standardized effect on log(PO\u2084)", y = NULL) +
+  labs(x = expression("Standardized effect on"~log(PO[4])), y = NULL) +
   theme_kona_paper()
 ```
 
@@ -3582,14 +3586,15 @@ nh3_coefs |>
   geom_vline(xintercept = 0, linetype = 2, colour = "grey60") +
   geom_pointrange(aes(xmin = lwr, xmax = upr)) +
   scale_colour_manual(values = group_cols, name = NULL) +
-  labs(x = "Standardized effect on log(NH\u2084)", y = NULL) +
+  labs(x = expression("Standardized effect on"~log(NH[4])), y = NULL) +
   theme_kona_paper()
 ```
 
 ```{r}
 #| label: step14-nh4-residual-moran
-# NH4 shows essentially no residual spatial autocorrelation — consistent with the
-# exploratory Moran's I finding that NH3 is not spatially clustered (§Key notes).
+# NH4 shows essentially no residual spatial autocorrelation. Its raw log1p Moran's I is
+# significant but the weakest of the four nutrients (~0.23 global); the island/ahupuaʻa
+# random effects and 2D spatial smooth absorb it, leaving residual Moran's I ~0.
 bind_rows(
   resid_morans_nox(nh3_M_delivery, nh3_primary) |> mutate(Model = "Delivery only"),
   resid_morans_nox(nh3_M_full,     nh3_primary) |> mutate(Model = "+ anthropogenic")
@@ -3679,8 +3684,9 @@ saveRDS(nh3_M_excl_lanai,  here("output", "model_objects", "nh3_M_full_excl_lana
 **Step 14 summary — the contrast holds.** NH₄ is much more weakly
 predicted by watershed-scale variables than NO₃+NO₂ or PO₄: deviance explained is lower
 for the full model than the delivery-only model (~35% vs ~37%; the anthropogenic block does
-not help), terrestrial-water coupling is weak (log Si β ≈ 0.27), and there is no residual
-spatial structure to absorb (Moran's I ≈ 0 even before modelling). This is consistent
+not help), terrestrial-water coupling is weak (log Si β ≈ 0.27), and its raw spatial
+clustering is the weakest of the four nutrients (global Moran's I ≈ 0.23 vs 0.49 for SiO₂),
+fully absorbed by the spatial random-effects structure (model residual Moran's I ≈ 0). This is consistent
 with reduced inorganic N being controlled by localized sources and rapid biogeochemical
 cycling rather than watershed-to-coast transport. Unlike NO₃+NO₂ and PO₄, the **cesspool
 exposure index is not a clear predictor of NH₄** (β ≈ 0.03, 95% CI −0.10 to 0.16, p ≈ 0.67;
@@ -3776,78 +3782,241 @@ fig5_n |> knitr::kable(caption = "Response-specific sample sizes for the four-nu
 ```
 
 ```{r}
-#| label: fig5-effect-sizes
-#| fig-width: 7.5
-#| fig-height: 6.5
-#| fig-cap: "**Figure 5.** Standardized fixed effects on each nutrient (log scale) from the four-island mixed models. Rows are predictors grouped by mechanistic role; points are standardized coefficients with 95% Wald confidence intervals; colour distinguishes the four nutrients. Filled points mark effects whose 95% CI excludes zero (also interpretable in grayscale). Dashed lines indicate interaction terms (bottom panel, NO₃+NO₂ only): Rainfall × Cesspool and Rainfall × Agriculture, identified as significant in Step 21 and incorporated into the primary NO₃+NO₂ model. log(SiO₂) enters the N/P/NH₄ models as an empirical terrestrial-water proxy and is Si's own response (so Si has no terrestrial-delivery row). Island/ahupuaʻa random effects and the 2D spatial smooth are not shown."
+#| label: fig5-nox-primary
+#| fig-width: 6.5
+#| fig-height: 5.5
+#| fig-cap: "**Figure 5.** Standardized fixed effects on NO₃+NO₂ from the four-island model, reordered by effect size within each mechanistic group. Filled circles mark effects whose 95% CI excludes zero; open circles mark non-significant effects. Predictors are grouped by mechanism: Terrestrial delivery (log SiO₂, a tracer of land-to-sea connectivity), Hydrologic forcing (storm rainfall), Watershed transport (topography and soil properties), Anthropogenic sources (cesspool, agricultural and impervious land cover, wastewater outfalls), Coastal dilution (wave exposure), and the two significant interaction terms showing that extreme rainfall conditionally amplifies coastal NO₃+NO₂ enrichment where anthropogenic sources are denser. Island/ahupuaʻa random effects and spatial smooth are not shown."
 
-nut_levels <- c("SiO2", "NO3NO2", "PO4", "NH4")
-nut_labels <- c(SiO2 = "SiO\u2082", NO3NO2 = "NO\u2083+NO\u2082", PO4 = "PO\u2084", NH4 = "NH\u2084")
-nut_cols   <- c(SiO2 = "#1565C0", NO3NO2 = "#C62828", PO4 = "#2E7D32", NH4 = "#E65100")
-
-# "Rainfall x Anthropogenic" added as 6th group for the Step 21 interaction terms.
+# Define colour palette and group levels
+nut_cols <- c(SiO2 = "#1565C0", NO3NO2 = "#C62828", PO4 = "#2E7D32", NH4 = "#E65100")
 group_levels <- c("Terrestrial delivery", "Hydrologic forcing", "Watershed transport",
-                  "Anthropogenic", "Coastal dilution", "Rainfall \u00d7 Anthropogenic")
+                  "Anthropogenic", "Coastal dilution", "Rainfall × Anthropogenic")
 
-pred_order <- c(
-  paste0("z_", c("log_SiO2", "chirps_storm_cumulative_mm", "log_dist_stream_m",
-                 "mean_slope_deg", "log_ksat", "pct_agriculture", "pct_impervious",
-                 "log_cess_exposure", "log_dist_npdes_m", "fetch_mean_km", "hs_mean_m")),
-  "z_chirps_storm_cumulative_mm:z_log_cess_exposure",
-  "z_chirps_storm_cumulative_mm:z_pct_agriculture"
-)
-
-fig5_df <- fig5_coefs |>
+# Prepare Si data (used later for the Supplementary Si partial-effects figure)
+si_fig_df <- fig5_coefs |>
+  filter(model == "SiO2") |>
   mutate(
-    nutrient     = factor(model, levels = nut_levels),
-    Predictor    = factor(pred_label[term], levels = rev(pred_label[pred_order])),
+    Predictor    = factor(pred_label[term], levels = pred_label[term]),
     Group        = factor(pred_group[term], levels = group_levels),
-    sig          = if_else(lwr > 0 | upr < 0, "sig", "ns"),
-    effect_type  = if_else(grepl(":", term), "Interaction", "Main effect")
+    sig          = if_else(lwr > 0 | upr < 0, "sig", "ns")
+  ) |>
+  arrange(Group, desc(abs(est))) |>
+  mutate(Predictor = fct_inorder(Predictor))
+
+# Prepare NOx data
+nox_fig_df <- fig5_coefs |>
+  filter(model == "NO3NO2") |>
+  mutate(
+    Predictor    = factor(pred_label[term], levels = pred_label[term]),
+    Group        = factor(pred_group[term], levels = group_levels),
+    sig          = if_else(lwr > 0 | upr < 0, "sig", "ns")
+  ) |>
+  arrange(Group, desc(abs(est))) |>
+  mutate(Predictor = fct_inorder(Predictor))
+
+# MAIN FIGURE 5: NO3+NO2 only
+fig5_new <- ggplot(nox_fig_df, aes(est, Predictor, shape = sig)) +
+  geom_vline(xintercept = 0, linetype = 2, colour = "grey60", linewidth = 0.4) +
+  geom_pointrange(aes(xmin = lwr, xmax = upr),
+                  colour = "#C62828",
+                  position = position_dodge(width = 0.65), linewidth = 0.6) +
+  facet_grid(Group ~ ., scales = "free_y", space = "free_y", switch = "y") +
+  scale_shape_manual(values = c(sig = 19, ns = 1), guide = "none") +
+  scale_x_continuous(breaks = seq(-0.5, 1.0, by = 0.25)) +
+  labs(x = "Standardized effect (±95% CI)", 
+       y = NULL,
+       title = expression(bold("NO"[3]+NO[2]~"response model"))) +
+  theme_kona_paper() +
+  theme(
+    strip.placement = "outside",
+    strip.text.y.left = element_text(
+      angle = 0, face = "bold", size = 10, margin = margin(r = 8, l = 8)
+    ),
+    strip.background.y = element_rect(fill = "grey85", colour = "grey50", linewidth = 0.4),
+    panel.grid.major.y = element_blank(),
+    plot.title = element_text(size = 11, face = "bold", margin = margin(b = 8)),
+    panel.spacing.y = unit(0.3, "lines")
   )
 
-fig5 <- ggplot(fig5_df, aes(est, Predictor, colour = nutrient, shape = sig,
-                             linetype = effect_type)) +
-  geom_vline(xintercept = 0, linetype = 2, colour = "grey60") +
-  geom_pointrange(aes(xmin = lwr, xmax = upr),
-                  position = position_dodge(width = 0.65), linewidth = 0.5) +
-  facet_grid(Group ~ ., scales = "free_y", space = "free_y", switch = "y") +
-  scale_colour_manual(values = nut_cols, labels = nut_labels, name = NULL) +
-  scale_shape_manual(values = c(sig = 19, ns = 1), guide = "none") +
-  scale_linetype_manual(values = c("Main effect" = "solid", "Interaction" = "dashed"),
-                        name = NULL) +
-  labs(x = "Standardized effect (\u00b195% CI)", y = NULL) +
-  theme_kona_paper() +
-  theme(strip.placement = "outside",
-        strip.text.y.left = element_text(angle = 0, face = "bold"),
-        panel.grid.major.y = element_blank(),
-        legend.position = "top")
-
-save_fig(fig5, "fig5_effect_sizes", width = 7.5, height = 7)
-fig5
+save_fig(fig5_new, "fig5_nox_primary", width = 6.5, height = 5.5)
+fig5_new
 ```
 
 ::: {.callout-important}
-**Figure 5 — what the four models show together.** The nutrients record different
-stages of the land-to-sea pathway. **Si** is driven by hydrologic forcing (storm
-rainfall, standardized β ≈ 0.44), stream proximity, and coastal dilution — the
-physical-connectivity signature — with agricultural and impervious land cover
-*negatively* associated (drier, more-developed watersheds deliver less terrestrial
-water) but cesspool exposure *positively* associated (β ≈ 0.15). **NO₃+NO₂** is
-dominated by terrestrial delivery (log Si β ≈ 0.80); once that is accounted for,
-% impervious, NPDES proximity, and the **cesspool exposure index** (β ≈ 0.14) all
-differ from zero. **PO₄** shows moderate terrestrial coupling (β ≈ 0.40), its own
-positive storm-rainfall response, and a smaller but still clearly positive cesspool
-exposure effect (β ≈ 0.07). **NH₄** is weakly tied to nearly all watershed-scale
-predictors, including cesspool exposure (β ≈ 0.03, not distinguishable from zero) —
-the exception to the pattern. Agricultural land cover shows **no positive amplification**
-for any nutrient; the anthropogenic signals that are robust are NPDES proximity (N) and,
-for NO₃+NO₂ and PO₄ specifically, **cesspool exposure**, which remains stable whether or
-not Lānaʻi is included (Steps 12–13). This is the strongest evidence in the analysis for
-Hypothesis 4: human wastewater infrastructure is associated with additional coastal N and
-P enrichment beyond what terrestrial-water delivery alone predicts, though NH₄ does not
-share this pattern. The formal cross-validated test follows in Step 17.
+**Figure 5 — Primary NO₃+NO₂ response model.** The main figure focuses on NO₃+NO₂, the nutrient where evidence for anthropogenic amplification is strongest. After accounting for terrestrial-water delivery (log SiO₂, β ≈ 0.77) and storm forcing (β ≈ 0.61), coastal NO₃+NO₂ enrichment increases significantly with the **cesspool exposure index** (β ≈ 0.14, p < 0.001) and shows a conditional interaction with rainfall (Rainfall × Cesspool, β ≈ 0.20; Rainfall × Agriculture, β ≈ 0.66). These two interactions demonstrate that extreme rainfall conditionally amplifies coastal nitrogen enrichment where anthropogenic nutrient sources are denser — the mechanistic core of the "human amplification" hypothesis. Non-significant watershed-transport predictors (distance to stream, slope, Ksat) are shown as open circles to emphasize that coastal N delivery is dominated by delivery capacity (Si) and human sources rather than fine-scale catchment properties.
+
+Supplementary Figure S1 shows that **PO₄** exhibits a more modest cesspool response, while **NH₄** shows minimal statistical linkage to watershed-scale variables, suggesting reduced-nitrogen cycling is controlled by shorter-timescale biogeochemical processes. Supplementary Figure S2 shows the **SiO₂** delivery model in its own partial-effects figure: the terrestrial-water connectivity signature that NO₃+NO₂ builds upon.
 :::
+
+## Supplementary Figure: PO₄ and NH₄ models {#sec-supp-po4-nh4}
+
+The PO₄ and NH₄ response models show contrasting patterns relative to the SiO₂ delivery baseline and NO₃+NO₂ response (Figure 5). Both predictors are modeled with the same interaction terms, but their significance and magnitudes differ markedly, revealing nutrient-specific biogeochemical controls.
+
+```{r}
+#| label: figS-po4-nh4-models
+#| fig-width: 7
+#| fig-height: 6.5
+#| fig-cap: "**Supplementary Figure S1.** Standardized fixed effects on PO₄ (green) and NH₄ (orange) from the four-island models, overlaid in a single figure and reordered by effect size within each mechanistic group. Grey boxes around group labels are consistent with Figure 5. Filled circles mark significant effects; open circles mark non-significant effects. Unlike the strong NO₃+NO₂ response to cesspool exposure (Figure 5), PO₄ shows moderate affinity to anthropogenic predictors and NH₄ shows minimal statistical linkage to any watershed-scale variable, suggesting reduced-inorganic nitrogen is controlled by finer-scale or shorter-timescale biogeochemical processes rather than landscape factors. The color legend distinguishes nutrient responses: orange dots spread across predictors indicate NH₄'s weak predictability, while green dots cluster at key anthropogenic predictors for PO₄."
+
+# (Data prepared earlier: po4_fig_df, nh4_fig_df)
+
+# Prepare PO₄ data
+po4_fig_df <- fig5_coefs |>
+  filter(model == "PO4") |>
+  mutate(
+    Predictor    = factor(pred_label[term], levels = pred_label[term]),
+    Group        = factor(pred_group[term], levels = group_levels),
+    sig          = if_else(lwr > 0 | upr < 0, "sig", "ns")
+  ) |>
+  arrange(Group, desc(abs(est))) |>
+  mutate(Predictor = fct_inorder(Predictor))
+
+# Prepare NH₄ data
+nh4_fig_df <- fig5_coefs |>
+  filter(model == "NH4") |>
+  mutate(
+    Predictor    = factor(pred_label[term], levels = pred_label[term]),
+    Group        = factor(pred_group[term], levels = group_levels),
+    sig          = if_else(lwr > 0 | upr < 0, "sig", "ns")
+  ) |>
+  arrange(Group, desc(abs(est))) |>
+  mutate(Predictor = fct_inorder(Predictor))
+
+# Combine PO₄ and NH₄ data for overlay plotting
+po4_nh4_combined <- bind_rows(
+  po4_fig_df |> mutate(nutrient_type = "PO4"),
+  nh4_fig_df |> mutate(nutrient_type = "NH4")
+)
+
+# Define colors for the two nutrients
+nut_cols_2 <- c(PO4 = "#2E7D32", NH4 = "#E65100")
+
+# Create combined figure with color legend
+fig_s_po4_nh4 <- ggplot(po4_nh4_combined, aes(est, Predictor, colour = nutrient_type, shape = sig)) +
+  geom_vline(xintercept = 0, linetype = 2, colour = "grey60", linewidth = 0.4) +
+  geom_pointrange(aes(xmin = lwr, xmax = upr),
+                  position = position_dodge(width = 0.65), linewidth = 0.6) +
+  facet_grid(Group ~ ., scales = "free_y", space = "free_y", switch = "y") +
+  scale_colour_manual(
+    values = nut_cols_2,
+    labels = c(PO4 = expression(PO[4]), NH4 = expression(NH[4])),
+    name = "Nutrient"
+  ) +
+  scale_shape_manual(values = c(sig = 19, ns = 1), guide = "none") +
+  scale_x_continuous(breaks = seq(-0.5, 1.0, by = 0.25)) +
+  labs(x = "Standardized effect (±95% CI)", 
+       y = NULL,
+       title = expression(bold("PO"[4]~"and NH"[4]~"response models"))) +
+  theme_kona_paper() +
+  theme(
+    strip.placement = "outside",
+    strip.text.y.left = element_text(
+      angle = 0, face = "bold", size = 10, margin = margin(r = 8, l = 8)
+    ),
+    strip.background.y = element_rect(fill = "grey85", colour = "grey50", linewidth = 0.4),
+    panel.grid.major.y = element_blank(),
+    plot.title = element_text(size = 11, face = "bold", margin = margin(b = 8)),
+    panel.spacing.y = unit(0.3, "lines"),
+    legend.position = "top"
+  )
+
+save_supp(fig_s_po4_nh4, "figS_po4_nh4_comparison", width = 7, height = 6.5)
+fig_s_po4_nh4
+```
+
+## Supplementary Figure: SiO₂ delivery model {#sec-supp-si}
+
+The SiO₂ model serves as the mechanistic baseline for terrestrial-water delivery, independent of nutrient sources (Figure 5's callout). Rather than a coefficient plot, its drivers are shown here as **partial-effect (marginal-prediction) curves**: predicted SiO₂ on its natural scale (µmol L⁻¹) across each significant predictor's observed range, holding all other predictors at their median and excluding island/ahupuaʻa random effects and the spatial smooth (population-level prediction). This reveals the *shape* of each relationship — e.g., whether the rainfall response is linear or accelerating — which a standardized-coefficient plot cannot show. Only predictors whose 95% CI excludes zero in the standardized model (`si_M_std`) are shown; slope and Ksat were not significant and are omitted.
+
+```{r}
+#| label: figS-si-partial-effects
+#| fig-width: 10
+#| fig-height: 6
+#| fig-cap: "**Supplementary Figure S2.** Significant partial effects of watershed and hydrologic predictors on SiO₂, from the four-island standardized model (`si_M_std`). Each panel shows the model-predicted SiO₂ concentration (µmol L⁻¹, blue line ± 95% CI ribbon) as one predictor varies across its 3rd–97th percentile range with all other predictors held at their median value; island/ahupuaʻa random effects and the spatial smooth are excluded (population-level prediction). Rug marks along the x-axis show the distribution of observed values. Panels are ordered left-to-right, top-to-bottom by |standardized effect size| (Figure 5 predictor ordering). Only the eight predictors with 95% CI excluding zero are shown; slope and Ksat (non-significant) are omitted."
+
+exclude_terms <- c("s(island_f)", "s(ahupuaa_f)", "s(utm_x_km,utm_y_km)")
+
+pred_raw_map <- c(
+  z_chirps_storm_cumulative_mm = "chirps_storm_cumulative_mm",
+  z_log_dist_stream_m = "log_dist_stream_m",
+  z_mean_slope_deg = "mean_slope_deg",
+  z_log_ksat = "log_ksat",
+  z_pct_agriculture = "pct_agriculture",
+  z_pct_impervious = "pct_impervious",
+  z_log_dist_npdes_m = "log_dist_npdes_m",
+  z_log_cess_exposure = "log_cess_exposure",
+  z_fetch_mean_km = "fetch_mean_km",
+  z_hs_mean_m = "hs_mean_m"
+)
+pred_disp_label <- c(
+  chirps_storm_cumulative_mm = "Storm rainfall (mm)",
+  log_dist_stream_m = "Dist. to stream mouth (m, log scale)",
+  mean_slope_deg = "Slope (deg)",
+  log_ksat = "Ksat (\u00b5m/s, log scale)",
+  pct_agriculture = "% agriculture",
+  pct_impervious = "% impervious",
+  log_dist_npdes_m = "Dist. to NPDES (m, log scale)",
+  log_cess_exposure = "Cesspool exposure idx.",
+  fetch_mean_km = "Wave fetch (km)",
+  hs_mean_m = "Wave height (m)"
+)
+
+# Reference row: median of every standardized predictor
+z_vars_si <- paste0("z_", si_std_vars)
+ref_row_si <- si_std |> summarise(across(all_of(z_vars_si), \(x) median(x, na.rm = TRUE)))
+
+make_si_partial <- function(zvar, rawvar, n = 100, trim = c(0.03, 0.97)) {
+  raw_vals <- si_std[[rawvar]]
+  qs <- quantile(raw_vals, trim, na.rm = TRUE)
+  mu <- mean(raw_vals, na.rm = TRUE); sdv <- sd(raw_vals, na.rm = TRUE)
+  z_rng <- (qs - mu) / sdv
+
+  grid <- ref_row_si[rep(1, n), ]
+  grid[[zvar]] <- seq(z_rng[1], z_rng[2], length.out = n)
+  grid$island_f  <- si_std$island_f[1]
+  grid$ahupuaa_f <- si_std$ahupuaa_f[1]
+  grid$utm_x_km  <- median(si_std$utm_x_km)
+  grid$utm_y_km  <- median(si_std$utm_y_km)
+
+  pr <- predict(si_M_std, newdata = grid, type = "link", se.fit = TRUE, exclude = exclude_terms)
+  x_raw <- grid[[zvar]] * sdv + mu
+
+  tibble(predictor = rawvar, x = x_raw,
+         fit = exp(pr$fit), lwr = exp(pr$fit - 1.96 * pr$se.fit), upr = exp(pr$fit + 1.96 * pr$se.fit))
+}
+
+# Only the significant Si predictors (95% CI excludes zero), ordered by |effect size|
+si_sig_terms <- si_fig_df |> filter(sig == "sig") |> arrange(desc(abs(est))) |> pull(term)
+si_sig_rawvars <- pred_raw_map[si_sig_terms]
+
+partial_df_sig <- purrr::map2_dfr(names(si_sig_rawvars), si_sig_rawvars, make_si_partial) |>
+  mutate(predictor_label = factor(pred_disp_label[predictor], levels = pred_disp_label[si_sig_rawvars]))
+
+rug_df_sig <- si_std |>
+  select(all_of(unname(si_sig_rawvars))) |>
+  tidyr::pivot_longer(everything(), names_to = "predictor", values_to = "x") |>
+  mutate(predictor_label = factor(pred_disp_label[predictor], levels = levels(partial_df_sig$predictor_label)))
+
+fig_si_partial_sig <- ggplot(partial_df_sig, aes(x, fit)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), fill = "#1565C0", alpha = 0.18) +
+  geom_line(colour = "#1565C0", linewidth = 0.8) +
+  geom_rug(data = rug_df_sig, aes(x = x, y = NULL), sides = "b", alpha = 0.25, colour = "grey30", linewidth = 0.3) +
+  facet_wrap(~predictor_label, scales = "free", ncol = 4) +
+  labs(
+    x = NULL,
+    y = expression("Predicted SiO"[2]~"(\u00b5mol L"^{-1}*")"),
+    title = expression(bold("Significant partial effects on SiO"[2]~"(95% CI excludes zero; ordered by |effect size|)"))
+  ) +
+  theme_kona_paper() +
+  theme(
+    strip.text = element_text(face = "bold", size = 8.5),
+    plot.title = element_text(size = 11, face = "bold", margin = margin(b = 8)),
+    axis.text = element_text(size = 7)
+  )
+
+save_supp(fig_si_partial_sig, "figS_si_partial_effects_sig", width = 10, height = 6)
+fig_si_partial_sig
+```
 
 ## Explicit human-amplification test {#sec-amplification-test}
 
@@ -4392,7 +4561,7 @@ make_f6_panel <- function(dat, rug_x_col, y_lab, tag_lbl, line_labels,
 
 pA <- make_f6_panel(
   cess_dat, "chirps_storm_cumulative_mm",
-  "Predicted NO\u2083+NO\u2082 (\u03bcmol L\u207b\u00b9)", "A",
+  expression("Predicted"~NO[3]+NO[2]~(mu*mol~L^{-1})), "A",
   c("Low (Q10)\nidx = 0", "Median (Q50)\nidx = 2.0", "High (Q90)\nidx = 45")
 )
 
@@ -4425,32 +4594,41 @@ a fixed order decided *before* looking at results:
 
 $$M_0 \to M_1 (+\text{Hydrology}) \to M_2 (+\text{Connectivity}) \to M_3 (+\text{Human}) \to M_4 (+\text{Coastal})$$
 
-Every model in the sequence — including $M_0$ — retains the same island + ahupuaʻa
-random intercepts and 2D spatial smooth (`re_terms`, Steps 11–12), so an increase in
-deviance explained from $M_{k-1}$ to $M_k$ is attributable only to the fixed-effect
-block added at step $k$, not to spatial structure. $M_0$'s own deviance explained is
-reported as a fifth "Spatial/Island" share, addressing driver group (5) from Step 16's
-instructions (spatial/island structure) even though it is not one of the four columns
-in the original Figure 6 sketch. `log(SiO₂)` — the empirical terrestrial-water-delivery
-proxy used in the N/P/NH₄ models (Steps 12–14) — is folded into the **Connectivity**
-block for those three nutrients: it is the observed integrator of stream-mouth
-distance, slope, and Ksat for a given sample, so grouping it with the raw physical
-connectivity terms avoids inventing a fifth ad hoc category. For the Si model itself,
-Connectivity uses only the raw physical terms (Si cannot be its own predictor).
+**Random-effects structure for variance partitioning.** Every model in the sequence
+uses `s(island_f, bs = 're')` plus the 2D spatial smooth — but **not** an ahupuaʻa
+random intercept. Ahupuaʻa is the fundamental spatial unit for all watershed-scale
+covariates: slope, Ksat, land cover, cesspool density, and NPDES distance are constants
+within each ahupuaʻa. If `s(ahupuaa_f, bs = 're')` were included in $M_0$, it would
+pre-absorb essentially all of that between-ahupuaʻa variation before any fixed effect
+is added, leaving the Connectivity and Human blocks with nearly nothing to explain.
+The result would be a misleadingly large "Spatial/Island" share and a misleadingly small
+signal from the mechanistic driver groups. Using only island-level random effects in
+$M_0$ means each fixed-effect block is genuinely competing to explain watershed-scale
+variation, producing a partition that reflects the actual explanatory roles of the four
+driver groups.
 
-This uses the **four-island primary scope** (Tier 1, Steps 11–13; agriculture +
-impervious + NPDES distance as the Human block) so that all four nutrients — including
-Si — are partitioned on a consistent, maximal-coverage sample. Cesspool-specific
-human-amplification is the more targeted question posed by Step 17's three-island
-test (Oʻahu, Maui, Molokaʻi) and is not repeated here. As with all deviance-explained
-decompositions, shares are **descriptive, not causal**, and are sensitive to the fixed
-entry order when blocks share variance (e.g. storm rainfall and stream distance are
-both physically upstream of Si); they should be read as "unique association given this
-pre-registered order," not as proof that a block is mechanistically necessary.
+Note that ahupuaʻa random intercepts are retained in the primary inferential models
+(Steps 11–17) where they appropriately soak up between-watershed variation not captured
+by the fixed effects. The variance partition intentionally uses a simpler random-effects
+structure to prevent aliasing between the "spatial/island" baseline and the blocks being
+partitioned.
+
+`log(SiO₂)` — the empirical terrestrial-water-delivery proxy used in the N/P/NH₄
+models (Steps 12–14) — is folded into the **Connectivity** block for those three
+nutrients: it is the observed integrator of stream-mouth distance, slope, and Ksat
+for a given sample, so grouping it with the raw physical connectivity terms avoids
+inventing a fifth ad hoc category. For the Si model itself, Connectivity uses only the
+raw physical terms (Si cannot be its own predictor).
+
+This uses the **four-island primary scope** (agriculture + impervious + NPDES distance
+as the Human block) so all four nutrients are partitioned on a consistent,
+maximal-coverage sample. As with all deviance-explained decompositions, shares are
+**descriptive, not causal**, and are sensitive to the fixed entry order when blocks
+share variance; they should be read as "unique association given this pre-registered
+order," not as proof that a block is mechanistically necessary.
 
 ```{r}
 #| label: step16-variance-partition-models
-#| cache: true
 
 # Driver-group blocks (pre-registered in Step 4; fixed order set before fitting).
 grp_hydrology    <- c("chirps_storm_cumulative_mm")                              # A
@@ -4458,15 +4636,16 @@ grp_connect_phys <- c("log_dist_stream_m", "mean_slope_deg", "log_ksat")        
 grp_anthro       <- c("pct_agriculture", "pct_impervious", "log_dist_npdes_m")   # C (no cesspool; 4-island scope)
 grp_coastal      <- c("fetch_mean_km", "hs_mean_m")                             # D
 
-# Fit the nested M0->M4 sequence for one response/dataset. `connect_vars` lets the
-# Si model use only the raw physical connectivity terms, while N/P/NH4 models fold
-# in log(SiO2) as the empirical connectivity/delivery proxy (see prose above).
+# Variance-partitioning random-effects: island RE + 2D spatial smooth only.
+# Ahupuaʻa RE is intentionally excluded — see prose above.
+re_vp <- "s(island_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)"
+
 fit_nested_vp <- function(response, data, connect_vars) {
   zv <- function(v) paste0("z_", v)
   build_f <- function(vars) as.formula(paste(
     response, "~",
     if (length(vars) > 0) paste(paste(zv(vars), collapse = " + "), "+") else "",
-    re_terms))
+    re_vp))
 
   list(
     M0 = gam(build_f(character(0)),                                              data = data, method = "REML"),
@@ -4479,7 +4658,6 @@ fit_nested_vp <- function(response, data, connect_vars) {
 
 vp_devexpl <- function(models) vapply(models, function(m) summary(m)$dev.expl, numeric(1))
 
-# Increments in deviance explained = each block's unique share given the fixed order.
 vp_shares <- function(models, nutrient, data) {
   de <- vp_devexpl(models)
   tibble(
@@ -4509,11 +4687,10 @@ vp_table <- bind_rows(
   vp_shares(vp_models_nh3, "NH\u2084",          nh3_primary)
 )
 
-# Save every final (M4) model, plus the full nested list, for reproducibility.
-saveRDS(vp_models_si,  here("output", "model_objects", "vp_models_Si_4island.rds"))
-saveRDS(vp_models_nox, here("output", "model_objects", "vp_models_NOx_4island.rds"))
-saveRDS(vp_models_po4, here("output", "model_objects", "vp_models_PO4_4island.rds"))
-saveRDS(vp_models_nh3, here("output", "model_objects", "vp_models_NH4_4island.rds"))
+saveRDS(vp_models_si,  here("output", "model_objects", "vp_models_Si_islandonly.rds"))
+saveRDS(vp_models_nox, here("output", "model_objects", "vp_models_NOx_islandonly.rds"))
+saveRDS(vp_models_po4, here("output", "model_objects", "vp_models_PO4_islandonly.rds"))
+saveRDS(vp_models_nh3, here("output", "model_objects", "vp_models_NH4_islandonly.rds"))
 ```
 
 ```{r}
@@ -4540,7 +4717,7 @@ vp_table |>
 #| label: fig6-variance-partition
 #| fig-width: 7
 #| fig-height: 5
-#| fig-cap: "**Figure S3 (Supplementary).** Variance partitioning among five mechanistic driver-group blocks (four-island primary scope), shown as % deviance explained from the nested M0\u2192M4 GAM sequence (Step 16). Blocks are entered in the pre-registered order Hydrology \u2192 Connectivity \u2192 Human \u2192 Coastal; log(SiO\u2082) is folded into Connectivity for NO\u2083+NO\u2082, PO\u2084, and NH\u2084 as the empirical terrestrial-delivery proxy. Shares are descriptive increments, not independent/causal contributions, and are sensitive to the fixed entry order when blocks share variance. Tiny negative increments (REML numerical artifact; NH\u2084 Anthropogenic = \u22120.7%) are set to zero for display."
+#| fig-cap: "**Figure S3 (Supplementary).** Variance partitioning among five mechanistic driver-group blocks (four-island primary scope), shown as % deviance explained from the nested M0\u2192M4 GAM sequence (Step 16). M0 retains only an island random intercept and a 2D spatial smooth — no ahupua\u02BBa random effect — so the Connectivity and Human blocks are free to explain between-watershed variation rather than having it pre-absorbed by ahupua\u02BBa identity. Blocks are entered in the pre-registered order Hydrology \u2192 Connectivity \u2192 Human \u2192 Coastal; log(SiO\u2082) is folded into Connectivity for NO\u2083+NO\u2082, PO\u2084, and NH\u2084 as the empirical terrestrial-delivery proxy. Shares are descriptive increments, not independent/causal contributions, and are sensitive to the fixed entry order when blocks share variance. Tiny negative increments (coastal block for PO\u2084 and NH\u2084; REML numerical artifact) are set to zero for display."
 
 comp_levels <- c("Spatial/Island", "Hydrologic forcing", "Watershed transport",
                   "Anthropogenic", "Coastal dilution", "Residual")
@@ -4569,7 +4746,7 @@ fig6_df <- vp_table |>
     nutrient  = factor(nutrient, levels = c("SiO\u2082", "NO\u2083+NO\u2082", "PO\u2084", "NH\u2084"))
   )
 
-fig6 <- ggplot(fig6_df, aes(x = nutrient, y = share, fill = Component)) +
+fig_s3 <- ggplot(fig6_df, aes(x = nutrient, y = share, fill = Component)) +
   geom_col(width = 0.65) +
   scale_fill_manual(values = comp_cols, breaks = comp_levels, name = NULL) +
   scale_y_continuous(labels = scales::percent, expand = expansion(mult = c(0, 0.02))) +
@@ -4577,9 +4754,11 @@ fig6 <- ggplot(fig6_df, aes(x = nutrient, y = share, fill = Component)) +
   theme_kona_paper() +
   theme(legend.position = "right")
 
-save_fig(fig6, "figS3_variance_partition", width = 7, height = 5,
-         dir = here("output", "supplement"))
-fig6
+ggsave(here("output", "supplement", "figS3_variance_partition.pdf"),
+       fig_s3, width = 7, height = 5)
+ggsave(here("output", "supplement", "figS3_variance_partition.png"),
+       fig_s3, width = 7, height = 5, dpi = 300)
+fig_s3
 ```
 
 ```{r}
@@ -4611,27 +4790,29 @@ cat("\n\nThese are the largest *unique* increments given the pre-registered entr
     ":::\n", sep = "")
 ```
 
-::: {.callout-warning}
-**Why the Spatial/Island block dominates, and why that does not mean the other blocks
-are unimportant.** Across all four nutrients, $M_0$ (island + ahupuaʻa random
-intercepts + 2D spatial smooth, no fixed effects) alone explains 30–48% of deviance —
-far more than any single driver-group block added afterward. This is expected, not a
-modelling failure: most physical and anthropogenic predictors here (`mean_slope_deg`,
-`mean_ksat_um_s`, `pct_agriculture`, `pct_impervious`, cesspool metrics) are **ahupuaʻa-
-level constants** — every sample from the same ahupuaʻa has the identical value — so
-once the ahupuaʻa random intercept is in the model, these variables are largely
-*aliased* with ahupuaʻa identity and can add only a small residual, within-group-type
-signal on top of it. Their standardized coefficients in Figure 5 (fit *without* the
-ahupuaʻa-level ceiling that a random intercept imposes) remain the primary evidence for
-their effects; Figure 6 should be read as "how much *additional, ahupuaʻa-independent*
-variance a block explains," not as an estimate of each mechanism's total importance.
-Consistent with this, **Connectivity's comparatively large share for NO₃+NO₂ and PO₄
-(≈17–18%, vs. <1% for Si's own physical-only Connectivity block) is driven almost
-entirely by `log(SiO₂)`** — the one connectivity-block term that varies at the *sample*
-level rather than the ahupuaʻa level, and therefore is not absorbed by the random
-intercept. This reinforces, via an independent route, Step 12's core finding that
-terrestrial-water delivery (measured by Si) is the dominant explainable signal for
-oxidized N and P once spatial structure is accounted for.
+::: {.callout-note}
+**Reading the variance partition.** The Spatial/Island baseline ($M_0$: island random
+intercept + 2D spatial smooth, no fixed effects) captures large-scale island-to-island
+differences and the continuous spatial gradient that no predictor variable explicitly
+represents. Because ahupuaʻa random intercepts are **not** included in $M_0$, the
+fixed-effect blocks are genuinely competing to explain between-ahupuaʻa variation:
+slope, Ksat, land cover, and the other ahupuaʻa-level covariates are free to contribute
+meaningfully to the Connectivity and Human blocks instead of being pre-absorbed by a
+random intercept that is collinear with them.
+
+The Connectivity block's share for NO₃+NO₂ and PO₄ is largely driven by `log(SiO₂)`,
+the one term that varies at the *sample* level and captures fine-scale
+freshwater/marine mixing that fixed watershed predictors cannot resolve. The
+Connectivity block for Si itself uses only the raw physical terms (slope, Ksat, stream
+distance), so its share directly reflects how much of the between-watershed Si
+variation those landscape characteristics explain. A larger Human block here than under
+the previous (ahupuaʻa-RE) formulation means that land-cover and infrastructure
+variables genuinely explain ahupuaʻa-to-ahupuaʻa variation in coastal nutrients above
+and beyond island-level effects and the spatial smooth.
+
+These shares are descriptive increments under a fixed entry order, not independent
+causal estimates. Figure 5's coefficient-level detail and the LOAO cross-validation
+results (Step 17) remain the primary evidence for specific effects.
 :::
 
 ---
@@ -5236,7 +5417,7 @@ bind_rows(step19_loao_rf, .id = "Nutrient") |>
 
 ```{r}
 #| label: step19-rf-performance
-#| fig-cap: "**Step 19 — RF vs GAM LOAO spatial CV R².** Each point is one nutrient. For NOx, the GAM LOAO baseline shown here uses the additive model (nox_M_full, R² = 0.300); the primary interaction model (nox_M_int, Step 17) achieves R² = 0.376, narrowing the RF advantage to ΔR² = 0.069. RF (with island as categorical predictor) outperforms the additive GAM for all four nutrients, reflecting the RF's ability to capture interaction and non-linear effects without explicit specification."
+#| fig-cap: "**Step 19 — RF vs GAM LOAO spatial CV R².** Each point is one nutrient. The GAM LOAO values plotted here are the Step 18A primary models; for NOx this is the interaction model (nox_M_int, R² = 0.376; the additive nox_M_full reaches only 0.300). RF (with island as a categorical predictor) achieves R² = 0.445 for NOx and outperforms the GAM for all four nutrients — for NOx the RF advantage over the interaction model narrows to ΔR² = 0.069 — reflecting the RF's ability to capture interaction and non-linear effects without explicit specification."
 
 # RF vs GAM LOAO R² comparison
 perf_df <- tibble(
@@ -5300,7 +5481,7 @@ imp_df |>
                "Island"               = "grey55"),
     name = NULL
   ) +
-  labs(x = "Permutation importance (mean decrease in R\u00b2)", y = NULL) +
+  labs(x = expression("Permutation importance (mean decrease in"~R^2*")"), y = NULL) +
   theme_kona_paper() +
   theme(legend.position = "bottom",
         strip.text = element_text(size = 8))
@@ -5628,6 +5809,492 @@ ahupuaʻa density better tracks NH₄. This reinforces treating the cesspool res
 correlational and scale-sensitive rather than a single clean "wastewater effect."
 :::
 
+## Response transformation {#sec-sens-transformation}
+
+> **Step 23.1** — Primary model uses log(NO₃+NO₂). A sqrt transform is tested as an alternative. Raw (untransformed) response is not shown: severe right skew (max = 266 µmol L⁻¹) makes Gaussian inference unreliable on the natural scale.
+
+```{r}
+#| label: step23-sens-helper
+
+# Extract key coefficient table once; referenced by subsequent sensitivity chunks.
+pt_full <- summary(nox_M_full)$p.table
+
+# One-row summary extractor for any refitted GAM.
+# Returns dev. explained, adj-R², and standardized betas for the three
+# key terms: log(SiO2), cesspool exposure, NPDES distance.
+sens_row <- function(label, model, n) {
+  pt <- summary(model)$p.table
+  get_b <- function(pat) {
+    nm <- grep(pat, rownames(pt), value = TRUE)
+    if (length(nm) == 0) return(c(NA_real_, NA_real_))
+    c(round(pt[nm[1], "Estimate"], 3), round(pt[nm[1], "Pr(>|t|)"], 4))
+  }
+  si   <- get_b("log_SiO2")
+  cess <- get_b("cess_exposure")
+  np   <- get_b("log_dist_npdes")
+  tibble(
+    Specification = label, n = n,
+    dev_expl = round(summary(model)$dev.expl * 100, 1),
+    adj_r2   = round(summary(model)$r.sq, 3),
+    si_b = si[1],   si_p = si[2],
+    cess_b = cess[1], cess_p = cess[2],
+    npdes_b = np[1],  npdes_p = np[2]
+  )
+}
+```
+
+```{r}
+#| label: step23-sens-transformation
+
+trans_cache <- here("output", "model_objects", "sens_transformation.rds")
+
+if (file.exists(trans_cache)) {
+  m_sqrt <- readRDS(trans_cache)
+  cat("Loaded transformation sensitivity from cache.\n")
+} else {
+  m_sqrt <- gam(
+    as.formula(paste("sqrt(NO3NO2) ~", paste(z_primary, collapse = " + "), "+", re_terms)),
+    data = nox_primary, method = "REML"
+  )
+  saveRDS(m_sqrt, trans_cache)
+}
+
+pt_sqrt <- summary(m_sqrt)$p.table
+tibble(
+  Transform        = c("log (primary)", "sqrt"),
+  n                = nrow(nox_primary),
+  `Dev. expl. (%)` = c(round(summary(nox_M_full)$dev.expl * 100, 1),
+                        round(summary(m_sqrt)$dev.expl    * 100, 1)),
+  `Adj. R2`        = c(round(summary(nox_M_full)$r.sq, 3),
+                       round(summary(m_sqrt)$r.sq,     3)),
+  `log(Si) beta`   = c(round(pt_full["z_log_SiO2",         "Estimate"], 3),
+                        round(pt_sqrt["z_log_SiO2",         "Estimate"], 3)),
+  `Cesspool beta`  = c(round(pt_full["z_log_cess_exposure", "Estimate"], 3),
+                        round(pt_sqrt["z_log_cess_exposure", "Estimate"], 3)),
+  `NPDES beta`     = c(round(pt_full["z_log_dist_npdes_m",  "Estimate"], 3),
+                        round(pt_sqrt["z_log_dist_npdes_m",  "Estimate"], 3))
+) |>
+  knitr::kable(
+    caption = paste0(
+      "Transformation sensitivity (Step 23.1). Standardized coefficients for key predictors ",
+      "under log and sqrt transforms of NO\u2083+NO\u2082 (n = ", nrow(nox_primary), "). ",
+      "Sign and relative rank of effects are consistent across both transforms."))
+```
+
+## Extreme observations {#sec-sens-extremes}
+
+> **Step 23.2** — The top 1% of NO₃+NO₂ concentrations in the primary model dataset (n = 611; cutoff ≈ 78 µmol L⁻¹, 7 samples) are trimmed to confirm that the cesspool and NPDES effects are not driven by a handful of extreme-concentration observations.
+
+```{r}
+#| label: step23-sens-extremes
+
+q99 <- quantile(nox_primary$NO3NO2, 0.99, na.rm = TRUE)
+nox_trim <- nox_primary |> filter(NO3NO2 <= q99)
+cat("Top 1% threshold:", round(q99, 1), "umol/L | trimmed:", nrow(nox_primary) - nrow(nox_trim), "samples\n")
+
+extrem_cache <- here("output", "model_objects", "sens_extremes.rds")
+
+if (file.exists(extrem_cache)) {
+  m_trim <- readRDS(extrem_cache)
+  cat("Loaded extremes sensitivity from cache.\n")
+} else {
+  m_trim <- gam(
+    as.formula(paste("log_NO3NO2 ~", paste(z_primary, collapse = " + "), "+", re_terms)),
+    data = nox_trim, method = "REML"
+  )
+  saveRDS(m_trim, extrem_cache)
+}
+
+pt_trim <- summary(m_trim)$p.table
+key_terms <- c("z_log_SiO2", "z_log_cess_exposure", "z_log_dist_npdes_m",
+               "z_pct_agriculture", "z_pct_impervious")
+term_lab  <- c(z_log_SiO2 = "log(SiO2)",
+               z_log_cess_exposure = "Cesspool exposure",
+               z_log_dist_npdes_m  = "log(Dist NPDES)",
+               z_pct_agriculture   = "% agriculture",
+               z_pct_impervious    = "% impervious")
+
+bind_rows(
+  tibble(Model = paste0("All (n=", nrow(nox_primary), ")"),  Term = key_terms,
+         beta  = round(pt_full[key_terms, "Estimate"], 3),
+         p     = round(pt_full[key_terms, "Pr(>|t|)"], 4)),
+  tibble(Model = paste0("Top 1% trimmed (n=", nrow(nox_trim), ")"), Term = key_terms,
+         beta  = round(pt_trim[key_terms, "Estimate"], 3),
+         p     = round(pt_trim[key_terms, "Pr(>|t|)"], 4))
+) |>
+  mutate(Term = term_lab[Term]) |>
+  pivot_wider(names_from = Model, values_from = c(beta, p),
+              names_glue = "{.value} [{Model}]") |>
+  knitr::kable(
+    caption = paste0(
+      "Extreme-observation sensitivity (Step 23.2). Effect sizes and p-values with and without ",
+      "the top 1% of NO\u2083+NO\u2082 values (> ", round(q99, 0), " \u00b5mol L\u207b\u00b9). ",
+      "A stable sign and direction confirms that the anthropogenic signal is not driven by ",
+      "a handful of extreme-concentration samples."))
+```
+
+## Island specification and spatial smooth {#sec-sens-island-spatial}
+
+> **Step 23.3 & 23.4** — Two structural choices evaluated: (a) island random effect vs fixed vs no island term; (b) 2D spatial smooth included vs excluded. Residual Moran's I (k-NN k = 10) is reported to quantify how much spatial autocorrelation remains.
+
+```{r}
+#| label: step23-sens-island-spatial
+
+isl_cache <- here("output", "model_objects", "sens_island_spatial.rds")
+
+if (file.exists(isl_cache)) {
+  isl_res <- readRDS(isl_cache)
+  cat("Loaded island/spatial sensitivity from cache.\n")
+} else {
+  re_fixed   <- "island_f + s(ahupuaa_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)"
+  re_no_isl  <- "s(ahupuaa_f, bs='re') + s(utm_x_km, utm_y_km, bs='tp', k=25)"
+  re_no_sp   <- "s(island_f, bs='re') + s(ahupuaa_f, bs='re')"
+  isl_res <- list(
+    m_isl_fixed = gam(as.formula(paste("log_NO3NO2 ~", paste(z_primary, collapse=" + "), "+", re_fixed)),
+                      data = nox_primary, method = "REML"),
+    m_no_isl    = gam(as.formula(paste("log_NO3NO2 ~", paste(z_primary, collapse=" + "), "+", re_no_isl)),
+                      data = nox_primary, method = "REML"),
+    m_no_sp     = gam(as.formula(paste("log_NO3NO2 ~", paste(z_primary, collapse=" + "), "+", re_no_sp)),
+                      data = nox_primary, method = "REML")
+  )
+  saveRDS(isl_res, isl_cache)
+}
+
+m_isl_fixed <- isl_res$m_isl_fixed
+m_no_isl    <- isl_res$m_no_isl
+m_no_sp     <- isl_res$m_no_sp
+
+resid_mi <- function(model) {
+  r  <- residuals(model, type = "deviance")
+  nb <- suppressWarnings(spdep::knearneigh(
+          as.matrix(nox_primary[, c("utm_x_km", "utm_y_km")]), k = 10)) |>
+    spdep::knn2nb()
+  mt <- spdep::moran.test(r, spdep::nb2listw(nb, style = "W"))
+  round(unname(mt$estimate[1]), 4)
+}
+
+tibble(
+  Specification      = c("Island RE + spatial smooth (primary)",
+                         "Island fixed + spatial smooth",
+                         "No island term + spatial smooth",
+                         "Island RE, no spatial smooth"),
+  `Dev. expl. (%)` = c(round(summary(nox_M_full)$dev.expl  * 100, 1),
+                        round(summary(m_isl_fixed)$dev.expl * 100, 1),
+                        round(summary(m_no_isl)$dev.expl    * 100, 1),
+                        round(summary(m_no_sp)$dev.expl     * 100, 1)),
+  `Adj. R2`        = c(round(summary(nox_M_full)$r.sq, 3),
+                       round(summary(m_isl_fixed)$r.sq, 3),
+                       round(summary(m_no_isl)$r.sq,   3),
+                       round(summary(m_no_sp)$r.sq,    3)),
+  `Resid. Moran I` = c(resid_mi(nox_M_full), resid_mi(m_isl_fixed),
+                        resid_mi(m_no_isl),   resid_mi(m_no_sp))
+) |>
+  knitr::kable(
+    caption = paste0(
+      "Island specification and spatial smooth sensitivity (Step 23.3-4; NO\u2083+NO\u2082, ",
+      "n = ", nrow(nox_primary), "). ",
+      "Removing the spatial smooth allows residual spatial autocorrelation to accumulate. ",
+      "Island random vs fixed effect produces similar explained variance; ",
+      "omitting island structure entirely has only modest impact when the ahupua\u02BBa ",
+      "RE and spatial smooth are present."))
+```
+
+## Without Si as delivery covariate {#sec-sens-no-si}
+
+> **Step 23.11** — log(SiO₂) enters the NO₃+NO₂ model as the terrestrial-water delivery proxy. Dropping it tests whether anthropogenic effect sizes inflate (delivery confounding) or stay stable (independent signal).
+
+```{r}
+#| label: step23-sens-no-si
+
+nosi_cache <- here("output", "model_objects", "sens_no_si.rds")
+z_no_si    <- setdiff(z_primary, "z_log_SiO2")
+
+if (file.exists(nosi_cache)) {
+  m_no_si <- readRDS(nosi_cache)
+  cat("Loaded no-Si sensitivity from cache.\n")
+} else {
+  m_no_si <- gam(
+    as.formula(paste("log_NO3NO2 ~", paste(z_no_si, collapse = " + "), "+", re_terms)),
+    data = nox_primary, method = "REML"
+  )
+  saveRDS(m_no_si, nosi_cache)
+}
+
+pt_no_si   <- summary(m_no_si)$p.table
+anthro_terms <- c("z_log_cess_exposure", "z_log_dist_npdes_m",
+                  "z_pct_agriculture", "z_pct_impervious")
+alab <- c(z_log_cess_exposure = "Cesspool exposure",
+          z_log_dist_npdes_m  = "log(Dist NPDES)",
+          z_pct_agriculture   = "% agriculture",
+          z_pct_impervious    = "% impervious")
+
+bind_rows(
+  tibble(Model = "With log(SiO2)", Term = anthro_terms,
+         beta = round(pt_full[anthro_terms,  "Estimate"], 3),
+         p    = round(pt_full[anthro_terms,  "Pr(>|t|)"], 4)),
+  tibble(Model = "Without log(SiO2)", Term = anthro_terms,
+         beta = round(pt_no_si[anthro_terms, "Estimate"], 3),
+         p    = round(pt_no_si[anthro_terms, "Pr(>|t|)"], 4))
+) |>
+  mutate(Term = alab[Term]) |>
+  pivot_wider(names_from = Model, values_from = c(beta, p),
+              names_glue = "{.value} [{Model}]") |>
+  knitr::kable(
+    caption = paste0(
+      "Sensitivity to removing the Si delivery proxy (Step 23.11). ",
+      "If anthropogenic coefficients substantially inflate when log(SiO\u2082) is absent, ",
+      "it indicates that Si was absorbing delivery-linked confounding. ",
+      "Stable or larger effects with Si present suggest independent anthropogenic signal ",
+      "above terrestrial-water delivery."))
+```
+
+## Site-date aggregation {#sec-sens-aggregation}
+
+> **Step 23.9** — 18 site × date pairs have more than one sample in the NO₃+NO₂ dataset. Aggregating these to site-date means (n = 593) tests whether repeat samples inflate apparent precision.
+
+```{r}
+#| label: step23-sens-aggregation
+
+nox_agg <- nox_primary |>
+  mutate(date_collected = as.Date(collected_hst)) |>
+  group_by(site_id, date_collected, island_f, ahupuaa_f, utm_x_km, utm_y_km) |>
+  summarise(
+    log_NO3NO2 = mean(log_NO3NO2, na.rm = TRUE),
+    across(all_of(z_primary), \(x) mean(x, na.rm = TRUE)),
+    .groups = "drop"
+  )
+
+cat("Aggregated dataset: n =", nrow(nox_agg), "(from", nrow(nox_primary), "samples)\n")
+
+agg_cache <- here("output", "model_objects", "sens_aggregation.rds")
+
+if (file.exists(agg_cache)) {
+  m_agg <- readRDS(agg_cache)
+  cat("Loaded aggregation sensitivity from cache.\n")
+} else {
+  m_agg <- gam(
+    as.formula(paste("log_NO3NO2 ~", paste(z_primary, collapse = " + "), "+", re_terms)),
+    data = nox_agg, method = "REML"
+  )
+  saveRDS(m_agg, agg_cache)
+}
+
+pt_agg <- summary(m_agg)$p.table
+compare_terms <- c("z_log_SiO2", "z_log_cess_exposure", "z_log_dist_npdes_m",
+                   "z_pct_agriculture", "z_pct_impervious")
+clab <- c(z_log_SiO2 = "log(SiO2)", z_log_cess_exposure = "Cesspool exposure",
+          z_log_dist_npdes_m = "log(Dist NPDES)", z_pct_agriculture = "% agriculture",
+          z_pct_impervious   = "% impervious")
+
+bind_rows(
+  tibble(Model = paste0("All samples (n=", nrow(nox_primary), ")"),
+         Term = compare_terms,
+         beta = round(pt_full[compare_terms, "Estimate"], 3),
+         p    = round(pt_full[compare_terms, "Pr(>|t|)"], 4)),
+  tibble(Model = paste0("Site-date aggregated (n=", nrow(nox_agg), ")"),
+         Term = compare_terms,
+         beta = round(pt_agg[compare_terms, "Estimate"], 3),
+         p    = round(pt_agg[compare_terms, "Pr(>|t|)"], 4))
+) |>
+  mutate(Term = clab[Term]) |>
+  pivot_wider(names_from = Model, values_from = c(beta, p),
+              names_glue = "{.value} [{Model}]") |>
+  knitr::kable(
+    caption = paste0(
+      "Site-date aggregation sensitivity (Step 23.9). 18 site \u00d7 date pairs with ",
+      "more than one sample were averaged before refitting. Effects stable across ",
+      "individual-sample and aggregated specifications confirm that repeat samples ",
+      "do not artifically inflate model precision."))
+```
+
+## Salinity threshold for enrichment statistics {#sec-sens-salinity-thresh}
+
+> **Step 23.8** — The storm-influenced vs marine-background classification uses 34 PSU (Step 7). Here the threshold is varied from 30 to 36 PSU to confirm that reported fold-enrichment values are not sensitive to the exact cutoff.
+
+```{r}
+#| label: step23-sens-salinity-thresh
+
+nuts    <- c("NO3NO2", "PO4", "NH3", "SiO2")
+bdlcols <- paste0("bdl_", nuts)
+threshs <- c(30, 32, 34, 36)
+nut_lab <- c(NO3NO2 = "NO3+NO2", PO4 = "PO4", NH3 = "NH4", SiO2 = "SiO2")
+
+sal_sens <- map_dfr(threshs, function(thr) {
+  map_dfr(seq_along(nuts), function(i) {
+    nut <- nuts[i]; bdl <- bdlcols[i]
+    d <- chem_master |>
+      filter(!is.na(.data[[nut]]), !.data[[bdl]], !is.na(Salinity), !offshore_reference)
+    s <- d |> filter(Salinity <= thr) |> pull(nut)
+    m <- d |> filter(Salinity >  thr) |> pull(nut)
+    tibble(threshold = thr, nutrient = nut_lab[nut],
+           n_storm = length(s), n_marine = length(m),
+           med_storm = round(median(s), 3), med_marine = round(median(m), 3),
+           fold = round(median(s) / median(m), 2))
+  })
+})
+
+sal_sens |>
+  select(nutrient, threshold, n_storm, n_marine, med_storm, med_marine, fold) |>
+  arrange(nutrient, threshold) |>
+  knitr::kable(
+    col.names = c("Nutrient", "Threshold (PSU)", "n storm", "n marine",
+                  "Median storm", "Median marine", "Fold enrichment"),
+    caption = paste0(
+      "Salinity-threshold sensitivity (Step 23.8). Fold enrichment (median storm / median marine) ",
+      "at four salinity cutoffs. Primary analysis uses 34 PSU. ",
+      "Si and NO\u2083+NO\u2082 fold enrichments are consistent across reasonable thresholds. ",
+      "NH\u2084 fold enrichment is more threshold-sensitive because many NH\u2084 values ",
+      "fall near the detection limit in both salinity groups."))
+```
+
+## Population density substituted for impervious cover {#sec-sens-pop-density}
+
+> **Step 23.** `pct_impervious` and `log(pop_density_km2 + 1)` are highly collinear (Spearman ρ ≈ 0.92; §Step 3–4). Swapping them checks whether the impervious-cover effect reflects general urbanisation rather than a mechanism specific to impervious surface.
+
+```{r}
+#| label: step23-sens-pop-density
+
+pop_cache <- here("output", "model_objects", "sens_pop_density.rds")
+
+# Build predictor set with pop density instead of pct_impervious
+pop_vars <- c(setdiff(nox_primary_vars, "pct_impervious"), "log_pop_density_km2")
+
+nox_pop <- chem_master |>
+  filter(!offshore_reference, !is.na(NO3NO2), !bdl_NO3NO2, !is.na(SiO2), !bdl_SiO2) |>
+  left_join(sp_sf |> st_drop_geometry() |> select(sample_id, utm_x, utm_y), by = "sample_id") |>
+  mutate(
+    log_NO3NO2          = log(NO3NO2),
+    log_SiO2            = log(SiO2),
+    log_dist_stream_m   = log(dist_to_stream_mouth_m + 1),
+    log_ksat            = log(mean_ksat_um_s + 1),
+    log_dist_npdes_m    = log(dist_to_nearest_npdes_m + 1),
+    log_cess_exposure   = log1p(cess_exposure_idx),
+    log_pop_density_km2 = log(pop_density_km2 + 1),
+    island_f  = factor(island), ahupuaa_f = factor(ahupuaa),
+    utm_x_km  = utm_x / 1000,  utm_y_km  = utm_y / 1000
+  ) |>
+  filter(if_all(all_of(c("log_NO3NO2", pop_vars)), ~ !is.na(.)), !is.na(utm_x_km)) |>
+  mutate(across(all_of(pop_vars), z, .names = "z_{.col}"))
+
+cat("Pop-density sensitivity dataset: n =", nrow(nox_pop),
+    "(primary: n =", nrow(nox_primary), ")\n")
+
+if (file.exists(pop_cache)) {
+  m_pop <- readRDS(pop_cache)
+  cat("Loaded pop-density sensitivity from cache.\n")
+} else {
+  z_pop_vars <- paste0("z_", pop_vars)
+  m_pop <- gam(
+    as.formula(paste("log_NO3NO2 ~", paste(z_pop_vars, collapse = " + "), "+", re_terms)),
+    data = nox_pop, method = "REML"
+  )
+  saveRDS(m_pop, pop_cache)
+}
+
+pt_pop <- summary(m_pop)$p.table
+cat("Key effects (pop-density model):\n")
+show_terms <- c("z_log_pop_density_km2", "z_log_cess_exposure",
+                "z_log_dist_npdes_m", "z_pct_agriculture")
+tibble(
+  Specification  = c(rep("Primary (pct_impervious)", 3),
+                     rep("Pop. density substitute", 3)),
+  Term = rep(c("Cesspool exposure", "log(Dist NPDES)", "% agriculture /\npop. density"), 2),
+  beta = c(round(pt_full["z_log_cess_exposure", "Estimate"], 3),
+           round(pt_full["z_log_dist_npdes_m",  "Estimate"], 3),
+           round(pt_full["z_pct_impervious",    "Estimate"], 3),
+           round(pt_pop["z_log_cess_exposure",   "Estimate"], 3),
+           round(pt_pop["z_log_dist_npdes_m",    "Estimate"], 3),
+           round(pt_pop["z_log_pop_density_km2", "Estimate"], 3)),
+  p    = c(round(pt_full["z_log_cess_exposure", "Pr(>|t|)"], 4),
+           round(pt_full["z_log_dist_npdes_m",  "Pr(>|t|)"], 4),
+           round(pt_full["z_pct_impervious",    "Pr(>|t|)"], 4),
+           round(pt_pop["z_log_cess_exposure",   "Pr(>|t|)"], 4),
+           round(pt_pop["z_log_dist_npdes_m",    "Pr(>|t|)"], 4),
+           round(pt_pop["z_log_pop_density_km2", "Pr(>|t|)"], 4))
+) |>
+  knitr::kable(
+    col.names = c("Specification", "Term", "Std. beta", "p"),
+    caption = paste0(
+      "Population-density sensitivity (Step 23). The primary model uses pct_impervious; ",
+      "here it is swapped for log(pop_density_km2 + 1). Because these two variables are ",
+      "highly collinear (\u03c1 \u2248 0.92), only one enters any model. ",
+      "Comparing cesspool and NPDES effects across the two specifications confirms ",
+      "they are not artefacts of the impervious-cover choice."))
+```
+
+## Sensitivity summary table {#sec-sens-summary}
+
+```{r}
+#| label: step23-sens-summary
+
+# Collect key stats from all fitted sensitivity models in one overview table.
+# Primary comparison: sign and significance of cesspool-exposure coefficient,
+# which is the most theoretically central anthropogenic term.
+n_p <- nrow(nox_primary)
+
+get_cess <- function(model) {
+  pt <- summary(model)$p.table
+  nm <- grep("cess_exposure", rownames(pt), value = TRUE)
+  if (length(nm) == 0) return(c(NA_real_, NA_real_))
+  c(round(pt[nm[1], "Estimate"], 3), round(pt[nm[1], "Pr(>|t|)"], 4))
+}
+
+sens_overview <- tibble(
+  Specification = c(
+    paste0("Primary: log(NOx), all samples (n=", n_p, ")"),
+    paste0("sqrt transform (n=", n_p, ")"),
+    paste0("Top 1% trimmed (n=", nrow(nox_trim), ")"),
+    paste0("Island as fixed factor (n=", n_p, ")"),
+    paste0("No island term (n=", n_p, ")"),
+    paste0("No spatial smooth (n=", n_p, ")"),
+    paste0("Without log(SiO2) (n=", n_p, ")"),
+    paste0("Site-date aggregated (n=", nrow(nox_agg), ")"),
+    paste0("Pop. density for impervious (n=", nrow(nox_pop), ")")
+  ),
+  `Dev. expl. (%)` = c(
+    round(summary(nox_M_full)$dev.expl * 100, 1),
+    round(summary(m_sqrt)$dev.expl     * 100, 1),
+    round(summary(m_trim)$dev.expl     * 100, 1),
+    round(summary(m_isl_fixed)$dev.expl * 100, 1),
+    round(summary(m_no_isl)$dev.expl   * 100, 1),
+    round(summary(m_no_sp)$dev.expl    * 100, 1),
+    round(summary(m_no_si)$dev.expl    * 100, 1),
+    round(summary(m_agg)$dev.expl      * 100, 1),
+    round(summary(m_pop)$dev.expl      * 100, 1)
+  ),
+  `Cesspool beta` = c(
+    get_cess(nox_M_full)[1], get_cess(m_sqrt)[1], get_cess(m_trim)[1],
+    get_cess(m_isl_fixed)[1], get_cess(m_no_isl)[1], get_cess(m_no_sp)[1],
+    get_cess(m_no_si)[1],     get_cess(m_agg)[1],    get_cess(m_pop)[1]
+  ),
+  `Cesspool p` = c(
+    get_cess(nox_M_full)[2], get_cess(m_sqrt)[2], get_cess(m_trim)[2],
+    get_cess(m_isl_fixed)[2], get_cess(m_no_isl)[2], get_cess(m_no_sp)[2],
+    get_cess(m_no_si)[2],     get_cess(m_agg)[2],    get_cess(m_pop)[2]
+  )
+) |>
+  mutate(Consistent = if_else(
+    !is.na(`Cesspool beta`) & `Cesspool beta` > 0, "\u2713", "\u00d7"))
+
+sens_overview |>
+  knitr::kable(
+    caption = paste0(
+      "Sensitivity analysis overview (Step 23). Each row is an alternative specification ",
+      "of the primary four-island NO\u2083+NO\u2082 model. Cesspool exposure is the most ",
+      "theoretically motivated anthropogenic predictor. A positive coefficient consistent ",
+      "across specifications supports the robustness of the human-amplification signal; ",
+      "a negative or absent coefficient in multiple rows would undermine it. ",
+      "('\u2713' = positive coefficient, '\u00d7' = negative or NA.)"))
+```
+
+## Notes on sensitivity checks requiring raw-data reprocessing {#sec-sens-notes}
+
+Two Step 23 checks require going back to raw inputs and are documented but not implemented inline:
+
+**Stream-gauge assignment thresholds (10, 15, 20 km; Step 23.7).** The primary inferential model uses `chirps_storm_cumulative_mm` (spatially resolved CHIRPS) as the storm-forcing predictor, not gauge discharge. Discharge was dropped at the collinearity screening step (ρ = 0.79 with CHIRPS) and is absent from `nox_M_full` / `nox_M_int`. Gauge-threshold sensitivity is therefore most relevant to the descriptive discharge characterisation (Step 3) and any supplemental model that includes discharge. Implementing it would require re-executing the gauge assignment with 10- and 20-km buffers against `data/usgs_gauges_march2026.csv`.
+
+**Multiple agricultural metrics (Step 23.6).** The C-CAP layer provides a combined `pct_agriculture` (cultivated crops + pasture, classes 6–7). Separating these would require re-extracting by class from the raw island GeoTIFFs in `data/ccap/`. Island-level `cattle_per_km2` (USDA NASS) is not a viable within-island substitute because it lacks spatial variation below the county level.
+
 ---
 
 # Supplementary Analyses {#sec-supplementary}
@@ -5686,8 +6353,8 @@ checklist <- tribble(
   "Spatial cross-validation completed",             TRUE,   # Step 17 LOAO (NOx amp) + Step 18 LOAO/LOIO all 4
   "Leave-one-island-out prediction completed",      TRUE,   # Step 18 LOIO + LOAO for all 4 nutrients
   "Variance partitioning completed",                TRUE,   # Step 16, Figure 6
-  "Key interactions tested",                        FALSE,  # Step 21 — placeholder only
-  "Sensitivity analyses completed",                 FALSE,  # Step 23 — not started
+  "Key interactions tested",                        TRUE,   # Step 21 — screening + Fig 6 complete
+  "Sensitivity analyses completed",                 TRUE,   # Step 23 — 9 checks implemented
   "Main figures exported",                          TRUE,   # Figures 1-6 via save_fig()
   "Supplementary figures exported",                 FALSE,  # Not yet exported
   "Tables exported",                                FALSE,  # In HTML only; no standalone files

@@ -653,6 +653,45 @@ Checklist items:
 
 Every `library()` call must appear in the single `packages` setup chunk at the top of `kona_low_nutrient_analysis.qmd` (or equivalent setup section in any new analysis document). Never place `library()` calls inside individual analysis chunks, even for packages that are only used once. If a new package is needed, add it to the setup chunk, not inline.
 
+### Use `expression()` for chemical subscripts and units in all ggplot2 figure labels
+
+**Never** use unicode subscript/superscript characters (₃ `\u2083`, ₂ `\u2082`, ₄ `\u2084`, ⁻¹ `\u207b\u00b9`, µ `\u03bc`, ² `\u00b2`, log₁₀ `\u2081\u2080`) inside ggplot2 axis labels, legend text, or any other rendered figure element. These characters render as blocks (□) on most systems. Use R's plotmath `expression()` or `bquote()` instead.
+
+**Common patterns:**
+
+```r
+# Axis labels — pass expression() directly to labs()
+labs(y = expression(NO[3]+NO[2]~(mu*mol~L^{-1})))
+labs(y = expression(SiO[2]~(mu*mol~L^{-1})))
+labs(y = expression(PO[4]~(mu*mol~L^{-1})))
+labs(y = expression(NH[4]~(mu*mol~L^{-1})))
+labs(y = expression(Rainfall~(mm~day^{-1})))
+labs(y = expression(Discharge~(cfs~log[10])))
+labs(x = expression("Standardized effect on"~log(NO[3]+NO[2])))
+labs(x = expression("Permutation importance (mean decrease in"~R^2*")"))
+
+# Legend labels — named expression vector works in scale_colour/fill_manual()
+nut_labels <- c(
+  SiO2   = expression(SiO[2]),
+  NO3NO2 = expression(NO[3]+NO[2]),
+  PO4    = expression(PO[4]),
+  NH4    = expression(NH[4])
+)
+scale_colour_manual(values = ..., labels = nut_labels, name = NULL)
+
+# Facet strip labels — use plotmath strings + labeller = label_parsed
+nutrient_lvls <- c("NO[3]+NO[2]", "PO[4]", "NH[4]", "SiO[2]")
+facet_wrap(~nutrient_f, labeller = label_parsed)
+
+# Mixed text + formula — use quoted strings inside expression()
+labs(y = expression("Partial effect on"~log(SiO[2])))
+labs(y = expression("Predicted"~NO[3]+NO[2]~(mu*mol~L^{-1})))
+```
+
+**This rule was added 2026-09-11 after unicode subscripts were confirmed to render as blocks in the exported figures.**
+
+---
+
 ### Never put `\uxxxx` unicode escapes inside backtick-quoted names
 
 R accepts `\uxxxx` escapes **only inside strings**, never inside a backtick-quoted symbol
@@ -910,7 +949,7 @@ Cached at: `data/aca_hawaii_coral.rds`, `data/aca_reef_kriged_NO3.rds`
 
 - **PAM clustering (k=3):** Marine background (n≈262), Nearshore enriched (n≈309), Runoff-dominated (n≈123). Seed: 8341.
 - **Random forest:** OOB accuracy varies (61–67%) vs ~36% null; seed 5572. Predictor set not finalized.
-- **Moran's I:** SiO₂ and NO₃ significantly clustered (watershed-driven); NH₃ not (biology-driven).
+- **Moran's I:** All four nutrients are significantly spatially clustered on log1p scale (k-NN k=10). SiO₂ strongest (global I ≈ 0.49), then NO₃+NO₂ (≈ 0.35) and PO₄ (≈ 0.32); NH₄ is the weakest but still significant (global I ≈ 0.23, p ≈ 1.6e-42; significant on every island: Oʻahu ≈ 0.13, Maui ≈ 0.07, Molokaʻi ≈ 0.21). NH₄ is therefore *most localized/finer-scale*, not "unclustered." Its weak raw clustering is fully absorbed by the spatial random-effects structure, leaving NH₄ model residual Moran's I ≈ 0.
 - **Salinity thresholds:** Storm-influenced ≤ 34 PSU (any freshwater dilution); Marine background > 34 PSU. No samples excluded — the former middle zone (32–34 PSU) is included in the storm-influenced group.
 - **Kriging:** Ordinary kriging, log1p transform, spherical variogram, min_range = island_diagonal/5, 250 m grid, 3 km coastal band.
 - **Island palette:** O'ahu = #1565C0, Maui = #2E7D32, Moloka'i = #E65100, Lāna'i = #6A1B9A
