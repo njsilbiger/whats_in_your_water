@@ -852,34 +852,19 @@ p_rain <- ggplot() +
   theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
 
 # ── USGS discharge (lower; island labels at storm-peak positions) ─────────────
-key_site_labels  <- c(`16211600`="O\u02BBahu",
-                      `16400000`="Moloka\u02BBi",
-                      `16508000`="Maui")
-discharge_colors <- c("O\u02BBahu"    ="#1565C0",
-                      "Moloka\u02BBi" ="#E65100",
-                      "Maui"          ="#2E7D32")
-
-usgs_key <- read_csv(here("data","usgs_discharge_cache.csv"),
-                     show_col_types = FALSE) |>
-  dplyr::filter(site_no %in% as.numeric(names(key_site_labels)),
+# Single gauge: Maui / Hanawi Stream (16508000) — highest storm peak (~1040 cfs)
+usgs_maui <- read_csv(here("data","usgs_discharge_cache.csv"),
+                      show_col_types = FALSE) |>
+  dplyr::filter(site_no == 16508000,
                 Date >= tl_limits[1], Date <= tl_limits[2],
-                !is.na(Flow), Flow >= 0.5) |>
-  mutate(gauge_label = key_site_labels[as.character(site_no)])
+                !is.na(Flow), Flow >= 0.5)
 
-p_disch <- ggplot(usgs_key, aes(x = Date, y = Flow, colour = gauge_label)) +
+p_disch <- ggplot(usgs_maui, aes(x = Date, y = Flow)) +
   win_rects +
-  geom_line(linewidth = 0.9, na.rm = TRUE) +
-  # Labels placed just after each line's storm peak — where lines are maximally separated
+  geom_line(linewidth = 0.9, colour = "#2E7D32", na.rm = TRUE) +
   annotate("text", x = as.Date("2026-03-16"), y = 1040,
-           label = "Maui",          colour = "#2E7D32",
-           hjust = 0, vjust = -0.3, size = 2.6, fontface = "bold") +
-  annotate("text", x = as.Date("2026-03-16"), y = 669,
-           label = "Moloka\u02BBi", colour = "#E65100",
-           hjust = 0, vjust = -0.3, size = 2.6, fontface = "bold") +
-  annotate("text", x = as.Date("2026-03-16"), y = 231,
-           label = "O\u02BBahu",    colour = "#1565C0",
-           hjust = 0, vjust = -0.3, size = 2.6, fontface = "bold") +
-  scale_colour_manual(values = discharge_colors, guide = "none") +
+           label = "Maui (Hanawi Stream)", colour = "#2E7D32",
+           hjust = 0, vjust = -0.35, size = 2.6, fontface = "bold") +
   scale_y_log10(labels = scales::label_comma(), breaks = c(1, 10, 100, 1000)) +
   scale_x_date(limits = tl_limits, expand = expansion(add = 1),
                date_breaks = "1 week", date_labels = "%b %d") +
@@ -896,7 +881,7 @@ p_timeline <- (p_rain / p_disch) + plot_layout(heights = c(1.8, 1.2))
 
 # ── Assemble and save ─────────────────────────────────────────────────────────
 caption_txt <- sprintf(
-  "n\u202F=\u202F%d samples  \u00b7  %d unique coastal sites  \u00b7  %d ahupua\u02BBa  \u00b7  4 islands  \u00b7  Mar\u202F28\u2013Apr\u202F8, 2026.\nBasemap: Esri World Imagery. Discharge: USGS gauges 16211600, 16508000, 16400000.",
+  "n\u202F=\u202F%d samples  \u00b7  %d unique coastal sites  \u00b7  %d ahupua\u02BBa  \u00b7  4 islands  \u00b7  Mar\u202F28\u2013Apr\u202F8, 2026.\nBasemap: Esri World Imagery. Discharge: USGS gauge 16508000 (Hanawi Stream, Maui).",
   nrow(chem_master |> dplyr::filter(!offshore_reference)),
   nrow(samples_plot),
   n_distinct(chem_master$ahupuaa[!chem_master$offshore_reference])
