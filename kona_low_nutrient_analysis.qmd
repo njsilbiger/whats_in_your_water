@@ -1760,9 +1760,396 @@ ggplot(vgm_plot_df, aes(x = dist_km, y = gamma, colour = island, size = np)) +
 ## Interpolated maps {#sec-kriging}
 
 > **Step 10 (Figure 4).** Spatial interpolation for visualization only.
-> Mask to coastal band; show observed points on top.
+> Ordinary kriging on log1p-transformed concentrations; 3 km coastal band; 250 m grid.
+> Kriged for Oʻahu, Maui, Molokaʻi; raw sample points for Lānaʻi (n ≈ 20, too sparse to krige).
+> Surfaces masked to sample-coverage buffers to prevent extrapolation into unsurveyed coast.
 
-*← Analysis code goes here when we work through Step 10 together.*
+```{r}
+#| label: fig4-spatial-helpers
+
+# ── Normalization helper: strips all apostrophe/okina variants AND macron ā
+# so that island names match across files with different unicode encodings.
+normalize_isl <- function(x) {
+  x |>
+    stringr::str_replace_all("[\u02bb\u02bc\u2018\u2019\u0027\u0060]", "") |>
+    stringr::str_replace_all("[\u0101\u0100]", "a") |>   # ā/Ā → a
+    stringr::str_to_lower() |>
+    stringr::str_trim()
+}
+
+# ── Uniform panel extents: 90 km wide × 65 km tall, centered on each island ──
+# Prevents Molokaʻi's elongated shape from dominating the layout.
+FIG4_HALF_W <- 45000   # 45 km half-width
+FIG4_HALF_H <- 32500   # 32.5 km half-height
+
+get_uniform_limits_fig4 <- function(geo) {
+  bb <- geo$coast_bbox
+  cx <- (bb["xmin"] + bb["xmax"]) / 2
+  cy <- (bb["ymin"] + bb["ymax"]) / 2
+  # unname() strips the "xmin"/"ymin" labels from st_bbox scalars so that
+  # downstream c(xmin = ..., xmax = ...) construction is unambiguous.
+  list(xlim = c(unname(cx) - FIG4_HALF_W, unname(cx) + FIG4_HALF_W),
+       ylim = c(unname(cy) - FIG4_HALF_H, unname(cy) + FIG4_HALF_H))
+}
+
+# ── Convert uniform limits to sfc for tile fetching ──────────────────────────
+lim_to_sfc_fig4 <- function(lim) {
+  sf::st_as_sfc(sf::st_bbox(
+    c(xmin = unname(lim$xlim[1]), xmax = unname(lim$xlim[2]),
+      ymin = unname(lim$ylim[1]), ymax = unname(lim$ylim[2])),
+    crs = 32604
+  ))
+}
+
+# ── Scale metadata per nutrient: shared limits, breaks, labels for Figure 4 ──
+fig4_meta <- list(
+  NO3NO2 = list(
+    limits = c(0, 10),
+    breaks = c(0.5, 1, 3, 5, 10),
+    labels = c("0.5", "1", "3", "5", "\u226510")
+  ),
+  PO4 = list(
+    limits = c(0, 1),
+    breaks = c(0.05, 0.1, 0.3, 0.5, 1),
+    labels = c("0.05", "0.1", "0.3", "0.5", "\u22651")
+  ),
+  SiO2 = list(
+    limits = c(0, 50),
+    breaks = c(1, 5, 10, 20, 50),
+    labels = c("1", "5", "10", "20", "\u226550")
+  ),
+  NH3 = list(
+    limits = c(0, 3),
+    breaks = c(0.1, 0.5, 1, 2, 3),
+    labels = c("0.1", "0.5", "1", "2", "\u22653")
+  )
+)
+
+# ── Island land polygon + coastal band ──────────────────────────────────────
+get_island_geo_fig4 <- function(island_name, ahupuaa_sf, band_km = 3) {
+  match_idx  <- normalize_isl(ahupuaa_sf$mokupuni) == normalize_isl(island_name)
+  land_union <- ahupuaa_sf[match_idx, ] |>
+    sf::st_transform(32604) |> sf::st_make_valid() |> sf::st_union()
+  land_parts <- sf::st_cast(land_union, "POLYGON")
+  land_union  <- land_parts[as.numeric(sf::st_area(land_parts)) > 1e6] |> sf::st_union()
+  coast_outer <- sf::st_buffer(land_union, dist = band_km * 1000)
+  coast_band  <- sf::st_difference(coast_outer, land_union)
+  coast_bbox  <- sf::st_bbox(coast_outer)
+  list(
+    land_sf     = sf::st_as_sf(sf::st_sf(geometry = land_union)),
+    coast_outer = coast_outer,
+    coast_band  = coast_band,
+    coast_bbox  = coast_bbox
+  )
+}
+
+# ── Kriging data computation (returns pred_df + pts_all) ────────────────────
+compute_krige_data_fig4 <- function(data, island_name, var, geo, res_m = 250) {
+  exact_name <- unique(data$island)[
+    normalize_isl(unique(data$island)) == normalize_isl(island_name)
+  ]
+  island_data <- data |>
+    dplyr::filter(island == exact_name, !is.na(.data[[var]]),
+                  !is.na(latitude), !is.na(longitude))
+  if (nrow(island_data) < 5) return(list(pred_df = NULL, pts_all = NULL, n_unique = 0))
+
+  pts_proj <- island_data |>
+    sf::st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+    sf::st_transform(32604) |>
+    dplyr::mutate(raw_val = .data[[var]], log_val = log1p(raw_val),
+                  X = sf::st_coordinates(geometry)[, 1],
+                  Y = sf::st_coordinates(geometry)[, 2]) |>
+    dplyr::group_by(X, Y) |>
+    dplyr::summarise(log_val = mean(log_val, na.rm = TRUE),
+                     raw_val = mean(raw_val, na.rm = TRUE), .groups = "drop") |>
+    sf::st_as_sf(coords = c("X", "Y"), crs = 32604)
+
+  pts_all <- island_data |>
+    sf::st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+    sf::st_transform(32604) |>
+    dplyr::mutate(val = .data[[var]])
+
+  island_diag <- sqrt(diff(sf::st_bbox(pts_proj)[c("xmin","xmax")])^2 +
+                      diff(sf::st_bbox(pts_proj)[c("ymin","ymax")])^2)
+  min_range   <- island_diag / 5
+  init_psill  <- var(pts_proj$log_val, na.rm = TRUE)
+  v_emp       <- gstat::variogram(log_val ~ 1, pts_proj)
+  v_auto      <- tryCatch(
+    gstat::fit.variogram(v_emp, gstat::vgm(init_psill * 0.8, "Sph",
+                                            min_range, init_psill * 0.2)),
+    error = function(e) NULL)
+  v_fit <- if (!is.null(v_auto) && v_auto$range[2] >= min_range) v_auto else
+    gstat::vgm(init_psill * 0.8, "Sph", min_range, init_psill * 0.2)
+
+  sample_cov <- sf::st_buffer(sf::st_union(pts_proj), dist = min_range)
+  grid_pts   <- sf::st_make_grid(geo$coast_band, cellsize = res_m, what = "centers") |>
+    sf::st_as_sf() |> sf::st_filter(geo$coast_band) |> sf::st_filter(sample_cov)
+  if (nrow(grid_pts) == 0) return(list(pred_df = NULL, pts_all = pts_all,
+                                        n_unique = nrow(pts_proj)))
+
+  k_out   <- suppressWarnings(
+    gstat::krige(log_val ~ 1, pts_proj, grid_pts, model = v_fit, nmax = 40)
+  )
+  pred_df <- sf::st_coordinates(k_out) |> as.data.frame() |>
+    dplyr::mutate(pred = expm1(k_out$var1.pred))
+
+  list(pred_df = pred_df, pts_all = pts_all, n_unique = nrow(pts_proj))
+}
+
+# ── Kriging panel (ggplot) ───────────────────────────────────────────────────
+# ── Kriging panel: uniform extents, optional scale bar, no legend ───────────
+make_krige_panel_fig4 <- function(kd, geo, meta, lim, tile_zoom = 11,
+                                   show_island_label = FALSE, island_label = "",
+                                   show_scale = FALSE) {
+  # Fetch tiles for the UNIFORM limits box, not just the island's natural extent.
+  # Without this, areas outside coast_outer render blank, making narrow islands
+  # (e.g. Molokaʻi) appear to have a smaller panel than wider islands.
+  sat <- maptiles::get_tiles(sf::st_transform(lim_to_sfc_fig4(lim), 4326),
+                              provider = "Esri.WorldImagery", zoom = tile_zoom,
+                              cachedir = here::here("data", "maptiles_cache"))
+  p <- ggplot2::ggplot() +
+    tidyterra::geom_spatraster_rgb(data = sat) +
+    ggplot2::geom_raster(data = kd$pred_df,
+                         ggplot2::aes(x = X, y = Y, fill = pred), alpha = 0.85) +
+    ggplot2::geom_sf(data = geo$land_sf, fill = NA, colour = "white", linewidth = 0.25) +
+    ggplot2::geom_sf(data = kd$pts_all, ggplot2::aes(fill = val),
+                     shape = 21, size = 0.6, stroke = 0.15,
+                     colour = "white", alpha = 0.55) +
+    ggplot2::scale_fill_viridis_c(
+      option = "plasma", trans = "log1p",
+      limits = meta$limits, breaks = meta$breaks,
+      labels = meta$labels, oob = scales::squish,
+      na.value = "transparent", guide = "none"
+    ) +
+    ggplot2::coord_sf(crs = 32604, xlim = lim$xlim, ylim = lim$ylim, expand = FALSE) +
+    ggplot2::theme_void(base_size = 8) +
+    ggplot2::theme(plot.background = ggplot2::element_rect(fill = "white", colour = NA),
+                   plot.margin = ggplot2::margin(1, 1, 1, 1))
+  if (show_scale)
+    p <- p + ggspatial::annotation_scale(
+      location = "bl", width_hint = 0.28, style = "bar",
+      text_col = "white", bar_cols = c("white", "gray30"),
+      line_col = "white", text_cex = 0.6,
+      pad_x = ggplot2::unit(0.06, "in"), pad_y = ggplot2::unit(0.06, "in")
+    )
+  if (show_island_label)
+    p <- p + ggplot2::labs(title = island_label) +
+      ggplot2::theme(plot.title = ggplot2::element_text(
+        size = 8, face = "bold", colour = "gray10",
+        hjust = 0.5, margin = ggplot2::margin(b = 2)))
+  p
+}
+
+# ── Raw-points panel for Lānaʻi: uniform extents, optional scale bar ─────────
+make_lanai_panel_fig4 <- function(data, var, geo, meta, lim, tile_zoom = 12,
+                                   show_island_label = FALSE,
+                                   island_label = "L\u0101na'i",
+                                   show_scale = FALSE) {
+  exact_name <- unique(data$island)[normalize_isl(unique(data$island)) == "lanai"]
+  island_data <- data |>
+    dplyr::filter(island == exact_name, !is.na(.data[[var]]),
+                  !is.na(latitude), !is.na(longitude)) |>
+    dplyr::mutate(val = .data[[var]]) |>
+    sf::st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
+    sf::st_transform(32604)
+
+  sat <- maptiles::get_tiles(sf::st_transform(lim_to_sfc_fig4(lim), 4326),
+                              provider = "Esri.WorldImagery", zoom = tile_zoom,
+                              cachedir = here::here("data", "maptiles_cache"))
+
+  p <- ggplot2::ggplot() +
+    tidyterra::geom_spatraster_rgb(data = sat) +
+    ggplot2::geom_sf(data = geo$land_sf, fill = NA, colour = "white", linewidth = 0.25) +
+    ggplot2::geom_sf(data = island_data, ggplot2::aes(fill = val),
+                     shape = 21, size = 2.0, stroke = 0.3,
+                     colour = "white", alpha = 0.9) +
+    ggplot2::scale_fill_viridis_c(
+      option = "plasma", trans = "log1p",
+      limits = meta$limits, breaks = meta$breaks,
+      labels = meta$labels, oob = scales::squish,
+      na.value = "transparent", guide = "none"
+    ) +
+    ggplot2::coord_sf(crs = 32604, xlim = lim$xlim, ylim = lim$ylim, expand = FALSE) +
+    ggplot2::theme_void(base_size = 8) +
+    ggplot2::theme(plot.background = ggplot2::element_rect(fill = "white", colour = NA),
+                   plot.margin = ggplot2::margin(1, 1, 1, 1))
+  if (show_scale)
+    p <- p + ggspatial::annotation_scale(
+      location = "bl", width_hint = 0.28, style = "bar",
+      text_col = "white", bar_cols = c("white", "gray30"),
+      line_col = "white", text_cex = 0.6,
+      pad_x = ggplot2::unit(0.06, "in"), pad_y = ggplot2::unit(0.06, "in")
+    )
+  if (show_island_label)
+    p <- p + ggplot2::labs(title = island_label) +
+      ggplot2::theme(plot.title = ggplot2::element_text(
+        size = 8, face = "bold", colour = "gray10",
+        hjust = 0.5, margin = ggplot2::margin(b = 2)))
+  p
+}
+
+# ── Colorbar strip: smooth gradient raster, label positioned as plot title ───
+# y evenly spaced in log1p space → geom_raster renders with no gaps.
+# Label sits above the strip as plot.title (avoids clipping at right margin).
+make_cb_strip_fig4 <- function(meta) {
+  n       <- 500
+  log_seq <- seq(log1p(meta$limits[1] + 0.001), log1p(meta$limits[2]), length.out = n)
+  df      <- data.frame(x = 0.5, y = log_seq, yraw = expm1(log_seq))
+  ggplot2::ggplot(df, ggplot2::aes(x = x, y = y, fill = yraw)) +
+    ggplot2::geom_raster(interpolate = TRUE) +
+    ggplot2::scale_fill_viridis_c(option = "plasma", limits = meta$limits,
+                                   oob = scales::squish, guide = "none") +
+    ggplot2::scale_y_continuous(
+      breaks = log1p(meta$breaks), labels = meta$labels,
+      position = "right", expand = ggplot2::expansion(0)
+    ) +
+    ggplot2::scale_x_continuous(expand = ggplot2::expansion(0)) +
+    ggplot2::theme_minimal(base_size = 7) +
+    ggplot2::theme(
+      axis.text.y     = ggplot2::element_text(size = 6.5, colour = "gray20"),
+      axis.ticks.y    = ggplot2::element_line(colour = "gray60", linewidth = 0.3),
+      axis.title      = ggplot2::element_blank(),  # no title: row label column serves this
+      axis.text.x     = ggplot2::element_blank(),
+      panel.grid      = ggplot2::element_blank(),
+      plot.margin     = ggplot2::margin(2, 6, 2, 2),
+      plot.background = ggplot2::element_rect(fill = "white", colour = NA)
+    )
+}
+```
+
+```{r}
+#| label: fig4-kriging-data
+#| cache: false
+
+# Load ahupuaa boundaries (needed for land polygon masking)
+ahupuaa_sf_fig4 <- sf::st_read(
+  here::here("data", "ahupuaa_boundaries.geojson"), quiet = TRUE
+)
+
+# Build island geometries
+islands_krige_fig4 <- c("O'ahu", "Maui", "Moloka'i")
+geo_fig4 <- setNames(
+  lapply(islands_krige_fig4, get_island_geo_fig4, ahupuaa_sf = ahupuaa_sf_fig4),
+  islands_krige_fig4
+)
+
+# Lānaʻi: exact name from data, wider coastal band for point display
+lanai_name_exact <- unique(chem_master$island)[
+  normalize_isl(unique(chem_master$island)) == "lanai"
+]
+geo_fig4_lanai <- get_island_geo_fig4(lanai_name_exact, ahupuaa_sf_fig4, band_km = 5)
+
+# Uniform panel extents: center each island in a 90 km × 65 km box
+# Store limits positionally to avoid encoding-mismatch lookups
+fig4_lim_list <- c(
+  lapply(islands_krige_fig4, \(i) get_uniform_limits_fig4(geo_fig4[[i]])),
+  list(get_uniform_limits_fig4(geo_fig4_lanai))
+)
+names(fig4_lim_list) <- c(islands_krige_fig4, "lanai_raw")
+
+# Compute kriging surfaces — file-cached per island × nutrient.
+# Delete the RDS files in output/model_objects/ to force a rerun.
+vars_fig4_order <- c("NO3NO2", "PO4", "SiO2", "NH3")
+krige_cache_fig4 <- list()
+
+for (isl in islands_krige_fig4) {
+  for (vr in vars_fig4_order) {
+    key      <- paste0(gsub("[^A-Za-z]", "", isl), "_", vr)
+    rds_path <- here::here("output", "model_objects",
+                           paste0("fig4_krige_", key, ".rds"))
+    if (file.exists(rds_path)) {
+      krige_cache_fig4[[key]] <- readRDS(rds_path)
+    } else {
+      kd <- compute_krige_data_fig4(chem_master, isl, vr, geo_fig4[[isl]])
+      saveRDS(kd, rds_path)
+      krige_cache_fig4[[key]] <- kd
+    }
+  }
+}
+cat("Kriging surfaces ready:", length(krige_cache_fig4), "island x nutrient combinations\n")
+```
+
+```{r}
+#| label: fig4-assemble
+#| fig-width: 10
+#| fig-height: 10
+#| fig-cap: "**Figure 4. Spatial distribution of coastal nutrient concentrations following the March 2026 Kona Low.** Rows: NO\\u2083+NO\\u2082, PO\\u2084, SiO\\u2082, NH\\u2084 (µmol L\\u207b\\u00b9). Columns: O\\u02bbuahu, Maui, Moloka\\u02bci, L\\u0101na\\u02bci. All panels share the same 90\\u202fkm\\u202f×\\u202f65\\u202fkm UTM extent, centered on each island. O\\u02bbuahu, Maui, and Moloka\\u02bci: ordinary kriging on log\\u2081p-transformed concentrations (spherical variogram; minimum range = island diagonal/5; 3\\u202fkm coastal band; 250\\u202fm grid; sample-coverage masking prevents extrapolation into unsurveyed coast). L\\u0101na\\u02bci: raw sample locations only (n\\u202f=\\u202f20, insufficient for kriging). Scale bars at bottom-left of each panel. Filled circles = individual sample locations, colored on the same scale as the kriging surface. Color scale shared across all islands within each nutrient row. Moran\\u2019s I (§sec-spatial-patterns) confirms that NO\\u2083+NO\\u2082 and SiO\\u2082 show significant spatial clustering (watershed-scale coherence), whereas NH\\u2084 does not."
+
+island_display_fig4 <- c("O'ahu", "Maui", "Moloka'i", "L\u0101na'i")
+island_keys_fig4    <- c("O'ahu", "Maui", "Moloka'i", lanai_name_exact)
+isl_zooms_fig4      <- c("O'ahu" = 11L, "Maui" = 11L, "Moloka'i" = 11L)
+nutrient_row_lbl <- c("NO\u2083+NO\u2082", "PO\u2084", "SiO\u2082", "NH\u2084")
+
+# ── Row-by-row assembly: guarantees each colorbar aligns exactly with its row ─
+# Each row = 4 island panels + 1 colorbar strip, assembled with cowplot.
+# Distance scale bar shown only on the bottom row (NH4).
+
+rows_fig4 <- list()
+for (ri in seq_along(vars_fig4_order)) {
+  vr         <- vars_fig4_order[ri]
+  meta       <- fig4_meta[[vr]]
+  show_scale <- (ri == length(vars_fig4_order))   # bottom row only
+
+  row_plots <- list()
+  for (ci in seq_along(island_keys_fig4)) {
+    isl        <- island_keys_fig4[ci]
+    show_title <- (ri == 1)
+    is_lanai   <- (ci == 4)
+    lim        <- fig4_lim_list[[ci]]
+
+    if (is_lanai) {
+      p <- make_lanai_panel_fig4(
+        chem_master, vr, geo_fig4_lanai, meta, lim,
+        tile_zoom = 12, show_island_label = show_title,
+        island_label = island_display_fig4[ci], show_scale = show_scale
+      )
+    } else {
+      key  <- paste0(gsub("[^A-Za-z]", "", isl), "_", vr)
+      kd   <- krige_cache_fig4[[key]]
+      geo  <- geo_fig4[[isl]]
+      zoom <- isl_zooms_fig4[[isl]]
+      p <- make_krige_panel_fig4(
+        kd, geo, meta, lim,
+        tile_zoom = zoom, show_island_label = show_title,
+        island_label = island_display_fig4[ci], show_scale = show_scale
+      )
+    }
+    row_plots[[ci]] <- p
+  }
+
+  cb <- make_cb_strip_fig4(meta)
+
+  # Row label as a dedicated narrow panel — keeps all 4 island panels equal width.
+  # Adding the label directly to the O'ahu panel would steal horizontal space,
+  # causing coord_sf to shrink its N/S extent via aspect-ratio enforcement.
+  row_lbl <- cowplot::ggdraw() +
+    cowplot::draw_label(
+      nutrient_row_lbl[ri],
+      angle = 90, fontface = "bold", size = 8.5, colour = "gray10"
+    ) +
+    ggplot2::theme(plot.background = ggplot2::element_rect(fill = "white", colour = NA))
+
+  # Assemble one row: label | 4 island panels | colorbar
+  # rel_widths[6] = 0.22 gives the colorbar ~5% of figure width — wide enough to see PO4
+  rows_fig4[[ri]] <- cowplot::plot_grid(
+    plotlist = c(list(row_lbl), row_plots, list(cb)),
+    ncol = 6, nrow = 1,
+    rel_widths = c(0.07, 1, 1, 1, 1, 0.22),
+    align = "h", axis = "tb"
+  )
+}
+
+# Stack 4 rows; add white background to the entire assembled figure
+fig4_pub <- cowplot::plot_grid(
+  plotlist = rows_fig4,
+  ncol = 1, nrow = 4,
+  align = "v", axis = "lr"
+) +
+  ggplot2::theme(plot.background = ggplot2::element_rect(fill = "white", colour = NA))
+
+save_fig(fig4_pub, "fig4_spatial_nutrients", width = 11, height = 9.5)
+fig4_pub
+```
 
 ---
 
