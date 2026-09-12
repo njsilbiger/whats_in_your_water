@@ -1,0 +1,17 @@
+variable,process,scale,source,transformation,missingness
+chirps_storm_cumulative_mm,Storm rainfall (event exposure),~5 km pixel,"CHIRPS (CHC), Mar 10-31 2026",none,4%
+total_cfs_march,Storm discharge,Ahupuaʻa (gauge ≤15 km),USGS gauges Mar 2026,log10,63%
+mean_gwetroot,Antecedent soil wetness,Island,NASA POWER GWETROOT,none,0%
+dist_to_stream_mouth_m,Terrestrial connectivity (stream proximity),Sample,OpenStreetMap stream mouths,log,0%
+mean_slope_deg,Watershed topography,Ahupuaʻa,NASA SRTM v3 (elevatr),none,1%
+mean_ksat_um_s,Soil saturated hydraulic conductivity,Ahupuaʻa,USDA SSURGO (soilDB),log,3%
+cess_exposure_idx,Cesspool exposure (distance-decay),Sample,HCPT layer 32 + DOH OSDS 2010,log1p,0%
+dist_to_nearest_cesspool_m,Cesspool proximity,Sample,HCPT layer 32 + DOH OSDS 2010,log,3%
+n_cess_1km,Cesspool abundance (1 km buffer),Sample,HCPT layer 32 + DOH OSDS 2010,log1p,0%
+cesspool_density_per_km2,Cesspool density,Ahupuaʻa,HCPT layer 32 + DOH OSDS 2010,log1p,10%
+pct_agriculture,Agricultural land cover,Ahupuaʻa,NOAA C-CAP (classes 6-7),none,1%
+pct_impervious,Impervious/developed cover,Ahupuaʻa,NOAA C-CAP (classes 2-4),none,1%
+pop_density_km2,Population density,Ahupuaʻa,US Census ACS 2022,log,1%
+dist_to_nearest_npdes_m,Distance to permitted discharge,Sample,US EPA ECHO 2025,log,0%
+fetch_mean_km,Coastal wave exposure / flushing,Sample,Fetch computation,none,0%
+hs_mean_m,Significant wave height,Sample,WW3 PacIOOS,none,0%

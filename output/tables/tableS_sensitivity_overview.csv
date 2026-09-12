@@ -1,0 +1,10 @@
+Specification,dev_expl,cess_b,cess_p,sign_consistent
+"Primary: log(NOx), all (n=611)",59.7,0.141,0.0299,positive
+sqrt transform (n=611),58.5,0.041,0.5966,positive
+Top 1% trimmed (n=604),57.7,0.137,0.032,positive
+Island as fixed factor (n=611),59.3,0.136,0.0427,positive
+No island term (n=611),59.7,0.141,0.0299,positive
+No spatial smooth (n=611),59.8,0.112,0.078,positive
+Without log(SiO2) (n=611),45.2,0.215,0.0052,positive
+Site-date aggregated (n=592),60.3,0.159,0.0152,positive
+Pop. density for impervious (n=611),60,0.162,0.0138,positive

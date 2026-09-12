@@ -1,0 +1,10 @@
+figure,chunk,file_stem,content,pdf,png,exported
+S1,suppfig-station-fold-changes,suppfig_station_fold_changes_mar2026,"Station-level fold enrichment (Hui, Mar 2026)",TRUE,TRUE,✓
+S2,step10-variograms,figS2_variograms,"Empirical variograms (O'ahu, Maui)",FALSE,FALSE,✗
+S3,step3-correlation-matrix,FigS_predictor_correlations,Predictor Spearman correlations / VIF,TRUE,TRUE,✓
+S4,figS-po4-nh4-models,figS_po4_nh4_comparison,Standardized effects for PO4 + NH4,TRUE,TRUE,✓
+S5,figS-si-partial-effects,figS_si_partial_effects_sig,SiO2 delivery-model partial effects,TRUE,TRUE,✓
+S6,fig6-variance-partition,figS6_variance_partition,Variance partitioning by driver group,TRUE,TRUE,✓
+S7,step18-obs-pred-plot,figS7_loio_obs_pred,Leave-one-island-out CV: observed vs predicted,TRUE,TRUE,✓
+S8,step19-rf-performance,figS8_rf_vs_gam_loao,RF vs GAM LOAO spatial CV R^2,TRUE,TRUE,✓
+S9,step19-rf-importance,figS9_rf_importance,RF permutation variable importance,TRUE,TRUE,✓

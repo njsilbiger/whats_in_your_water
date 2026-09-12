@@ -368,7 +368,7 @@ If Bayesian models: compare nested models with LOO and calculate changes in Baye
 
 M0 = random/spatial effects only → M1 = M0 + hydrology → M2 = M1 + watershed connectivity → M3 = M2 + anthropogenic → M4 = M3 + coastal dilution
 
-**Figure S3 candidate (moved to supplementary):** Stacked/grouped variance figure for four nutrients. Figure 6 in the main text is now the interaction marginal-effects plot (Step 21 / fig6-interaction-effects chunk).
+**Figure S6 (supplementary):** Stacked/grouped variance figure for four nutrients. Figure 6 in the main text is now the interaction marginal-effects plot (Step 21 / fig6-interaction-effects chunk).
 
 | Response | Hydrology | Connectivity | Human | Coastal | Residual |
 |---|---|---|---|---|---|
@@ -505,10 +505,25 @@ Report n samples, n sites, n ahupuaʻa, n islands for every primary model.
 | 4 | Spatial distributions of four nutrients | Coastal nutrient exposure was highly heterogeneous and nutrient-specific |
 | 5 | Standardized coefficient/effect-size plot for four nutrient models (nox_M_int as primary for NOx, includes interaction rows with dashed lines) | Physical connectivity determines delivery; human land use explains additional N/P enrichment |
 | **6** | **Interaction marginal-effects plot: Rainfall × Cesspool (Panel A) + Rainfall × Agriculture (Panel B) for NO₃+NO₂** | **Extreme rainfall conditionally amplifies coastal N where anthropogenic sources are denser — core mechanism for primary title** |
-| S3 | Variance partitioning by driver group (moved to supplementary) | Connectivity block dominates Si; Human block adds ~4–8 pp for N/P |
+
+**Supplementary figure inventory (renumbered 2026-09-12, in document order):**
+
+| Fig | Chunk label | Content |
+|---|---|---|
+| S1 | `suppfig-station-fold-changes` | Station-level fold enrichment (Hui, March 2026) |
+| S2 | `step10-variograms` | Empirical variograms (Oʻahu, Maui) |
+| S3 | `step3-correlation-matrix` | Predictor Spearman correlations / VIF |
+| S4 | `figS-po4-nh4-models` | Standardized effects for PO₄ + NH₄ |
+| S5 | `figS-si-partial-effects` | SiO₂ delivery-model partial effects |
+| S6 | `fig6-variance-partition` | Variance partitioning by driver group (connectivity dominates Si; human block adds ~4–8 pp for N/P) |
+| S7 | `step18-obs-pred-plot` | Leave-one-island-out CV: observed vs predicted |
+| S8 | `step19-rf-performance` | RF vs GAM LOAO spatial CV R² |
+| S9 | `step19-rf-importance` | RF permutation variable importance |
+
+Note: the earlier three-way "S1"/"S2" caption collision is resolved. Chunk label `fig6-variance-partition` is legacy (predates renumbering) but renders manuscript **Figure S6** and exports to `figS6_variance_partition.*`. Three plot-only chunks were dropped in the 2026-09-12 dedup (`step11-si-effects`, `step19-rf-pdp`, `step19-rf-obs-pred`); the per-nutrient coefficient *plots* were removed as duplicates of Figure 5 / Supp S4–S5 (their numeric tables were consolidated into Table 3).
 
 **Figure 6 export:** `output/main_figures/fig6_interactions.pdf` + `.png` (8 × 4.5 in)
-**Figure S3 export:** `output/supplement/figS3_variance_partition.pdf` + `.png` (7 × 5 in)
+**Figure S6 export:** `output/supplement/figS6_variance_partition.pdf` + `.png` (7 × 5 in)
 
 **Figure 6 technical notes:**
 - Both panels y-axis capped at 78 µmol L⁻¹ (99th pct of observed NO₃+NO₂; log-scale position 4.36). Tick marks displayed in µmol L⁻¹ (log-spaced) via `scale_y_continuous(breaks = log(...), labels = ...)`.
@@ -551,7 +566,7 @@ Save them in the diagnostics folder
 
 **Table 2:** Data source and predictor table (Variable, Process represented, Spatial scale, Source, Transformation, Missingness).
 
-**Table 3:** Primary model results (standardized estimate, 95% interval, p-value or posterior probability, model R², spatial CV R²).
+**Table 3:** Primary model results (standardized estimate, 95% interval, p-value or posterior probability, model R², spatial CV R²). Implemented as the consolidated chunk `table3-coefficients` (in §sec-effect-sizes, right after the response-specific sample-size table), built from `fig5_coefs`: one wide table of β [95% CI] (`*` = CI excludes zero) covering all four primary models (SiO₂ delivery + NO₃+NO₂/PO₄/NH₄ interaction). Replaces the three former per-nutrient coefficient tables (`step12/13/14-*-coefficients`).
 
 **Supplementary table:** Sensitivity-analysis results.
 
