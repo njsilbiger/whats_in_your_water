@@ -189,6 +189,23 @@ and calibration slope for all four nutrients. A random forest was fit per nutrie
 response, spatial CV, permutation importance) purely for the applied hotspot-prediction question —
 not for causal inference.
 
+**Nitrogen isotopes (δ¹⁵N).** A small subset of samples (*n* = 113; paired δ¹⁸O for only
+*n* = 16) was also analyzed for nitrate δ¹⁵N, providing an independent, source-specific
+check on the cesspool and agriculture signals identified in the landscape models. All 108
+samples with δ¹⁵N matched to the chemistry table (not pre-filtered by salinity) were
+classified probabilistically among four nitrogen end-members using a univariate Bayesian
+classifier with literature-derived Gaussian priors on δ¹⁵N: agricultural/synthetic
+fertilizer N (−4 to +4‰), other organic matter/natural soil N (≈ −2 to +9‰),
+marine/background-ocean nitrate (≈ +4 to +7‰, deep-ocean average ≈ +5.5‰), and
+cesspool/wastewater N (≈ +10 to +25‰) (Kendall 1998; Xue et al. 2009; Amato et al. 2016).
+Because δ¹⁵N alone cannot formally resolve more than two end-members, and because these
+prior ranges are literature values rather than parameters fit to our data, independent
+Salinity, land-use, and nutrient data were used afterward purely to validate — not to
+train — the classification; in particular, measured Salinity (never shown to the
+classifier) tests whether the resulting "marine" class actually recovers background-ocean
+conditions. Hawaiʻi-specific wastewater δ¹⁵N values (Dailer et al. 2010; Amato et al. 2016) informed the upper
+end of the cesspool/wastewater prior.
+
 **Sensitivity analyses.** Primary NO₃+NO₂ results were re-estimated under alternative
 transformations, with/without extreme observations, with/without island terms, with/without the
 spatial smooth, with/without log(SiO₂), under site-date aggregation, under alternative cesspool and
@@ -317,6 +334,58 @@ magnitude across transformations, island handling, aggregation, and land-use met
 (@tbl-sensitivity). It weakened under a sqrt transform (p = 0.60) and without the spatial smooth
 (p = 0.078), and — as expected — strengthened when log(SiO₂) was omitted (β = 0.215, p = 0.005),
 confirming that delivery and source are partially collinear and must be modeled jointly.
+
+### δ¹⁵N isotopes corroborate the land-use contrasts in a small subsample
+
+A subset of 108 samples with paired δ¹⁵N (of 113 collected; 5 could not be matched to the
+main chemistry table) provides an independent, source-specific cross-check on the cesspool
+and agriculture effects identified above (@fig-iso-raw). On raw δ¹⁵N — not detrended against
+any concentration model — both effects held in the expected directions, controlling for
+island: δ¹⁵N decreased with % agricultural land cover (β = −4.1‰ per unit, *p* = 0.033),
+consistent with a synthetic-fertilizer-influenced nitrogen pool, and increased with the
+cesspool exposure index (β = +0.45‰ per log-unit, *p* = 0.049), consistent with a
+sewage/animal-waste signature. Storm-influenced samples were also modestly more enriched
+than marine-background samples (median 9.1‰ vs. 8.2‰; Wilcoxon *p* = 0.013).
+
+Classifying all 108 samples among four literature-anchored δ¹⁵N end-members
+(@fig-iso-classifier) assigned most to a "cesspool/wastewater-like" group (*n* = 37), an
+"other organic matter/soil N-like" group (*n* = 43), or a "marine/background-ocean-like"
+group (*n* = 27), with essentially none dominantly "fertilizer-like" (*n* = 1).
+
+The marine/background class is the key test of whether δ¹⁵N alone can identify
+background-ocean conditions, and it largely fails that test: isotope-assigned "marine"
+samples did not agree with the independent salinity-based classification (Fisher's exact
+test, *p* = 0.16), and measured Salinity did not differ significantly across the four
+isotope-assigned classes (Kruskal–Wallis *p* = 0.074). This is the expected consequence of
+the marine and soil-organic-N δ¹⁵N priors overlapping substantially, and it means Salinity —
+not δ¹⁵N — remains the appropriate criterion for identifying background-ocean water; we
+report it as an honest limitation of a single-isotope classifier rather than omitting it.
+
+The terrestrial contrast (cesspool- vs. soil-N-assigned samples, *n* = 80) was more
+informative and validated well against data the classifier never saw: cesspool-assigned
+samples had significantly higher independently measured cesspool exposure (median 6.5 vs.
+1.5, *p* = 0.015) and significantly lower % agriculture (median 0.2% vs. 4.6%,
+*p* = 0.0018) than soil-N-assigned samples — confirming the terrestrial split tracks real
+landscape gradients. The two classes did not differ in NO₃+NO₂ concentration (*p* = 0.66).
+A continuous test across all 108 samples told a more nuanced, nutrient-specific story: the
+posterior probability of a cesspool/wastewater source predicted NO₃+NO₂ when only island was
+controlled (β = 0.88, *p* = 0.0067), but this association was not distinguishable from zero
+once water type (storm-influenced vs. marine background) was also controlled (β = 0.43,
+*p* = 0.15) — indicating the apparent NO₃+NO₂ relationship was largely attributable to the
+storm/marine split rather than a within-group wastewater source signal. The parallel PO₄
+association was more robust: significant with island alone (β = 0.94, *p* = 0.0008) and
+remaining significant after also controlling for water type (β = 0.63, *p* = 0.021) —
+suggesting that, in this isotope subsample, the wastewater signature is carried more
+robustly by phosphate than by oxidized nitrogen, consistent with PO₄'s comparatively P-rich
+cesspool-effluent signature relative to the more diffuse (agricultural, atmospheric)
+nitrogen sources that dilute a nitrate-specific isotopic fingerprint.
+
+We treat this as corroborating, not independent-confirmatory, evidence: the isotope
+subsample (*n* = 108) is much smaller than the 611-sample NO₃+NO₂ model, a single isotope
+cannot formally separate more than two sources, and the marine/background class in
+particular is not reliably recoverable from δ¹⁵N alone given its overlap with soil-organic
+N. The paired δ¹⁸O subsample (*n* = 16) is too sparse for a formal dual-isotope mixing model
+and is not analyzed further here.
 
 ## Discussion
 
@@ -462,6 +531,10 @@ read_tbl("tableS_sensitivity_overview.csv") |>
 ![**Figure S8.** RF vs. GAM leave-one-island-out spatial cross-validation R² for all four nutrients. GAM values are from the primary models (Step 18); for NO₃+NO₂ this is the interaction model (R² = 0.376). RF (with island as a categorical predictor) achieves R² = 0.445 for NO₃+NO₂ and outperforms the GAM for all four nutrients, reflecting the RF's ability to capture non-linear effects without explicit specification. Variable importance reflects predictive contribution and should not be interpreted causally.](output/supplement/figS8_rf_vs_gam_loao.png){#fig-rf-perf}
 
 ![**Figure S9.** Permutation variable importance for all four random forests. Importance is the mean decrease in R² when a predictor's values are randomly permuted across out-of-bag samples (larger = more important). Colors mark predictor groups from the pre-registered conceptual framework. Variable importance reflects predictive contribution and must not be interpreted as causal attribution — correlated predictors share importance (e.g. island and cesspool exposure index are likely positively correlated).](output/supplement/figS9_rf_importance.png){#fig-rf-import}
+
+![**Figure S10.** Raw δ¹⁵N (‰) versus (A) the cesspool exposure index (log1p scale) and (B) % agricultural land cover, for the 108-sample isotope subset, colored by island (Lānaʻi's single point excluded from the fitted trend line for visual clarity). Black lines are OLS fits pooled across islands; coefficients reported in-text control for island as a fixed effect. δ¹⁵N decreases with agriculture and increases with cesspool exposure, consistent with synthetic-fertilizer and sewage/wastewater nitrogen signatures, respectively (Kendall 1998; Xue et al. 2009).](output/supplement/figS10_isotope_raw.png){#fig-iso-raw}
+
+![**Figure S11.** External validation of the δ¹⁵N Bayesian source classification, applied to all 108 isotope samples (not pre-filtered by salinity) using four end-members: agriculture/fertilizer, other organic matter/soil N, marine/background ocean, and cesspool/wastewater. (A) Independently measured cesspool exposure index and (B) % agriculture by assigned isotopic source class (boxplots with individual samples jittered, colored by island); cesspool-assigned samples have significantly higher cesspool exposure and significantly lower % agriculture than soil-N-assigned samples. (C) Measured Salinity by assigned class, with the independent 34 PSU storm/marine threshold shown as a dashed line: Salinity does not differ significantly across classes (Kruskal–Wallis *p* = 0.074), showing that the isotope-assigned "marine/background ocean" class does not reliably recover background-ocean conditions — the marine and soil-organic-N δ¹⁵N priors overlap too much for a single isotope to separate them, so Salinity remains the appropriate marine/terrestrial criterion. (D) Posterior probability of a cesspool/wastewater source versus log(PO₄); the association is positive and remains significant after controlling for island and water type (β = 0.63, *p* = 0.021), whereas the parallel association with NO₃+NO₂ loses significance once water type is controlled (*p* = 0.15; not shown), indicating that association was driven by the storm/marine split rather than a within-group source signal.](output/supplement/figS11_isotope_classifier.png){#fig-iso-classifier}
 
 ## Data and code availability
 

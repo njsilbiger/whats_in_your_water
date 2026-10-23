@@ -67,6 +67,7 @@ library(gt)
 library(patchwork)
 library(cowplot)
 library(ggrepel)
+library(ggh4x)      # coloured facet strips for Figure 5 effect-size plot
 
 # ── Spatial ───────────────────────────────────────────────────────────────────
 library(sf)
@@ -3068,6 +3069,53 @@ tibble(
 ```
 
 ```{r}
+#| label: step12-nox-loio-interaction-robustness
+
+# Leave-one-island-out robustness of the two amplification interactions in nox_M_int
+# (identical formula, identical cesspool metric z_log_cess_exposure). Referenced by
+# @tbl-loio in manuscript_kona_low.qmd. This refits the full interaction model on
+# nox_primary dropping each island in turn, plus the all-four-island baseline.
+extract_int_coefs <- function(m) {
+  s <- summary(m)$p.table
+  tibble(
+    cess_b = s["z_chirps_storm_cumulative_mm:z_log_cess_exposure", "Estimate"],
+    cess_p = s["z_chirps_storm_cumulative_mm:z_log_cess_exposure", "Pr(>|t|)"],
+    ag_b   = s["z_chirps_storm_cumulative_mm:z_pct_agriculture",   "Estimate"],
+    ag_p   = s["z_chirps_storm_cumulative_mm:z_pct_agriculture",   "Pr(>|t|)"]
+  )
+}
+
+loio_int_specs <- list(
+  "All 4 islands"  = NA_character_,
+  "Excl. O'ahu"    = "O'ahu",
+  "Excl. Maui"     = "Maui",
+  "Excl. Moloka'i" = "Moloka'i",
+  "Excl. Lanai"    = "Lanai"
+)
+names(loio_int_specs)[5] <- paste0("Excl. L", "\u0101", "na'i")
+loio_int_specs[[5]] <- paste0("L", "\u0101", "na'i")
+
+loio_int_tbl <- map_dfr(names(loio_int_specs), function(nm) {
+  excl <- loio_int_specs[[nm]]
+  dd <- if (is.na(excl)) nox_primary else filter(nox_primary, island != excl)
+  m  <- if (is.na(excl)) nox_M_int else gam(formula(nox_M_int), data = dd, method = "REML")
+  bind_cols(tibble(Specification = nm, n = nrow(dd)), extract_int_coefs(m))
+}) |>
+  mutate(
+    cess_sig = if_else(cess_p < 0.05, "*", ""),
+    ag_sig   = if_else(ag_p   < 0.05, "*", "")
+  ) |>
+  select(Specification, n, cess_b, cess_p, cess_sig, ag_b, ag_p, ag_sig)
+
+loio_int_tbl |>
+  knitr::kable(digits = 3, caption = paste(
+    "Leave-one-island-out robustness of the rainfall x cesspool and",
+    "rainfall x agriculture interactions in the primary NO3+NO2 model (nox_M_int)."),
+    col.names = c("Specification", "n", "Rain x cesspool beta", "p", "",
+                  "Rain x agriculture beta", "p", ""))
+```
+
+```{r}
 #| label: step12-nox-coefficients
 
 coef_ci <- function(model, label) {
@@ -3748,14 +3796,44 @@ tbl3 |>
 
 ```{r}
 #| label: fig5-nox-primary
-#| fig-width: 6.5
+#| fig-width: 7
 #| fig-height: 5.5
-#| fig-cap: "**Figure 5.** Standardized fixed effects on NO₃+NO₂ from the four-island model, reordered by effect size within each mechanistic group. Filled circles mark effects whose 95% CI excludes zero; open circles mark non-significant effects. Predictors are grouped by mechanism: Terrestrial delivery (log SiO₂, a tracer of land-to-sea connectivity), Hydrologic forcing (storm rainfall), Watershed transport (topography and soil properties), Anthropogenic sources (cesspool, agricultural and impervious land cover, wastewater outfalls), Coastal dilution (wave exposure), and the two significant interaction terms showing that extreme rainfall conditionally amplifies coastal NO₃+NO₂ enrichment where anthropogenic sources are denser. Island/ahupuaʻa random effects and spatial smooth are not shown."
+#| fig-cap: "**Figure 5.** Standardized fixed effects on NO₃+NO₂ from the four-island model, reordered by effect size within each mechanistic group (coloured strips, left). Filled points mark effects whose 95% CI excludes zero; open points mark effects whose CI includes zero. Groups: Terrestrial delivery (log SiO₂, a tracer of land-to-sea connectivity), Hydrologic forcing (storm rainfall), Watershed transport (topography and soil properties), Anthropogenic sources (cesspool exposure, agricultural and impervious land cover, distance to wastewater outfalls), Coastal dilution (wave exposure), and Rainfall × Anthropogenic (the two significant interaction terms). Island/ahupuaʻa random effects and the spatial smooth are included in the model but not shown."
 
-# Define colour palette and group levels
+# Define colour palette and group levels — one colour per mechanistic group,
+# carried through the facet strips, points, and CI lines (cf. lay-summary
+# effect-size graphics; colours chosen to be distinguishable in grayscale).
 nut_cols <- c(SiO2 = "#1565C0", NO3NO2 = "#C62828", PO4 = "#2E7D32", NH4 = "#E65100")
 group_levels <- c("Terrestrial delivery", "Hydrologic forcing", "Watershed transport",
                   "Anthropogenic", "Coastal dilution", "Rainfall × Anthropogenic")
+group_colors <- c(
+  "Terrestrial delivery"     = "#8C510A",
+  "Hydrologic forcing"       = "#1976D2",
+  "Watershed transport"      = "#2E7D32",
+  "Anthropogenic"            = "#7B1FA2",
+  "Coastal dilution"         = "#00897B",
+  "Rainfall × Anthropogenic" = "#C62828"
+)
+
+# Plain-language predictor labels for this figure only (Table 3 keeps the
+# compact pred_label strings). Wording is deliberately literal about what each
+# variable measures and its units/direction (e.g. "distance to X", not
+# "closer to X") so the sign of the effect cannot be mis-read.
+fig5_relabel <- c(
+  "log(SiO₂)"                    = "Silica (SiO2) — terrestrial-water tracer",
+  "Storm rainfall"                    = "Storm rainfall (cumulative)",
+  "log(Dist stream)"                  = "Distance to stream mouth (log)",
+  "Slope"                             = "Watershed slope",
+  "log(Ksat)"                         = "Soil permeability, Ksat (log)",
+  "% agriculture"                     = "% agriculture",
+  "% impervious"                      = "% impervious surface",
+  "log(Cesspool exposure idx.)"       = "Cesspool exposure index (log)",
+  "log(Dist NPDES)"                   = "Distance to wastewater outfall (log)",
+  "Wave fetch"                        = "Wave fetch (open-water exposure)",
+  "Wave height"                       = "Wave height",
+  "Rainfall × Cesspool"               = "Rainfall \u00d7 cesspool exposure",
+  "Rainfall × Agriculture"            = "Rainfall \u00d7 agriculture"
+)
 
 # Prepare Si data (used later for the Supplementary Si partial-effects figure)
 si_fig_df <- fig5_coefs |>
@@ -3777,31 +3855,52 @@ nox_fig_df <- fig5_coefs |>
     sig          = if_else(lwr > 0 | upr < 0, "sig", "ns")
   ) |>
   arrange(Group, desc(abs(est))) |>
-  mutate(Predictor = fct_inorder(Predictor))
+  mutate(Predictor = fct_inorder(Predictor)) |>
+  mutate(Predictor = fct_relabel(Predictor, ~ unname(fig5_relabel[.x])))
 
-# MAIN FIGURE 5: NO3+NO2 only
-fig5_new <- ggplot(nox_fig_df, aes(est, Predictor, shape = sig)) +
-  geom_vline(xintercept = 0, linetype = 2, colour = "grey60", linewidth = 0.4) +
-  geom_pointrange(aes(xmin = lwr, xmax = upr),
-                  colour = "#C62828",
-                  position = position_dodge(width = 0.65), linewidth = 0.6) +
-  facet_grid(Group ~ ., scales = "free_y", space = "free_y", switch = "y") +
-  scale_shape_manual(values = c(sig = 19, ns = 1), guide = "none") +
+# Facet strip colours must follow the (dropped) Group factor level order
+nox_group_order <- levels(droplevels(nox_fig_df$Group))
+
+# MAIN FIGURE 5: NO3+NO2 only — coloured by mechanistic group, point shape
+# encodes statistical significance (filled = CI excludes zero).
+fig5_new <- ggplot(nox_fig_df, aes(est, Predictor, colour = Group, shape = sig)) +
+  geom_vline(xintercept = 0, linetype = 2, colour = "grey45", linewidth = 0.45) +
+  geom_pointrange(aes(xmin = lwr, xmax = upr), linewidth = 0.9, fatten = 8) +
+  ggh4x::facet_grid2(
+    Group ~ ., scales = "free_y", space = "free_y", switch = "y",
+    strip = ggh4x::strip_themed(
+      background_y = ggh4x::elem_list_rect(fill = group_colors[nox_group_order]),
+      text_y       = ggh4x::elem_list_text(colour = "white", face = "bold", size = 9.5)
+    )
+  ) +
+  scale_colour_manual(values = group_colors, guide = "none") +
+  scale_shape_manual(
+    values = c(sig = 16, ns = 1), name = NULL,
+    labels = c(sig = "95% CI excludes zero", ns = "95% CI includes zero")
+  ) +
   scale_x_continuous(breaks = seq(-0.5, 1.0, by = 0.25)) +
-  labs(x = "Standardized effect (±95% CI)", 
-       y = NULL) +
+  coord_cartesian(clip = "off") +
+  labs(
+    x = expression("Standardized effect on log(NO"[3]*"+NO"[2]*")"~("\u00b1 95% CI")),
+    y = NULL,
+    caption = "←  Lower NO3+NO2                    Higher NO3+NO2  →"
+  ) +
+  guides(shape = guide_legend(override.aes = list(colour = "grey30", linewidth = 0))) +
   theme_kona_paper() +
   theme(
-    strip.placement = "outside",
-    strip.text.y.left = element_text(
-      angle = 0, face = "bold", size = 10, margin = margin(r = 8, l = 8)
-    ),
-    strip.background.y = element_rect(fill = "grey85", colour = "grey50", linewidth = 0.4),
+    strip.placement    = "outside",
+    strip.text.y.left  = element_text(angle = 0, margin = margin(r = 6, l = 6, t = 5, b = 5)),
     panel.grid.major.y = element_blank(),
-    panel.spacing.y = unit(0.3, "lines")
+    panel.spacing.y    = unit(0.35, "lines"),
+    axis.text.y        = element_text(size = rel(0.82)),
+    legend.position    = "top",
+    legend.justification = "right",
+    plot.caption       = element_text(hjust = 0.5, size = rel(0.85),
+                                      colour = "grey35", face = "italic",
+                                      margin = margin(t = 8))
   )
 
-save_fig(fig5_new, "fig5_nox_primary", width = 6.5, height = 5.5)
+save_fig(fig5_new, "fig5_nox_primary", width = 7, height = 5.5)
 fig5_new
 ```
 
@@ -3819,66 +3918,85 @@ The PO₄ and NH₄ response models show contrasting patterns relative to the Si
 #| label: figS-po4-nh4-models
 #| fig-width: 7
 #| fig-height: 6.5
-#| fig-cap: "**Supplementary Figure S4.** Standardized fixed effects on PO₄ (green) and NH₄ (orange) from the four-island models, overlaid in a single figure and reordered by effect size within each mechanistic group. Grey boxes around group labels are consistent with Figure 5. Filled circles mark significant effects; open circles mark non-significant effects. Unlike the strong NO₃+NO₂ response to cesspool exposure (Figure 5), PO₄ shows moderate affinity to anthropogenic predictors and NH₄ shows minimal statistical linkage to any watershed-scale variable, suggesting reduced-inorganic nitrogen is controlled by finer-scale or shorter-timescale biogeochemical processes rather than landscape factors. The color legend distinguishes nutrient responses: orange dots spread across predictors indicate NH₄'s weak predictability, while green dots cluster at key anthropogenic predictors for PO₄."
+#| fig-cap: "**Supplementary Figure S4.** Standardized fixed effects on PO₄ (circles) and NH₄ (triangles) from the four-island models, overlaid in a single figure and reordered by effect size within each mechanistic group. Coloured strips at left follow the same mechanistic grouping and colour key as Figure 5. Filled markers mark effects whose 95% CI excludes zero; open markers mark effects whose CI includes zero. Unlike the strong NO₃+NO₂ response to cesspool exposure (Figure 5), PO₄ shows a moderate anthropogenic signal (cesspool exposure, % agriculture) while NH₄ shows minimal statistical linkage to any watershed-scale variable, consistent with reduced-inorganic nitrogen being controlled by finer-scale or shorter-timescale biogeochemical processes rather than landscape factors."
 
-# (Data prepared earlier: po4_fig_df, nh4_fig_df)
-
-# Prepare PO₄ data
+# Prepare PO4 data (same mechanistic groups/colours as Figure 5)
 po4_fig_df <- fig5_coefs |>
   filter(model == "PO4") |>
   mutate(
-    Predictor    = factor(pred_label[term], levels = pred_label[term]),
-    Group        = factor(pred_group[term], levels = group_levels),
-    sig          = if_else(lwr > 0 | upr < 0, "sig", "ns")
+    Predictor = factor(pred_label[term], levels = pred_label[term]),
+    Group     = factor(pred_group[term], levels = group_levels),
+    sig       = if_else(lwr > 0 | upr < 0, "sig", "ns")
   ) |>
   arrange(Group, desc(abs(est))) |>
-  mutate(Predictor = fct_inorder(Predictor))
+  mutate(Predictor = fct_inorder(Predictor)) |>
+  mutate(Predictor = fct_relabel(Predictor, ~ unname(fig5_relabel[.x])))
 
-# Prepare NH₄ data
+# Prepare NH4 data
 nh4_fig_df <- fig5_coefs |>
   filter(model == "NH4") |>
   mutate(
-    Predictor    = factor(pred_label[term], levels = pred_label[term]),
-    Group        = factor(pred_group[term], levels = group_levels),
-    sig          = if_else(lwr > 0 | upr < 0, "sig", "ns")
+    Predictor = factor(pred_label[term], levels = pred_label[term]),
+    Group     = factor(pred_group[term], levels = group_levels),
+    sig       = if_else(lwr > 0 | upr < 0, "sig", "ns")
   ) |>
   arrange(Group, desc(abs(est))) |>
-  mutate(Predictor = fct_inorder(Predictor))
+  mutate(Predictor = fct_inorder(Predictor)) |>
+  mutate(Predictor = fct_relabel(Predictor, ~ unname(fig5_relabel[.x])))
 
-# Combine PO₄ and NH₄ data for overlay plotting
+# Both nutrients share the same predictor set as the NO3NO2 model (nox_fig_df,
+# Figure 5), so use its ordering as the common y-axis for direct comparison.
+shared_levels <- levels(nox_fig_df$Predictor)
+po4_fig_df <- po4_fig_df |> mutate(Predictor = factor(Predictor, levels = shared_levels))
+nh4_fig_df <- nh4_fig_df |> mutate(Predictor = factor(Predictor, levels = shared_levels))
+
+# Combine for overlay plotting; nutrient identity now carried by point shape
+# (circle = PO4, triangle = NH4) since colour already encodes mechanistic group.
 po4_nh4_combined <- bind_rows(
   po4_fig_df |> mutate(nutrient_type = "PO4"),
   nh4_fig_df |> mutate(nutrient_type = "NH4")
+) |>
+  mutate(shape_sig = paste(nutrient_type, sig))
+
+shape_vals <- c("PO4 sig" = 16, "PO4 ns" = 1, "NH4 sig" = 17, "NH4 ns" = 2)
+shape_labs <- c(
+  "PO4 sig" = "PO[4]~(CI~excl.~0)", "PO4 ns" = "PO[4]~(CI~incl.~0)",
+  "NH4 sig" = "NH[4]~(CI~excl.~0)", "NH4 ns" = "NH[4]~(CI~incl.~0)"
 )
 
-# Define colors for the two nutrients
-nut_cols_2 <- c(PO4 = "#2E7D32", NH4 = "#E65100")
+s4_group_order <- levels(droplevels(po4_nh4_combined$Group))
 
-# Create combined figure with color legend
-fig_s_po4_nh4 <- ggplot(po4_nh4_combined, aes(est, Predictor, colour = nutrient_type, shape = sig)) +
-  geom_vline(xintercept = 0, linetype = 2, colour = "grey60", linewidth = 0.4) +
-  geom_pointrange(aes(xmin = lwr, xmax = upr),
-                  position = position_dodge(width = 0.65), linewidth = 0.6) +
-  facet_grid(Group ~ ., scales = "free_y", space = "free_y", switch = "y") +
-  scale_colour_manual(
-    values = nut_cols_2,
-    labels = c(PO4 = expression(PO[4]), NH4 = expression(NH[4])),
-    name = "Nutrient"
+# Coloured-strip overlay: same group palette/strip design as Figure 5, with
+# PO4 vs NH4 distinguished by marker shape and significance by fill.
+fig_s_po4_nh4 <- ggplot(po4_nh4_combined, aes(est, Predictor, colour = Group, shape = shape_sig)) +
+  geom_vline(xintercept = 0, linetype = 2, colour = "grey45", linewidth = 0.45) +
+  geom_pointrange(aes(xmin = lwr, xmax = upr, group = nutrient_type),
+                  position = position_dodge(width = 0.55),
+                  linewidth = 0.8, fatten = 3) +
+  ggh4x::facet_grid2(
+    Group ~ ., scales = "free_y", space = "free_y", switch = "y",
+    strip = ggh4x::strip_themed(
+      background_y = ggh4x::elem_list_rect(fill = group_colors[s4_group_order]),
+      text_y       = ggh4x::elem_list_text(colour = "white", face = "bold", size = 9.5)
+    )
   ) +
-  scale_shape_manual(values = c(sig = 19, ns = 1), guide = "none") +
+  scale_colour_manual(values = group_colors, guide = "none") +
+  scale_shape_manual(
+    values = shape_vals, name = NULL,
+    labels = function(x) parse(text = shape_labs[x])
+  ) +
   scale_x_continuous(breaks = seq(-0.5, 1.0, by = 0.25)) +
-  labs(x = "Standardized effect (±95% CI)", 
-       y = NULL) +
+  coord_cartesian(clip = "off") +
+  labs(x = "Standardized effect (\u00b1 95% CI)", y = NULL) +
+  guides(shape = guide_legend(override.aes = list(colour = "grey30"), nrow = 2)) +
   theme_kona_paper() +
   theme(
-    strip.placement = "outside",
-    strip.text.y.left = element_text(
-      angle = 0, face = "bold", size = 10, margin = margin(r = 8, l = 8)
-    ),
-    strip.background.y = element_rect(fill = "grey85", colour = "grey50", linewidth = 0.4),
+    strip.placement    = "outside",
+    strip.text.y.left  = element_text(angle = 0, margin = margin(r = 6, l = 6, t = 5, b = 5)),
     panel.grid.major.y = element_blank(),
-    panel.spacing.y = unit(0.3, "lines"),
-    legend.position = "top"
+    panel.spacing.y    = unit(0.35, "lines"),
+    axis.text.y        = element_text(size = rel(0.82)),
+    legend.position    = "top"
   )
 
 save_supp(fig_s_po4_nh4, "figS_po4_nh4_comparison", width = 7, height = 6.5)
@@ -4491,19 +4609,27 @@ y_obs_99 <- quantile(nox_primary$log_NO3NO2, 0.99, na.rm = TRUE)  # ≈ 4.36
 
 make_f6_panel <- function(dat, rug_x_col, y_lab, tag_lbl, line_labels,
                            y_max = y_obs_99) {
+  # Place each line's direct label at its right-hand endpoint, but clamp the
+  # label's y-position to stay inside the visible (capped) panel — otherwise
+  # the "High (Q90)" label for lines that extrapolate above y_max gets pushed
+  # above the plot area and is clipped out of the exported figure.
   lab_dat <- dat |>
     group_by(Moderator) |>
     slice_max(rain_mm, n = 1) |>
-    mutate(label = line_labels[as.integer(Moderator)])
+    ungroup() |>
+    mutate(
+      label   = line_labels[as.integer(Moderator)],
+      label_y = pmin(pred, y_max * 0.95)
+    )
   ggplot(dat, aes(rain_mm, pred, colour = Moderator, linetype = Moderator)) +
     geom_rug(data = nox_primary, aes(x = nox_primary[[rug_x_col]], y = NULL),
              sides = "b", alpha = 0.20, linewidth = 0.3, inherit.aes = FALSE) +
     geom_line(linewidth = 1.0, show.legend = FALSE) +
     ggrepel::geom_text_repel(
-      data = lab_dat, aes(label = label, colour = Moderator),
+      data = lab_dat, aes(x = rain_mm, y = label_y, label = label, colour = Moderator),
       direction = "y", nudge_x = 30, hjust = 0, size = 2.5,
       show.legend = FALSE, segment.size = 0.3, segment.alpha = 0.4,
-      max.overlaps = 20
+      max.overlaps = 20, ylim = c(NA, y_max * 0.97), inherit.aes = FALSE
     ) +
     scale_colour_manual(values = int_col) +
     scale_linetype_manual(values = int_lty) +
@@ -5057,12 +5183,13 @@ left_join(loao_tbl, loio_tbl, by = "Nutrient") |>
 #| fig-height: 7
 #| fig-cap: "**Supplementary Figure S7 — Leave-one-island-out CV: observed vs predicted.** Each panel shows one nutrient (log scale). Points represent individual samples from the *held-out* island; predictions use only the fixed-effect landscape covariates (island RE, ahupuaʻa RE, and 2D spatial smooth all excluded). The 1:1 line is solid grey; a dashed LOESS trend shows systematic bias. Colour encodes island. All four nutrients produce negative overall LOIO R², indicating that fixed-effect landscape predictors alone cannot recover island-level concentration baselines. This result underscores that island-level random effects capture substantial variation driven by unmeasured factors such as bedrock geology, aquifer characteristics, and island-scale land-use context."
 
-island_pal <- c(
-  "O\u02BBahu"     = "#1565C0",
-  "Maui"           = "#2E7D32",
-  "Moloka\u02BBi"  = "#E65100",
-  "L\u0101na\u02BBi" = "#6A1B9A"
-)
+# NOTE: do NOT redefine island_pal here. A previous version of this chunk reassigned
+# it using the okina character (U+02BB) instead of the plain apostrophe (U+0027) used
+# in the canonical palette (global-constants chunk) and in the normalized island factor
+# levels. Because island_pal is a global object, that reassignment silently broke colour
+# matching for every island-coloured figure rendered afterward (O'ahu/Moloka'i/Lana'i
+# all fell back to NA/grey; only "Maui", which has no apostrophe, still matched). The
+# canonical island_pal from the global-constants chunk is reused as-is.
 
 nutrient_labels <- c(
   Si  = "log(SiO\u2082)",
@@ -6127,6 +6254,427 @@ Two Step 23 checks require going back to raw inputs and are documented but not i
 
 ---
 
+## Nitrogen isotopes: d15N source corroboration {#sec-isotopes}
+
+> A small d15N subsample (n = 113; d18O for only n = 16) was collected for a subset of
+> sites. This section (1) tests raw d15N against the primary cesspool-exposure and
+> agriculture predictors, and (2) builds a literature-anchored Bayesian source-probability
+> classifier to ask whether individual samples look isotopically more like cesspool/
+> wastewater N, agricultural/fertilizer N, or other (soil/background) organic N. This is a
+> secondary, corroborating line of evidence -- n is far smaller than the 611-sample NO3+NO2
+> model -- and is reported as exploratory, not as independent proof of source attribution.
+
+```{r}
+#| label: step-iso-load-merge
+
+# data/isotope.csv: sample_id, N15 (per mil vs air), O18 (per mil vs VSMOW; n=16 only).
+# sample_id in the isotope file carries inconsistent whitespace (e.g. "OA 58"); strip it
+# before joining. cess_exposure_idx already exists in chem_master (cesspool-exposure-index
+# chunk, computed earlier in this document).
+iso_raw <- read_csv(here("data", "isotope.csv"), show_col_types = FALSE) |>
+  mutate(sample_id_norm = str_replace_all(sample_id, "\\s+", ""))
+
+chem_iso_join <- chem_master |>
+  mutate(sample_id_norm = str_replace_all(sample_id, "\\s+", ""))
+
+iso_d <- inner_join(iso_raw, chem_iso_join, by = "sample_id_norm", suffix = c("_iso", ""))
+
+unmatched_iso <- iso_raw$sample_id[!(iso_raw$sample_id_norm %in% chem_iso_join$sample_id_norm)]
+
+cat("Isotope samples:", nrow(iso_raw), "| matched to chem_master:", nrow(iso_d),
+    "| unmatched:", length(unmatched_iso), "\n")
+cat("Unmatched sample_id values (not present in chem_master; not guessed/corrected):\n")
+print(unmatched_iso)
+
+iso_d <- iso_d |>
+  mutate(
+    sal_group = factor(if_else(Salinity > 34, "Marine background", "Storm-influenced"),
+                        levels = c("Storm-influenced", "Marine background")),
+    island = str_replace_all(island, "[\u2018\u2019\u02bc]", "'"),
+    island = factor(island, levels = island_levels),
+    log_cess_exposure = log1p(cess_exposure_idx)
+  )
+
+iso_d |> count(island, sal_group) |> knitr::kable(caption = "N15 subsample coverage by island and water type.")
+```
+
+```{r}
+#| label: step-iso-raw-models
+
+# Raw delta15N vs the two primary human land-use predictors (island-controlled OLS).
+# Deliberately NOT a residual/detrended analysis -- tests raw isotope values directly.
+m_iso_cess <- lm(N15 ~ log_cess_exposure + island, data = iso_d)
+m_iso_ag   <- lm(N15 ~ pct_agriculture + island, data = iso_d)
+m_iso_both <- lm(N15 ~ log_cess_exposure + pct_agriculture + island, data = iso_d)
+
+bind_rows(
+  tidy(m_iso_cess) |> filter(term == "log_cess_exposure") |> mutate(model = "+ island"),
+  tidy(m_iso_ag)   |> filter(term == "pct_agriculture")   |> mutate(model = "+ island"),
+  tidy(m_iso_both) |> filter(term %in% c("log_cess_exposure", "pct_agriculture")) |> mutate(model = "+ island, mutually adjusted")
+) |>
+  select(model, term, estimate, std.error, p.value) |>
+  knitr::kable(digits = 3, caption = "Raw N15 ~ cesspool exposure / agriculture, island-controlled OLS (n = 108).")
+
+wilcox_sal <- wilcox.test(N15 ~ sal_group, data = iso_d)
+cat("\nStorm-influenced vs marine-background N15 (Wilcoxon): W =", wilcox_sal$statistic,
+    ", p =", signif(wilcox_sal$p.value, 3), "\n")
+iso_d |> group_by(sal_group) |> summarise(n = n(), median_N15 = median(N15), IQR_N15 = IQR(N15))
+```
+
+```{r}
+#| label: fig-iso-raw
+#| fig-cap: "delta15N vs cesspool exposure index and percent agriculture"
+
+iso_plot_d <- iso_d |> filter(island != "Lāna'i")  # single Lana'i point
+
+p_iso_cess <- ggplot(iso_plot_d, aes(x = cess_exposure_idx, y = N15, color = island)) +
+  geom_point(size = 1.8, alpha = 0.85) +
+  scale_x_continuous(trans = "log1p", breaks = c(0, 1, 5, 20, 75)) +
+  scale_color_manual(values = island_pal, name = NULL) +
+  geom_smooth(aes(group = 1), method = "lm", se = TRUE, color = "gray15", linewidth = 0.6) +
+  labs(x = "Cesspool exposure index", y = expression(delta^{15}*"N (\u2030)"), tag = "A") +
+  theme_kona_paper() + theme(legend.position = "none")
+
+p_iso_ag <- ggplot(iso_plot_d, aes(x = pct_agriculture, y = N15, color = island)) +
+  geom_point(size = 1.8, alpha = 0.85) +
+  scale_x_continuous(labels = scales::percent) +
+  scale_color_manual(values = island_pal, name = NULL) +
+  geom_smooth(aes(group = 1), method = "lm", se = TRUE, color = "gray15", linewidth = 0.6) +
+  labs(x = "% agriculture (ahupua'a)", y = NULL, tag = "B") +
+  theme_kona_paper()
+
+fig_iso_raw <- p_iso_cess + p_iso_ag + plot_layout(widths = c(1, 1.15))
+save_supp(fig_iso_raw, "figS10_isotope_raw", width = 8, height = 4)
+fig_iso_raw
+```
+
+### Bayesian source-probability classification {#sec-iso-bayes}
+
+A single isotope cannot formally resolve more than two sources (the mixing system is
+underdetermined past n+1 end-members for n isotopes), so this is a likelihood-based
+classification against literature-reported d15N end-member distributions, not a formal
+multi-isotope mixing model (e.g. SIAR/MixSIAR). The classifier is applied to **all 108**
+isotope samples (not pre-filtered by salinity), with a fourth end-member added for
+background/marine nitrate, so that "background ocean conditions" is one of the candidate
+classes the data can be assigned to rather than being imposed beforehand by a salinity
+threshold. Because the marine and soil-organic-N priors overlap substantially in d15N
+space, the measured Salinity (never shown to the classifier) is used below purely to
+check whether the resulting "marine" class is isotopically recoverable at all.
+
+End-member d15N priors (mean, SD; per mil vs air N2), drawn from the isotope-hydrology
+literature and Hawai'i-specific wastewater studies:
+
+```{r}
+#| label: step-iso-bayes-classifier
+
+# delta15N end-member literature sources:
+#  - Agriculture / synthetic fertilizer: -4 to +4 per mil (mean ~0-2, modeled as N(2,3))
+#      Kendall (1998), In: Kendall & McDonnell (eds.) Isotope Tracers in Catchment
+#      Hydrology, Elsevier, pp. 519-576; Xue et al. (2009) Water Research 43:1159-1170.
+#  - Other organic matter / natural soil N: ~ -2 to +9 per mil (modeled as N(6, 2.5))
+#      Kendall (1998); Xue et al. (2009).
+#  - Marine / background ocean nitrate: ~ +4 to +7 per mil, deep-ocean average ~5.5
+#      (modeled as N(5.5, 1.5)); Amato et al. (2016) PLoS ONE 11:e0165825. This range
+#      overlaps heavily with soil-organic N, so delta15N alone cannot cleanly separate
+#      the two -- addressed via the independent Salinity check below.
+#  - Cesspool / wastewater: ~ +10 to +20-25 per mil (modeled as N(15, 5))
+#      Kendall (1998); Xue et al. (2009); Hawai'i-specific: Dailer et al. (2010) Marine
+#      Pollution Bulletin 60:655-671 (Maui algal tissue delta15N 8-19 per mil, up to 50.1
+#      per mil, near cesspool/wastewater-injection sites); Amato et al. (2016) PLoS ONE
+#      11:e0165825 (dissolved wastewater-derived N +7 to +93 per mil).
+# Equal (uninformative) priors across the four classes; posterior computed via Bayes' rule
+# with Gaussian likelihoods. This is a probabilistic classification against literature
+# anchors, NOT a model fit to these data, so the external validation below (independent
+# Salinity, cesspool exposure, agriculture, and nutrient concentration) is not circular.
+
+endmembers <- tibble::tribble(
+  ~class,                           ~mu, ~sigma,
+  "Agriculture (fertilizer)",         2,      3,
+  "Other organic matter (soil N)",    6,    2.5,
+  "Marine/background ocean",        5.5,    1.5,
+  "Cesspool/wastewater",             15,      5
+)
+
+lik  <- sapply(seq_len(nrow(endmembers)), \(k) dnorm(iso_d$N15, endmembers$mu[k], endmembers$sigma[k]))
+post <- lik / rowSums(lik)
+colnames(post) <- endmembers$class
+iso_d <- bind_cols(iso_d, as_tibble(post))
+iso_d$assigned_source <- endmembers$class[apply(post, 1, which.max)]
+
+cat("Full isotope sample: n =", nrow(iso_d), "\n")
+count(iso_d, assigned_source) |> knitr::kable(caption = "Dominant isotopic source class, all 108 samples.")
+```
+
+```{r}
+#| label: step-iso-bayes-validation
+
+# External validation using data never shown to the classifier.
+
+# (1) Does the isotope-assigned "marine/background ocean" class recover the independent
+# salinity-threshold classification (Salinity > 34 PSU)? This is the key check on whether
+# delta15N alone can identify background-ocean conditions.
+iso_d$assigned_broad <- if_else(iso_d$assigned_source == "Marine/background ocean",
+                                 "Marine (isotope)", "Terrestrial (isotope)")
+xtab_marine <- table(iso_d$assigned_broad, iso_d$sal_group)
+fisher_marine <- fisher.test(xtab_marine)
+kw_sal <- kruskal.test(Salinity ~ assigned_source, data = iso_d)
+
+print(xtab_marine)
+cat("Fisher's exact test, isotope-marine vs salinity-marine agreement: p =",
+    signif(fisher_marine$p.value, 3), "\n")
+cat("Kruskal-Wallis, Salinity ~ assigned_source (4 classes): p =", signif(kw_sal$p.value, 3), "\n")
+cat("(Both non-significant -> as expected given the marine/soil-N prior overlap, the\n",
+    " isotope classifier does not reliably recover background-ocean conditions on its own;\n",
+    " Salinity, not delta15N, remains the appropriate criterion for that distinction.)\n")
+
+# (2) Terrestrial source contrast (cesspool vs soil-N) against independent land-use and
+# nutrient data, now across all 108 samples rather than a salinity-prefiltered subset.
+terr_two <- iso_d |> filter(assigned_source %in% c("Cesspool/wastewater", "Other organic matter (soil N)"))
+
+val_cess <- wilcox.test(cess_exposure_idx ~ assigned_source, data = terr_two)
+val_ag   <- wilcox.test(pct_agriculture ~ assigned_source, data = terr_two)
+val_nox  <- wilcox.test(NO3NO2 ~ assigned_source, data = terr_two)
+
+terr_two |>
+  group_by(assigned_source) |>
+  summarise(n = n(),
+            median_cess_exposure = median(cess_exposure_idx),
+            median_pct_ag        = median(pct_agriculture),
+            median_NOx           = median(NO3NO2, na.rm = TRUE)) |>
+  knitr::kable(digits = 3, caption = "External validation: independent land-use and NOx, cesspool- vs soil-N-assigned (all 108 samples).")
+
+cat("Wilcoxon, cesspool exposure (cesspool- vs soil-N-assigned): p =", signif(val_cess$p.value, 3), "\n")
+cat("Wilcoxon, % agriculture    (cesspool- vs soil-N-assigned): p =", signif(val_ag$p.value, 3), "\n")
+cat("Wilcoxon, NO3+NO2          (cesspool- vs soil-N-assigned): p =", signif(val_nox$p.value, 3), "\n")
+
+# (3) Continuous posterior probability of cesspool source vs NOx/PO4, island-controlled,
+# with and without the sal_group (storm vs marine) control to check whether any
+# association is driven by the storm/marine split rather than a within-group source signal.
+m_piso_nox       <- lm(log(NO3NO2 + 0.01) ~ `Cesspool/wastewater` + island, data = iso_d)
+m_piso_po4       <- lm(log(PO4 + 0.01)    ~ `Cesspool/wastewater` + island, data = iso_d)
+m_piso_nox_salct <- lm(log(NO3NO2 + 0.01) ~ `Cesspool/wastewater` + island + sal_group, data = iso_d)
+m_piso_po4_salct <- lm(log(PO4 + 0.01)    ~ `Cesspool/wastewater` + island + sal_group, data = iso_d)
+
+cat("\np(cesspool) -> log(NO3+NO2), island-controlled:\n")
+print(tidy(m_piso_nox) |> filter(term == "`Cesspool/wastewater`"))
+cat("\np(cesspool) -> log(NO3+NO2), island + water-type controlled:\n")
+print(tidy(m_piso_nox_salct) |> filter(term == "`Cesspool/wastewater`"))
+cat("\np(cesspool) -> log(PO4), island-controlled:\n")
+print(tidy(m_piso_po4) |> filter(term == "`Cesspool/wastewater`"))
+cat("\np(cesspool) -> log(PO4), island + water-type controlled:\n")
+print(tidy(m_piso_po4_salct) |> filter(term == "`Cesspool/wastewater`"))
+```
+
+```{r}
+#| label: fig-iso-classifier-validation
+#| fig-cap: "External validation of the N15 Bayesian source classification (all 108 samples)"
+
+iso_d_plot <- iso_d |> filter(island != "L\u0101na'i")
+
+pV1 <- ggplot(iso_d_plot, aes(x = assigned_source, y = cess_exposure_idx)) +
+  geom_boxplot(outlier.shape = NA, fill = "gray92", color = "gray30") +
+  geom_jitter(aes(color = island), width = 0.15, alpha = 0.8, size = 1.8) +
+  scale_y_continuous(trans = "log1p") +
+  scale_color_manual(values = island_pal, name = NULL) +
+  labs(x = NULL, y = "Cesspool exposure index", tag = "A") +
+  theme_kona_paper() +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1), legend.position = "none")
+
+pV2 <- ggplot(iso_d_plot, aes(x = assigned_source, y = pct_agriculture)) +
+  geom_boxplot(outlier.shape = NA, fill = "gray92", color = "gray30") +
+  geom_jitter(aes(color = island), width = 0.15, alpha = 0.8, size = 1.8) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_color_manual(values = island_pal, name = NULL) +
+  labs(x = NULL, y = "% agriculture", tag = "B") +
+  theme_kona_paper() +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1))
+
+pV3 <- ggplot(iso_d_plot, aes(x = assigned_source, y = Salinity)) +
+  geom_boxplot(outlier.shape = NA, fill = "gray92", color = "gray30") +
+  geom_jitter(aes(color = island), width = 0.15, alpha = 0.8, size = 1.8) +
+  geom_hline(yintercept = 34, linetype = "dashed", color = "gray40") +
+  scale_color_manual(values = island_pal, name = NULL) +
+  labs(x = NULL, y = "Salinity (PSU)", tag = "C") +
+  theme_kona_paper() +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1), legend.position = "none")
+
+pV4 <- ggplot(iso_d_plot, aes(x = `Cesspool/wastewater`, y = log(PO4 + 0.01))) +
+  geom_point(aes(color = island), size = 1.8, alpha = 0.85) +
+  scale_color_manual(values = island_pal, name = NULL) +
+  geom_smooth(method = "lm", se = TRUE, color = "gray15", linewidth = 0.6) +
+  labs(x = "Posterior probability of cesspool/wastewater source",
+       y = expression("log(PO"[4]*")"), tag = "D") +
+  theme_kona_paper() + theme(legend.position = "none")
+
+fig_iso_classifier <- (pV1 | pV2) / (pV3 | pV4)
+save_supp(fig_iso_classifier, "figS11_isotope_classifier", width = 8.5, height = 7.5)
+fig_iso_classifier
+```
+
+## Optical fDOM tracers: cesspool-exposure validation {#sec-fdom}
+
+> `data/WIYW_FDOM_data_QCed.csv` provides fluorescent dissolved organic matter (fDOM)
+> indices for a subset of samples (298 unique `sample_id`, 288 matched to `chem_master`,
+> all four islands, all collected within the Mar 28-Apr 8 community-sampling window).
+> Three index families are relevant here: terrestrial-source tracers (`Lignin`, `FI`,
+> `HIX`, `CobleA`/`CobleC`, `M_to_C`), fresh/microbial production (`CobleB`, `CobleT`,
+> `BIX`), and anthropogenic-source tracers -- `Optical_Brighteners` (fluorescent
+> whitening agents from laundry detergent, a chemical fingerprint specific to
+> greywater/wastewater) and the petroleum/diesel indices (`Petroleum`, `dieselBandII`,
+> `JP5_empirical`, `JP5_normalized`, `Diesel_Chen`, a distinct urban-runoff/fuel
+> pathway). `Optical_Brighteners` is used below as an independent chemical validation
+> of the GIS-derived `cess_exposure_idx`: unlike cesspool density or distance, it is a
+> direct measurement of wastewater-indicator chemistry in the sampled water itself.
+
+```{r}
+#| label: step-fdom-load-qc
+
+# Load and QC the fDOM panel before any merge/model use.
+#
+# (1) Duplicate sample_id: OA288 was run twice (5/3 and 5/22) -- a technical lab
+#     re-run of the same physical sample, not two independent samples. Resolved by
+#     averaging the numeric columns across runs.
+# (2) Ratio-index QC: BIX, HIX, FI, and M_to_C are all ratios of specific Coble-peak
+#     emission intensities. When total fluorescence signal is near the instrument
+#     blank (the water is very weakly fluorescent overall), these ratios become
+#     numerically unstable -- the existing QCed file already sets many such rows to
+#     NA, but a handful slipped through with implausible values (FI = 0 is not a
+#     physically meaningful fluorescence index; BIX/HIX far outside their typical
+#     0-1 / 0-20 ranges). Flagged and set to NA here using an explicit, documented
+#     rule rather than silently used downstream.
+
+fdom_raw <- read_csv(here("data", "WIYW_FDOM_data_QCed.csv"), show_col_types = FALSE) |>
+  select(-matches("^\\.\\.\\.")) |>
+  rename(sample_id = `Sample ID`, run_date = `Run Date`)
+
+cat("Raw fDOM rows:", nrow(fdom_raw), "| unique sample_id:", n_distinct(fdom_raw$sample_id), "\n")
+
+dupe_ids <- fdom_raw$sample_id[duplicated(fdom_raw$sample_id)]
+cat("Duplicate sample_id (averaged across lab runs):", paste(dupe_ids, collapse = ", "), "\n")
+fdom_raw |> filter(sample_id %in% dupe_ids) |>
+  knitr::kable(digits = 3, caption = "Raw duplicate-run rows averaged below.")
+
+num_cols <- fdom_raw |> select(where(is.numeric)) |> names()
+
+fdom_clean <- fdom_raw |>
+  group_by(sample_id) |>
+  summarise(
+    run_date = paste(unique(run_date), collapse = "; "),
+    across(all_of(num_cols), ~ mean(.x, na.rm = TRUE)),
+    .groups = "drop"
+  ) |>
+  mutate(
+    total_signal = CobleA + CobleB + CobleC + CobleM + CobleT,
+    bad_ratio = total_signal < 0.01 |
+      (!is.na(FI)  & FI  < 0.3) |
+      (!is.na(BIX) & BIX > 5)   |
+      (!is.na(HIX) & HIX > 20)
+  )
+
+cat("\nAdditional rows flagged for ratio-index QC (BIX/HIX/FI/M_to_C -> NA):\n")
+fdom_clean |> filter(bad_ratio) |>
+  select(sample_id, total_signal, BIX, HIX, FI, M_to_C) |>
+  knitr::kable(digits = 3)
+
+fdom_clean <- fdom_clean |>
+  mutate(across(c(BIX, HIX, FI, M_to_C), ~ if_else(bad_ratio, NA_real_, .x))) |>
+  select(-total_signal, -bad_ratio)
+
+# Merge to chem_master (sample_id matches directly; strip whitespace defensively,
+# consistent with the isotope-merge pattern above).
+fdom_join <- fdom_clean |> mutate(sample_id_norm = str_replace_all(sample_id, "\\s+", ""))
+chem_fdom_join <- chem_master |> mutate(sample_id_norm = str_replace_all(sample_id, "\\s+", ""))
+
+fdom_d <- inner_join(fdom_join, chem_fdom_join, by = "sample_id_norm", suffix = c("_fdom", ""))
+
+unmatched_fdom <- fdom_join$sample_id[!(fdom_join$sample_id_norm %in% chem_fdom_join$sample_id_norm)]
+cat("\nfDOM samples:", nrow(fdom_clean), "| matched to chem_master:", nrow(fdom_d),
+    "| unmatched:", length(unmatched_fdom), "\n")
+
+fdom_d <- fdom_d |>
+  mutate(
+    island = normalize_island(island),
+    island = factor(island, levels = island_levels),
+    sal_group = factor(if_else(Salinity > 34, "Marine background", "Storm-influenced"),
+                        levels = c("Storm-influenced", "Marine background")),
+    log_cess_exposure = log1p(cess_exposure_idx),
+    log_brighteners   = log(Optical_Brighteners + 0.0005)  # DL/2 of min detectable (0.001)
+  )
+
+fdom_d |> count(island, sal_group) |> knitr::kable(caption = "fDOM subsample coverage by island and water type.")
+```
+
+```{r}
+#| label: step-fdom-cesspool-model
+
+# Optical_Brighteners ~ cesspool exposure: a direct chemical validation of the
+# GIS-derived cess_exposure_idx used throughout the nutrient models. Three nested
+# specifications, mirroring the isotope-validation logic above:
+#   (1) raw relationship, island-controlled
+#   (2) + log(SiO2): does brighteners track cesspool exposure *beyond* generic
+#       terrestrial-water delivery (the same adjustment used for NOx/PO4 in Step 12)?
+#   (3) + pct_agriculture: specificity check -- brighteners are a detergent/greywater
+#       signature, not an agricultural one, so this term should not absorb the
+#       cesspool effect.
+m_fdom_cess       <- lm(log_brighteners ~ log_cess_exposure + island, data = fdom_d)
+m_fdom_cess_si    <- lm(log_brighteners ~ log_cess_exposure + log(SiO2) + island, data = fdom_d)
+m_fdom_cess_si_ag <- lm(log_brighteners ~ log_cess_exposure + log(SiO2) + pct_agriculture + island,
+                         data = fdom_d)
+
+bind_rows(
+  tidy(m_fdom_cess)       |> filter(term == "log_cess_exposure") |> mutate(model = "+ island"),
+  tidy(m_fdom_cess_si)    |> filter(term == "log_cess_exposure") |> mutate(model = "+ island, log(SiO2)"),
+  tidy(m_fdom_cess_si_ag) |> filter(term == "log_cess_exposure") |> mutate(model = "+ island, log(SiO2), % agriculture")
+) |>
+  select(model, estimate, std.error, statistic, p.value) |>
+  knitr::kable(digits = 3, caption = paste0(
+    "log(Optical_Brighteners) ~ log1p(cesspool exposure), n = ", nrow(fdom_d),
+    ". Coefficient on the cesspool-exposure term across nested adjustments."))
+
+cat("\nModel R^2: raw =", round(summary(m_fdom_cess)$r.squared, 3),
+    "| + log(SiO2) =", round(summary(m_fdom_cess_si)$r.squared, 3),
+    "| + log(SiO2) + agriculture =", round(summary(m_fdom_cess_si_ag)$r.squared, 3), "\n")
+```
+
+```{r}
+#| label: fig-fdom-brighteners
+#| fig-cap: "Optical brighteners (laundry-detergent fluorescence) vs cesspool exposure and terrestrial delivery (SiO2)"
+
+fdom_plot_d <- fdom_d |> filter(island != "Lāna'i")  # single Lana'i point
+
+p_fdom_cess <- ggplot(fdom_plot_d, aes(x = cess_exposure_idx, y = Optical_Brighteners, color = island)) +
+  geom_point(size = 1.8, alpha = 0.85) +
+  scale_x_continuous(trans = "log1p", breaks = c(0, 1, 5, 20, 75)) +
+  scale_color_manual(values = island_pal, name = NULL) +
+  geom_smooth(aes(group = 1), method = "lm", se = TRUE, color = "gray15", linewidth = 0.6) +
+  labs(x = "Cesspool exposure index", y = "Optical brighteners (fDOM index)", tag = "A") +
+  theme_kona_paper() + theme(legend.position = "none")
+
+p_fdom_si <- ggplot(fdom_plot_d, aes(x = SiO2, y = Optical_Brighteners, color = island)) +
+  geom_point(size = 1.8, alpha = 0.85) +
+  scale_x_continuous(trans = "log10") +
+  scale_color_manual(values = island_pal, name = NULL) +
+  geom_smooth(aes(group = 1), method = "lm", se = TRUE, color = "gray15", linewidth = 0.6) +
+  labs(x = expression(SiO[2]~(mu*mol~L^{-1})), y = NULL, tag = "B") +
+  theme_kona_paper()
+
+fig_fdom_brighteners <- p_fdom_cess + p_fdom_si + plot_layout(widths = c(1, 1.15))
+save_supp(fig_fdom_brighteners, "figS12_fdom_brighteners", width = 8, height = 4)
+fig_fdom_brighteners
+```
+
+Optical brighteners are a chemically specific detergent/greywater fingerprint rather
+than a generic organic-matter or land-use signature, so a positive, island-controlled
+relationship with `cess_exposure_idx` that survives adjustment for both terrestrial
+delivery (log SiO₂) and percent agriculture would be meaningfully stronger evidence
+for the human-amplification hypothesis (Step 4/17) than the GIS-based cesspool proxy
+alone -- it is an independent chemical measurement, not a second land-use layer. Note
+the much smaller n (`r nrow(fdom_d)` vs. the full nutrient models) means this is
+corroborating, not primary, evidence, and the subsample is restricted to the post-storm
+window only (no pre-storm fDOM baseline exists).
+
+---
+
 # Publication Tables {#sec-tables}
 
 > **Step 28.** Table 1 (sampling summary by island), Table 2 (data source and
@@ -6246,6 +6794,7 @@ write_csv(tbl1,          file.path(tbl_dir, "table1_sampling_summary.csv"))
 write_csv(tbl2,          file.path(tbl_dir, "table2_data_sources.csv"))
 if (exists("tbl3"))          write_csv(tbl3,          file.path(tbl_dir, "table3_model_coefficients.csv"))
 if (exists("sens_overview")) write_csv(sens_overview, file.path(tbl_dir, "tableS_sensitivity_overview.csv"))
+if (exists("loio_int_tbl"))  write_csv(loio_int_tbl,  file.path(tbl_dir, "tableS_loio_interactions.csv"))
 
 cat("Tables written to", tbl_dir, ":\n",
     paste(" \u2022", list.files(tbl_dir, pattern = "\\.csv$")), sep = "\n")
@@ -6444,7 +6993,10 @@ supp_figs <- tibble::tribble(
   "S6",    "fig6-variance-partition",       "figS6_variance_partition",             "Variance partitioning by driver group",
   "S7",    "step18-obs-pred-plot",          "figS7_loio_obs_pred",                  "Leave-one-island-out CV: observed vs predicted",
   "S8",    "step19-rf-performance",         "figS8_rf_vs_gam_loao",                 "RF vs GAM LOAO spatial CV R^2",
-  "S9",    "step19-rf-importance",          "figS9_rf_importance",                  "RF permutation variable importance"
+  "S9",    "step19-rf-importance",          "figS9_rf_importance",                  "RF permutation variable importance",
+  "S10",   "fig-iso-raw",                   "figS10_isotope_raw",                   "Raw delta15N vs cesspool exposure / agriculture",
+  "S11",   "fig-iso-classifier-validation", "figS11_isotope_classifier",            "N15 Bayesian source-classifier validation",
+  "S12",   "fig-fdom-brighteners",          "figS12_fdom_brighteners",              "Optical brighteners vs cesspool exposure / SiO2"
 ) |>
   mutate(
     pdf      = file.exists(file.path(supp_dir, paste0(file_stem, ".pdf"))),
@@ -6458,7 +7010,7 @@ supp_figs |>
   select(figure, content, file_stem, exported) |>
   knitr::kable(
     caption = paste0(
-      "Supplementary figure inventory (S1\u2013S9), written to ",
+      "Supplementary figure inventory (S1\u2013S12), written to ",
       "output/supplement/supplementary_figure_list.csv. 'Exported' = both PDF and ",
       "PNG present in output/supplement/."),
     col.names = c("Figure", "Content", "File stem", "Exported"),
