@@ -1032,6 +1032,18 @@ fig2_df |>
     n_SiO2    = sum(!is.na(SiO2))
   ) |>
   knitr::kable(caption = "Samples per salinity group entering Figure 2.")
+
+
+# chem_master %>%
+#      mutate(quartiles = case_when(Salinity <30.7 ~ "Q1", 
+#                                    Salinity >= 30.7 & Salinity<33.6 ~ "Q2",
+#                                    Salinity >= 33.6 & Salinity <34.6 ~"Q3",
+#                                    Salinity >= 34.6 ~ "Q4")) %>%
+#   ggplot(aes(x = quartiles, y = PO4))+
+#   geom_violin()+
+#   geom_jitter(width = 0.2)+
+#    scale_y_continuous(trans = "log1p")
+
 ```
 
 ```{r}
@@ -1875,6 +1887,12 @@ save_supp(last_plot(), "figS2_variograms", width = 8.5, height = 4.5)
 > Ordinary kriging on log1p-transformed concentrations; 3 km coastal band; 250 m grid.
 > Kriged for Oʻahu, Maui, Molokaʻi; raw sample points for Lānaʻi (n ≈ 20, too sparse to krige).
 > Surfaces masked to sample-coverage buffers to prevent extrapolation into unsurveyed coast.
+> **Masking buffer is capped at a fixed 5 km per observation**, independent of the
+> (often much larger) variogram range used for kriging itself — see note in
+> `fig4-spatial-helpers` below. Without this cap, Maui and Molokaʻi in particular
+> had kriged color painted across multi-kilometer stretches of coastline with no
+> nearby samples (the variogram-range mask there was ~12 km per point vs. a median
+> inter-sample spacing of ~150-200 m), which misrepresented data coverage.
 
 ```{r}
 #| label: fig4-spatial-helpers
@@ -1956,7 +1974,18 @@ get_island_geo_fig4 <- function(island_name, ahupuaa_sf, band_km = 3) {
 }
 
 # ── Kriging data computation (returns pred_df + pts_all) ────────────────────
-compute_krige_data_fig4 <- function(data, island_name, var, geo, res_m = 250) {
+# mask_cap_m: maximum distance (m) from an observation at which a kriged pixel is
+# displayed. This is DELIBERATELY decoupled from min_range (the variogram range
+# used for kriging). min_range = island_diag/5 is appropriate for variogram
+# fitting (needs enough point pairs across the island) but is often far larger
+# than real sample spacing -- e.g. ~12.3 km on Maui and ~12.4 km on Molokaʻi
+# vs. a median nearest-neighbor spacing of ~150-200 m on both islands. Using
+# min_range directly as the display mask (the previous behaviour) therefore
+# painted kriged color across multi-kilometer stretches of actually-unsampled
+# coastline on those two islands. Capping the mask at a small, fixed distance
+# keeps the ethical no-extrapolation guarantee independent of island size/shape.
+compute_krige_data_fig4 <- function(data, island_name, var, geo, res_m = 250,
+                                     mask_cap_m = 5000) {
   exact_name <- unique(data$island)[
     normalize_isl(unique(data$island)) == normalize_isl(island_name)
   ]
@@ -1993,7 +2022,13 @@ compute_krige_data_fig4 <- function(data, island_name, var, geo, res_m = 250) {
   v_fit <- if (!is.null(v_auto) && v_auto$range[2] >= min_range) v_auto else
     gstat::vgm(init_psill * 0.8, "Sph", min_range, init_psill * 0.2)
 
-  sample_cov <- sf::st_buffer(sf::st_union(pts_proj), dist = min_range)
+  # Display mask: per-point buffers capped at mask_cap_m, NOT the variogram range.
+  # st_buffer() on a multipoint geometry produces the union of individual per-point
+  # disks (confirmed: NOT a convex hull/bridging shape), so this already excludes
+  # the interior of large gaps between sample clusters -- the only failure mode was
+  # the buffer radius itself being too generous (min_range, often >10 km).
+  mask_dist  <- min(min_range, mask_cap_m)
+  sample_cov <- sf::st_buffer(sf::st_union(pts_proj), dist = mask_dist)
   grid_pts   <- sf::st_make_grid(geo$coast_band, cellsize = res_m, what = "centers") |>
     sf::st_as_sf() |> sf::st_filter(geo$coast_band) |> sf::st_filter(sample_cov)
   if (nrow(grid_pts) == 0) return(list(pred_df = NULL, pts_all = pts_all,
@@ -2185,7 +2220,7 @@ cat("Kriging surfaces ready:", length(krige_cache_fig4), "island x nutrient comb
 #| label: fig4-assemble
 #| fig-width: 10
 #| fig-height: 10
-#| fig-cap: "**Figure 4. Spatial distribution of coastal nutrient concentrations following the March 2026 Kona Low.** Rows: NO₃+NO₂, PO₄, SiO₂, NH₄ (µmol L⁻¹). Columns: Oʻahu, Maui, Molokaʻi, Lānaʻi. All panels share the same 90 km × 65 km UTM extent, centered on each island. Oʻahu, Maui, and Molokaʻi: ordinary kriging on log1p-transformed concentrations (spherical variogram; minimum range = island diagonal/5; 3 km coastal band; 250 m grid; sample-coverage masking prevents extrapolation into unsurveyed coast). Lānaʻi: raw sample locations only (n = 20, insufficient for kriging). Scale bars at bottom-left of each panel. Filled circles = individual sample locations, colored on the same scale as the kriging surface. Color scale shared across all islands within each nutrient row. Moran's I (§sec-spatial-patterns) confirms that all four nutrients are significantly spatially clustered, with NO₃+NO₂ and SiO₂ showing the strongest watershed-scale coherence and NH₄ the weakest (global Moran's I ≈ 0.23 vs 0.49 for SiO₂), consistent with NH₄ being controlled at finer spatial and biogeochemical scales."
+#| fig-cap: "**Figure 4. Spatial distribution of coastal nutrient concentrations following the March 2026 Kona Low.** Rows: NO₃+NO₂, PO₄, SiO₂, NH₄ (µmol L⁻¹). Columns: Oʻahu, Maui, Molokaʻi, Lānaʻi. All panels share the same 90 km × 65 km UTM extent, centered on each island. Oʻahu, Maui, and Molokaʻi: ordinary kriging on log1p-transformed concentrations (spherical variogram; minimum range = island diagonal/5; 3 km coastal band; 250 m grid; sample-coverage masking — capped at 5 km per observation, independent of the variogram range — prevents extrapolation into unsurveyed coast). Lānaʻi: raw sample locations only (n = 20, insufficient for kriging). Scale bars at bottom-left of each panel. Filled circles = individual sample locations, colored on the same scale as the kriging surface. Color scale shared across all islands within each nutrient row. Moran's I (§sec-spatial-patterns) confirms that all four nutrients are significantly spatially clustered, with NO₃+NO₂ and SiO₂ showing the strongest watershed-scale coherence and NH₄ the weakest (global Moran's I ≈ 0.23 vs 0.49 for SiO₂), consistent with NH₄ being controlled at finer spatial and biogeochemical scales."
 
 island_display_fig4 <- c("O'ahu", "Maui", "Moloka'i", "L\u0101na'i")
 island_keys_fig4    <- c("O'ahu", "Maui", "Moloka'i", lanai_name_exact)
@@ -4005,17 +4040,18 @@ fig_s_po4_nh4
 
 ## Supplementary Figure: SiO₂ delivery model {#sec-supp-si}
 
-The SiO₂ model serves as the mechanistic baseline for terrestrial-water delivery, independent of nutrient sources (Figure 5's callout). Rather than a coefficient plot, its drivers are shown here as **partial-effect (marginal-prediction) curves**: predicted SiO₂ on its natural scale (µmol L⁻¹) across each significant predictor's observed range, holding all other predictors at their median and excluding island/ahupuaʻa random effects and the spatial smooth (population-level prediction). This reveals the *shape* of each relationship — e.g., whether the rainfall response is linear or accelerating — which a standardized-coefficient plot cannot show. Only predictors whose 95% CI excludes zero in the standardized model (`si_M_std`) are shown; slope and Ksat were not significant and are omitted.
+The SiO₂ model serves as the mechanistic baseline for terrestrial-water delivery, independent of nutrient sources (Figure 5's callout). Rather than a coefficient plot, its drivers are shown here as **partial-effect (marginal-prediction) curves**: predicted SiO₂ on its natural scale (µmol L⁻¹) across each significant predictor's full observed (min–max) range, holding all other predictors at their median and excluding island/ahupuaʻa random effects and the spatial smooth (population-level prediction). This reveals the *shape* of each relationship — e.g., whether the rainfall response is linear or accelerating — which a standardized-coefficient plot cannot show. Rug marks along the x-axis of each panel show the observed distribution of that predictor. Only predictors whose 95% CI excludes zero in the standardized model (`si_M_std`) are shown; slope and Ksat were not significant and are omitted. The same partial-effect machinery is reused immediately below for NO₃+NO₂, PO₄, and NH₄ (§sec-supp-partial-nph) so all four nutrients are visualized identically.
 
 ```{r}
 #| label: figS-si-partial-effects
 #| fig-width: 10
 #| fig-height: 6
-#| fig-cap: "**Supplementary Figure S5.** Significant partial effects of watershed and hydrologic predictors on SiO₂, from the four-island standardized model (`si_M_std`). Each panel shows the model-predicted SiO₂ concentration (µmol L⁻¹, blue line ± 95% CI ribbon) as one predictor varies across its 3rd–97th percentile range with all other predictors held at their median value; island/ahupuaʻa random effects and the spatial smooth are excluded (population-level prediction). Rug marks along the x-axis show the distribution of observed values. Panels are ordered left-to-right, top-to-bottom by |standardized effect size| (Figure 5 predictor ordering). Only the eight predictors with 95% CI excluding zero are shown; slope and Ksat (non-significant) are omitted."
+#| fig-cap: "**Supplementary Figure S5.** Significant partial effects of watershed and hydrologic predictors on SiO₂, from the four-island standardized model (`si_M_std`). Blue line ± 95% CI ribbon: model-predicted SiO₂ concentration (µmol L⁻¹) as one predictor varies across its full observed (min–max) range with all other predictors held at their median value; island/ahupuaʻa random effects and the spatial smooth are excluded (population-level prediction). Rug marks show the observed distribution of each predictor. Y-axis is log-scaled. Panels are ordered left-to-right, top-to-bottom by |standardized effect size| (Figure 5 predictor ordering). Only the eight predictors with 95% CI excluding zero are shown; slope and Ksat (non-significant) are omitted."
 
 exclude_terms <- c("s(island_f)", "s(ahupuaa_f)", "s(utm_x_km,utm_y_km)")
 
 pred_raw_map <- c(
+  z_log_SiO2 = "log_SiO2",
   z_chirps_storm_cumulative_mm = "chirps_storm_cumulative_mm",
   z_log_dist_stream_m = "log_dist_stream_m",
   z_mean_slope_deg = "mean_slope_deg",
@@ -4028,6 +4064,7 @@ pred_raw_map <- c(
   z_hs_mean_m = "hs_mean_m"
 )
 pred_disp_label <- c(
+  log_SiO2 = "log(SiO2) (\u00b5mol/L, log scale)",   # plain "2", not unicode subscript (renders as a box)
   chirps_storm_cumulative_mm = "Storm rainfall (mm)",
   log_dist_stream_m = "Dist. to stream mouth (m, log scale)",
   mean_slope_deg = "Slope (deg)",
@@ -4040,59 +4077,134 @@ pred_disp_label <- c(
   hs_mean_m = "Wave height (m)"
 )
 
+# ── Generic partial-effect engine, reused for Si/NOx/PO4/NH4 below ──────────────────
+# Predicts across each significant predictor's FULL observed (min-max) range, holding
+# every other standardized predictor at its median and excluding random-effect/spatial
+# smooth terms (population-level prediction). Returns both the fitted curve and a rug
+# data frame (observed values of each shown predictor) ready for faceting.
+make_partial_curves <- function(model, data, ref_row, sig_rawvars, n = 100) {
+  one_curve <- function(zvar, rawvar) {
+    raw_vals <- data[[rawvar]]
+    qs  <- range(raw_vals, na.rm = TRUE)
+    mu  <- mean(raw_vals, na.rm = TRUE); sdv <- sd(raw_vals, na.rm = TRUE)
+    z_rng <- (qs - mu) / sdv
+
+    grid <- ref_row[rep(1, n), ]
+    grid[[zvar]]   <- seq(z_rng[1], z_rng[2], length.out = n)
+    grid$island_f  <- data$island_f[1]
+    grid$ahupuaa_f <- data$ahupuaa_f[1]
+    grid$utm_x_km  <- median(data$utm_x_km)
+    grid$utm_y_km  <- median(data$utm_y_km)
+
+    pr <- predict(model, newdata = grid, type = "link", se.fit = TRUE, exclude = exclude_terms)
+    x_raw <- grid[[zvar]] * sdv + mu
+
+    tibble(predictor = rawvar, x = x_raw,
+           fit = exp(pr$fit), lwr = exp(pr$fit - 1.96 * pr$se.fit), upr = exp(pr$fit + 1.96 * pr$se.fit))
+  }
+
+  curve_df <- purrr::map2_dfr(names(sig_rawvars), sig_rawvars, one_curve) |>
+    mutate(predictor_label = factor(pred_disp_label[predictor], levels = pred_disp_label[sig_rawvars]))
+
+  rug_df <- data |>
+    select(all_of(unname(sig_rawvars))) |>
+    tidyr::pivot_longer(everything(), names_to = "predictor", values_to = "x") |>
+    mutate(predictor_label = factor(pred_disp_label[predictor], levels = levels(curve_df$predictor_label)))
+
+  list(curve = curve_df, rug = rug_df)
+}
+
+plot_partial_rug <- function(pd, y_label, ncol = 4) {
+  ggplot(pd$curve, aes(x, fit)) +
+    geom_ribbon(aes(ymin = lwr, ymax = upr), fill = "#1565C0", alpha = 0.25) +
+    geom_line(colour = "#1565C0", linewidth = 0.8) +
+    geom_rug(data = pd$rug, aes(x = x, y = NULL), sides = "b",
+             alpha = 0.3, colour = "grey30", linewidth = 0.3) +
+    facet_wrap(~predictor_label, scales = "free", ncol = ncol) +
+    scale_y_log10() +
+    labs(x = NULL, y = y_label) +
+    theme_kona_paper() +
+    theme(strip.text = element_text(face = "bold", size = 8.5), axis.text = element_text(size = 7))
+}
+
 # Reference row: median of every standardized predictor
 z_vars_si <- paste0("z_", si_std_vars)
 ref_row_si <- si_std |> summarise(across(all_of(z_vars_si), \(x) median(x, na.rm = TRUE)))
 
-make_si_partial <- function(zvar, rawvar, n = 100, trim = c(0.03, 0.97)) {
-  raw_vals <- si_std[[rawvar]]
-  qs <- quantile(raw_vals, trim, na.rm = TRUE)
-  mu <- mean(raw_vals, na.rm = TRUE); sdv <- sd(raw_vals, na.rm = TRUE)
-  z_rng <- (qs - mu) / sdv
-
-  grid <- ref_row_si[rep(1, n), ]
-  grid[[zvar]] <- seq(z_rng[1], z_rng[2], length.out = n)
-  grid$island_f  <- si_std$island_f[1]
-  grid$ahupuaa_f <- si_std$ahupuaa_f[1]
-  grid$utm_x_km  <- median(si_std$utm_x_km)
-  grid$utm_y_km  <- median(si_std$utm_y_km)
-
-  pr <- predict(si_M_std, newdata = grid, type = "link", se.fit = TRUE, exclude = exclude_terms)
-  x_raw <- grid[[zvar]] * sdv + mu
-
-  tibble(predictor = rawvar, x = x_raw,
-         fit = exp(pr$fit), lwr = exp(pr$fit - 1.96 * pr$se.fit), upr = exp(pr$fit + 1.96 * pr$se.fit))
-}
-
 # Only the significant Si predictors (95% CI excludes zero), ordered by |effect size|
-si_sig_terms <- si_fig_df |> filter(sig == "sig") |> arrange(desc(abs(est))) |> pull(term)
+si_sig_terms   <- si_fig_df |> filter(sig == "sig") |> arrange(desc(abs(est))) |> pull(term)
 si_sig_rawvars <- pred_raw_map[si_sig_terms]
 
-partial_df_sig <- purrr::map2_dfr(names(si_sig_rawvars), si_sig_rawvars, make_si_partial) |>
-  mutate(predictor_label = factor(pred_disp_label[predictor], levels = pred_disp_label[si_sig_rawvars]))
+si_partial <- make_partial_curves(si_M_std, si_std, ref_row_si, si_sig_rawvars)
 
-rug_df_sig <- si_std |>
-  select(all_of(unname(si_sig_rawvars))) |>
-  tidyr::pivot_longer(everything(), names_to = "predictor", values_to = "x") |>
-  mutate(predictor_label = factor(pred_disp_label[predictor], levels = levels(partial_df_sig$predictor_label)))
-
-fig_si_partial_sig <- ggplot(partial_df_sig, aes(x, fit)) +
-  geom_ribbon(aes(ymin = lwr, ymax = upr), fill = "#1565C0", alpha = 0.18) +
-  geom_line(colour = "#1565C0", linewidth = 0.8) +
-  geom_rug(data = rug_df_sig, aes(x = x, y = NULL), sides = "b", alpha = 0.25, colour = "grey30", linewidth = 0.3) +
-  facet_wrap(~predictor_label, scales = "free", ncol = 4) +
-  labs(
-    x = NULL,
-    y = expression("Predicted SiO"[2]~"(\u00b5mol L"^{-1}*")")
-  ) +
-  theme_kona_paper() +
-  theme(
-    strip.text = element_text(face = "bold", size = 8.5),
-    axis.text = element_text(size = 7)
-  )
+fig_si_partial_sig <- plot_partial_rug(si_partial, expression("Predicted SiO"[2]~"(\u00b5mol L"^{-1}*")"))
 
 save_supp(fig_si_partial_sig, "figS_si_partial_effects_sig", width = 10, height = 6)
 fig_si_partial_sig
+```
+
+## Supplementary Figure: NO₃+NO₂, PO₄, and NH₄ partial effects {#sec-supp-partial-nph}
+
+The same partial-effect machinery from the SiO₂ model above (`make_partial_curves()`/`plot_partial_rug()`) is applied to the three primary interaction models (`nox_M_int`, `po4_M_int`, `nh3_M_int`), restricted to each model's significant *main-effect* terms (95% CI excludes zero; the two rainfall interaction terms are shown separately in Figure 6, not here). Each nutrient uses its own full dataset (`nox_primary`, `po4_primary`, `nh3_primary`) and its own reference row (median of all standardized predictors), so the curves/rugs below are directly comparable to the coefficient signs and magnitudes in Figure 5.
+
+```{r}
+#| label: figS-nox-partial-effects
+#| fig-width: 9
+#| fig-height: 6
+#| fig-cap: "**Supplementary Figure S13.** Significant partial effects on NO₃+NO₂, from the primary four-island interaction model (`nox_M_int`). Blue line ± 95% CI ribbon: model-predicted NO₃+NO₂ (µmol L⁻¹) as one predictor varies across its full observed range with all other predictors held at their median value; island/ahupuaʻa random effects and the spatial smooth are excluded. Rug marks show the observed distribution of each predictor. Y-axis is log-scaled. The two significant rainfall interaction terms (Rainfall × Cesspool, Rainfall × Agriculture) are shown in Figure 6 instead of here."
+
+ref_row_nox <- nox_primary |>
+  summarise(across(all_of(paste0("z_", nox_primary_vars)), \(x) median(x, na.rm = TRUE)))
+
+nox_sig_terms   <- nox_fig_df |> filter(sig == "sig", !grepl(":", term)) |> arrange(desc(abs(est))) |> pull(term)
+nox_sig_rawvars <- pred_raw_map[nox_sig_terms]
+
+nox_partial <- make_partial_curves(nox_M_int, nox_primary, ref_row_nox, nox_sig_rawvars)
+
+fig_nox_partial_sig <- plot_partial_rug(nox_partial, expression("Predicted NO"[3]*"+NO"[2]~"(\u00b5mol L"^{-1}*")"), ncol = 3)
+
+save_supp(fig_nox_partial_sig, "figS_nox_partial_effects_sig", width = 9, height = 6)
+fig_nox_partial_sig
+```
+
+```{r}
+#| label: figS-po4-partial-effects
+#| fig-width: 9
+#| fig-height: 6
+#| fig-cap: "**Supplementary Figure S14.** Significant partial effects on PO₄, from the primary four-island interaction model (`po4_M_int`). Same construction as Supplementary Figure S13 (full-range partial-effect curves, population-level prediction, rug marks, log-scaled y-axis). Neither rainfall interaction term was significant for PO₄ (Figure 5), so all of this model's significant predictors are shown here."
+
+ref_row_po4 <- po4_primary |>
+  summarise(across(all_of(paste0("z_", nox_primary_vars)), \(x) median(x, na.rm = TRUE)))
+
+po4_sig_terms   <- po4_fig_df |> filter(sig == "sig", !grepl(":", term)) |> arrange(desc(abs(est))) |> pull(term)
+po4_sig_rawvars <- pred_raw_map[po4_sig_terms]
+
+po4_partial <- make_partial_curves(po4_M_int, po4_primary, ref_row_po4, po4_sig_rawvars)
+
+fig_po4_partial_sig <- plot_partial_rug(po4_partial, expression("Predicted PO"[4]~"(\u00b5mol L"^{-1}*")"), ncol = 3)
+
+save_supp(fig_po4_partial_sig, "figS_po4_partial_effects_sig", width = 9, height = 6)
+fig_po4_partial_sig
+```
+
+```{r}
+#| label: figS-nh4-partial-effects
+#| fig-width: 4.5
+#| fig-height: 4
+#| fig-cap: "**Supplementary Figure S15.** Significant partial effect(s) on NH₄, from the primary four-island interaction model (`nh3_M_int`). Same construction as Supplementary Figures S13-S14. log(SiO₂) is the *only* predictor whose 95% CI excludes zero for NH₄ (Figure 5) — consistent with reduced inorganic nitrogen being controlled by finer-scale or shorter-timescale biogeochemical processes rather than watershed-scale landscape variables; this single panel is the figure, not a subset of a larger one."
+
+ref_row_nh3 <- nh3_primary |>
+  summarise(across(all_of(paste0("z_", nox_primary_vars)), \(x) median(x, na.rm = TRUE)))
+
+nh4_sig_terms   <- nh4_fig_df |> filter(sig == "sig", !grepl(":", term)) |> arrange(desc(abs(est))) |> pull(term)
+nh4_sig_rawvars <- pred_raw_map[nh4_sig_terms]
+
+nh4_partial <- make_partial_curves(nh3_M_int, nh3_primary, ref_row_nh3, nh4_sig_rawvars)
+
+fig_nh4_partial_sig <- plot_partial_rug(nh4_partial, expression("Predicted NH"[4]~"(\u00b5mol L"^{-1}*")"), ncol = 1)
+
+save_supp(fig_nh4_partial_sig, "figS_nh4_partial_effects_sig", width = 4.5, height = 4)
+fig_nh4_partial_sig
 ```
 
 ## Explicit human-amplification test {#sec-amplification-test}
@@ -4664,6 +4776,78 @@ pB <- make_f6_panel(
 fig6 <- pA | pB
 fig6
 save_fig(fig6, "fig6_interactions", width = 8, height = 4.5)
+```
+
+## Supplementary Figure: Figure 6 with partial-residual data overlay {#sec-supp-fig6-points}
+
+Figure 6 above shows only the fitted marginal-effect lines, to keep the main-text panel readable. This supplementary figure overlays the underlying sample-level data as **partial residuals**: for each observation, the full-model residual (which nets out every other term, including the random effects and spatial smooth) is added back onto `nox_M_int`'s prediction evaluated at that observation's own actual rainfall *and* its own actual moderator value — not the Q10/Q50/Q90 reference values used for the lines. Points are colored by which **tercile** (bottom/middle/top third of the observed moderator) they fall into, matching the three lines. This makes the claimed slope divergence (and, in Panel B, where that divergence runs out of supporting data) directly checkable against real observations rather than taken on the model's word.
+
+```{r}
+#| label: figS-fig6-partial-residuals
+#| fig-width: 10
+#| fig-height: 4.5
+#| fig-cap: "**Supplementary Figure S16.** Figure 6 (Rainfall × Cesspool exposure and Rainfall × % agriculture marginal effects on NO₃+NO₂) with partial-residual data points overlaid, colored by moderator tercile (bottom/middle/top third of cesspool exposure or % agriculture, matching the three fitted lines). Each point's y-value is the sample's full-model residual (all other predictors, random effects, and the spatial smooth already accounted for) added back onto the model's prediction at that sample's own rainfall and moderator value. Panel B's High-tercile points are concentrated at low-to-moderate rainfall, visually confirming the caveat in Figure 6's caption: the model's steep upper-rainfall prediction for high-agriculture watersheds extrapolates into a region with little direct data support."
+
+# Partial residual for the joint (rainfall, moderator) surface -- same logic as the
+# single-predictor partial-residual helper used for Figures S5/S13-S15, generalized to
+# evaluate the prediction at the observation's own (rainfall, moderator) pair rather
+# than a single-predictor reference curve.
+make_f6_points <- function(x_z, mod_z, model = nox_M_int, data = nox_primary) {
+  nd <- as.data.frame(matrix(0, nrow(data), length(z_vars_nox), dimnames = list(NULL, z_vars_nox)))
+  nd[[x_z]]    <- data[[x_z]]
+  nd[[mod_z]]  <- data[[mod_z]]
+  nd$island_f  <- data$island_f[1]
+  nd$ahupuaa_f <- data$ahupuaa_f[1]
+  nd$utm_x_km  <- mean(data$utm_x_km, na.rm = TRUE)
+  nd$utm_y_km  <- mean(data$utm_y_km, na.rm = TRUE)
+
+  f_hat      <- predict(model, newdata = nd, exclude = excl_re_f6, newdata.guaranteed = TRUE)
+  full_resid <- data$log_NO3NO2 - fitted(model)
+
+  tibble(
+    rain_mm   = data[[x_z]] * chirps_sd + chirps_mu,
+    pred_adj  = f_hat + full_resid,
+    mod_value = data[[mod_z]]
+  )
+}
+
+tercile_cut <- function(x) {
+  cut(x, breaks = quantile(x, c(0, 1/3, 2/3, 1), na.rm = TRUE),
+      labels = c("Low (Q10)", "Median (Q50)", "High (Q90)"), include.lowest = TRUE)
+}
+
+cess_pts <- make_f6_points("z_chirps_storm_cumulative_mm", "z_log_cess_exposure") |>
+  mutate(Moderator = tercile_cut(mod_value))
+ag_pts   <- make_f6_points("z_chirps_storm_cumulative_mm", "z_pct_agriculture") |>
+  mutate(Moderator = tercile_cut(mod_value))
+
+make_f6_panel_pts <- function(dat, pts, y_lab, tag_lbl, show_legend = FALSE) {
+  ggplot(dat, aes(rain_mm, pred, colour = Moderator, linetype = Moderator)) +
+    geom_point(data = pts, aes(x = rain_mm, y = pred_adj, colour = Moderator),
+               inherit.aes = FALSE, size = 0.8, alpha = 0.25, stroke = 0) +
+    geom_line(linewidth = 1.0) +
+    scale_colour_manual(values = int_col, name = "Moderator tercile") +
+    scale_linetype_manual(values = int_lty, name = "Moderator tercile") +
+    scale_y_continuous(
+      breaks = log(c(0.5, 1, 2, 5, 10, 25, 75)),
+      labels = c("0.5", "1", "2", "5", "10", "25", "75")
+    ) +
+    coord_cartesian(ylim = c(NA, y_obs_99)) +
+    labs(x = "Cumulative storm rainfall (mm)", y = y_lab, tag = tag_lbl) +
+    theme_kona_paper() +
+    theme(legend.position = if (show_legend) "bottom" else "none")
+}
+
+pA_pts <- make_f6_panel_pts(
+  cess_dat, cess_pts, expression("Predicted"~NO[3]+NO[2]~(mu*mol~L^{-1})), "A"
+)
+pB_pts <- make_f6_panel_pts(
+  ag_dat, ag_pts, NULL, "B", show_legend = TRUE
+)
+
+fig6_supp_points <- pA_pts | pB_pts
+save_supp(fig6_supp_points, "figS16_fig6_partial_residuals", width = 10, height = 4.5)
+fig6_supp_points
 ```
 
 ---
@@ -6258,9 +6442,10 @@ Two Step 23 checks require going back to raw inputs and are documented but not i
 
 > A small d15N subsample (n = 113; d18O for only n = 16) was collected for a subset of
 > sites. This section (1) tests raw d15N against the primary cesspool-exposure and
-> agriculture predictors, and (2) builds a literature-anchored Bayesian source-probability
-> classifier to ask whether individual samples look isotopically more like cesspool/
-> wastewater N, agricultural/fertilizer N, or other (soil/background) organic N. This is a
+> agriculture predictors, (2) fits a two-source (cesspool vs agriculture) d15N mixing
+> model with a mass-balance correction for marine background nitrate, giving each sample
+> a posterior probability of being cesspool- vs agriculture-dominated, and (3) checks
+> whether the isotopes agree with the Figure 5 land-use attributions. This is a
 > secondary, corroborating line of evidence -- n is far smaller than the 611-sample NO3+NO2
 > model -- and is reported as exploratory, not as independent proof of source attribution.
 
@@ -6348,167 +6533,269 @@ save_supp(fig_iso_raw, "figS10_isotope_raw", width = 8, height = 4)
 fig_iso_raw
 ```
 
-### Bayesian source-probability classification {#sec-iso-bayes}
+### Two-source d15N mixing model: cesspool vs agriculture {#sec-iso-mixing}
 
-A single isotope cannot formally resolve more than two sources (the mixing system is
-underdetermined past n+1 end-members for n isotopes), so this is a likelihood-based
-classification against literature-reported d15N end-member distributions, not a formal
-multi-isotope mixing model (e.g. SIAR/MixSIAR). The classifier is applied to **all 108**
-isotope samples (not pre-filtered by salinity), with a fourth end-member added for
-background/marine nitrate, so that "background ocean conditions" is one of the candidate
-classes the data can be assigned to rather than being imposed beforehand by a salinity
-threshold. Because the marine and soil-organic-N priors overlap substantially in d15N
-space, the measured Salinity (never shown to the classifier) is used below purely to
-check whether the resulting "marine" class is isotopically recoverable at all.
+The question here is narrow: for each sample, what is the probability that the
+terrestrial NO3+NO2 it carries is mostly cesspool/wastewater-derived rather than
+agricultural/fertilizer-derived? One isotope can resolve two sources, so the model has
+exactly two terrestrial end-members. Marine background nitrate is not treated as a third
+competing source. Instead it is removed by isotope mass balance using the measured
+NO3+NO2 concentration. Every isotope sample has NO3+NO2 >= 1.8 umol/L, compared with a
+median of 0.83 umol/L in marine-background (> 34 PSU) samples, so the background share is
+modest for most samples (median ~12%, max ~45%).
 
-End-member d15N priors (mean, SD; per mil vs air N2), drawn from the isotope-hydrology
-literature and Hawai'i-specific wastewater studies:
+For sample $$i$$ with measured $$\delta_i$$ and concentration $$C_i$$:
+
+$$
+\delta_i = w_i\,\delta_{bg} + (1 - w_i)\left[f_i\,\delta_{cess} + (1 - f_i)\,\delta_{fert}\right] + \varepsilon_i,
+\qquad w_i = \min(C_{bg} / C_i,\ 0.95)
+$$
+
+where $$f_i$$ is the cesspool fraction of terrestrial N (prior Uniform(0, 1)). Source
+signatures are treated as random draws from their literature distributions, so their
+variance enters the likelihood. $$C_{bg}$$ is integrated over by resampling the observed
+marine-background NO3+NO2 values. $$\varepsilon$$ is analytical error (SD 0.3 per mil).
+The posterior of $$f_i$$ is computed on a fine grid, which is exact for a one-parameter
+model, so no MCMC is needed.
+
+End-member d15N (mean, SD; per mil vs air N2), the same anchors used elsewhere in the document:
+
+- Cesspool / wastewater: N(15, 5). Kendall (1998); Xue et al. (2009) Water Research
+  43:1159-1170; Dailer et al. (2010) Mar. Pollut. Bull. 60:655-671; Amato et al. (2016)
+  PLoS ONE 11:e0165825.
+- Agriculture / synthetic fertilizer: N(2, 3). Kendall (1998); Xue et al. (2009).
+- Marine background nitrate: N(5.5, 1.5). Amato et al. (2016).
+
+**Limitations that must accompany any use of these probabilities:**
+(1) Soil-organic N (~+4 to +9 per mil) and manure are not represented. Because they fall
+between the two end-members, the model splits them between "cesspool" and "agriculture".
+A sample near 8-9 per mil is therefore ambiguous, not "half wastewater".
+(2) Denitrification and assimilation enrich residual nitrate in 15N and can mimic a
+wastewater signature. With d18O for only n = 16, fractionation cannot be separated from
+source mixing.
+(3) The source distributions are wide, so per-sample credible intervals are broad.
+`p_cess_dom` = P(f > 0.5) is the probability that terrestrial N is mostly cesspool-derived
+*given these end-members*. It is not a calibrated detection probability.
 
 ```{r}
-#| label: step-iso-bayes-classifier
+#| label: step-iso-mixing-model
 
-# delta15N end-member literature sources:
-#  - Agriculture / synthetic fertilizer: -4 to +4 per mil (mean ~0-2, modeled as N(2,3))
-#      Kendall (1998), In: Kendall & McDonnell (eds.) Isotope Tracers in Catchment
-#      Hydrology, Elsevier, pp. 519-576; Xue et al. (2009) Water Research 43:1159-1170.
-#  - Other organic matter / natural soil N: ~ -2 to +9 per mil (modeled as N(6, 2.5))
-#      Kendall (1998); Xue et al. (2009).
-#  - Marine / background ocean nitrate: ~ +4 to +7 per mil, deep-ocean average ~5.5
-#      (modeled as N(5.5, 1.5)); Amato et al. (2016) PLoS ONE 11:e0165825. This range
-#      overlaps heavily with soil-organic N, so delta15N alone cannot cleanly separate
-#      the two -- addressed via the independent Salinity check below.
-#  - Cesspool / wastewater: ~ +10 to +20-25 per mil (modeled as N(15, 5))
-#      Kendall (1998); Xue et al. (2009); Hawai'i-specific: Dailer et al. (2010) Marine
-#      Pollution Bulletin 60:655-671 (Maui algal tissue delta15N 8-19 per mil, up to 50.1
-#      per mil, near cesspool/wastewater-injection sites); Amato et al. (2016) PLoS ONE
-#      11:e0165825 (dissolved wastewater-derived N +7 to +93 per mil).
-# Equal (uninformative) priors across the four classes; posterior computed via Bayes' rule
-# with Gaussian likelihoods. This is a probabilistic classification against literature
-# anchors, NOT a model fit to these data, so the external validation below (independent
-# Salinity, cesspool exposure, agriculture, and nutrient concentration) is not circular.
+iso_src <- list(
+  cess = c(mu = 15,  sd = 5),
+  fert = c(mu = 2,   sd = 3),
+  bg   = c(mu = 5.5, sd = 1.5)
+)
+iso_sd_analytic <- 0.3
 
-endmembers <- tibble::tribble(
-  ~class,                           ~mu, ~sigma,
-  "Agriculture (fertilizer)",         2,      3,
-  "Other organic matter (soil N)",    6,    2.5,
-  "Marine/background ocean",        5.5,    1.5,
-  "Cesspool/wastewater",             15,      5
+iso_bg_C <- chem_master |>
+  filter(Salinity > 34, !is.na(NO3NO2)) |>
+  pull(NO3NO2)
+
+set.seed(SEED)
+iso_C_bg_draws <- sample(iso_bg_C, 2000, replace = TRUE)
+iso_f_grid <- seq(0.0025, 0.9975, by = 0.005)
+
+# Grid posterior of f (cesspool fraction of terrestrial N) for one sample,
+# marginalising over background concentration uncertainty.
+iso_mix_post <- function(d_obs, C_obs) {
+  w <- pmin(iso_C_bg_draws / C_obs, 0.95)
+  lik <- vapply(iso_f_grid, \(f) {
+    mu <- w * iso_src$bg["mu"] +
+      (1 - w) * (f * iso_src$cess["mu"] + (1 - f) * iso_src$fert["mu"])
+    s <- sqrt(w^2 * iso_src$bg["sd"]^2 +
+                (1 - w)^2 * (f^2 * iso_src$cess["sd"]^2 + (1 - f)^2 * iso_src$fert["sd"]^2) +
+                iso_sd_analytic^2)
+    mean(dnorm(d_obs, mu, s))
+  }, numeric(1))
+  lik / sum(lik)
+}
+
+iso_post_mat <- t(mapply(iso_mix_post, iso_d$N15, iso_d$NO3NO2))
+iso_cdf <- t(apply(iso_post_mat, 1, cumsum))
+
+iso_d <- iso_d |>
+  mutate(
+    bg_frac_median = pmin(median(iso_bg_C) / NO3NO2, 0.95),
+    f_cess_mean = as.vector(iso_post_mat %*% iso_f_grid),
+    f_cess_lwr  = iso_f_grid[apply(iso_cdf, 1, \(x) which(x >= 0.025)[1])],
+    f_cess_upr  = iso_f_grid[apply(iso_cdf, 1, \(x) which(x >= 0.975)[1])],
+    p_cess_dom  = rowSums(iso_post_mat[, iso_f_grid > 0.5, drop = FALSE]),
+    p_ag_dom    = 1 - p_cess_dom,
+    mix_class = case_when(
+      p_cess_dom >= 0.8 ~ "Likely cesspool-dominated",
+      p_ag_dom   >= 0.8 ~ "Likely agriculture-dominated",
+      TRUE              ~ "Ambiguous"
+    )
+  )
+
+iso_d |>
+  select(sample_id, island, N15, NO3NO2, bg_frac_median,
+         f_cess_mean, f_cess_lwr, f_cess_upr, p_cess_dom, p_ag_dom, mix_class) |>
+  write_csv(here("output", "tables", "isotope_mixing_posteriors.csv"))
+
+count(iso_d, mix_class) |>
+  knitr::kable(caption = paste0(
+    "Two-source mixing classification (P >= 0.8 threshold), n = ", nrow(iso_d),
+    ". Per-sample posteriors saved to output/tables/isotope_mixing_posteriors.csv."))
+
+iso_d |>
+  summarise(median_f_cess = median(f_cess_mean),
+            median_CrI_width = median(f_cess_upr - f_cess_lwr),
+            median_bg_frac = median(bg_frac_median)) |>
+  knitr::kable(digits = 2, caption = "Posterior summary across samples.")
+```
+
+#### Do the isotopes support the Figure 5 land-use effects? {#sec-iso-fig5}
+
+Figure 5 attributes part of the NO3+NO2 enrichment to cesspool exposure and to agriculture
+(both main effects and their interactions with storm rainfall). If those attributions
+reflect real nitrogen sources, the isotopes should shift in opposite directions: heavier
+d15N where cesspool exposure is high, lighter d15N where agriculture is high. Three checks
+follow, in decreasing order of independence from the literature priors:
+
+1. **Prior-free Keeling-type model.** `N15 ~ 1/NO3NO2 + land use + island + (1 | ahupuaa)`.
+   The 1/C term absorbs dilution of added N by background water. The land-use
+   coefficients then estimate how the isotopic signature of the *added* N changes with
+   cesspool exposure and agriculture. No end-member values are assumed.
+2. **Mixing fraction vs land use.** Posterior cesspool fraction `f` ~ land use + island,
+   with mixing-model uncertainty carried through 200 posterior draws of `f` per sample,
+   combined with Rubin's rules.
+3. **Mixing fraction vs the Figure 5 model's own attribution.** For each isotope sample
+   in the NO3+NO2 model data, `predict(nox_M_int, type = "terms")` gives the cesspool
+   contribution (main effect + rainfall interaction) and the agriculture contribution to
+   log(NO3+NO2). Their difference, cesspool minus agriculture, says where the model
+   assigns relatively more of the enrichment to cesspools. If the model and the isotopes
+   agree, `f` should increase with this difference.
+
+```{r}
+#| label: step-iso-fig5-validation
+
+iso_np <- nox_primary |>
+  mutate(sample_id_norm = str_replace_all(sample_id, "\\s+", "")) |>
+  filter(sample_id_norm %in% iso_d$sample_id_norm)
+
+iso_terms <- predict(nox_M_int, newdata = iso_np, type = "terms")
+
+iso_attr <- tibble(
+  sample_id_norm = iso_np$sample_id_norm,
+  cess_contrib = iso_terms[, "z_log_cess_exposure"] +
+    iso_terms[, "z_chirps_storm_cumulative_mm:z_log_cess_exposure"],
+  ag_contrib = iso_terms[, "z_pct_agriculture"] +
+    iso_terms[, "z_chirps_storm_cumulative_mm:z_pct_agriculture"],
+  cess_minus_ag = cess_contrib - ag_contrib
 )
 
-lik  <- sapply(seq_len(nrow(endmembers)), \(k) dnorm(iso_d$N15, endmembers$mu[k], endmembers$sigma[k]))
-post <- lik / rowSums(lik)
-colnames(post) <- endmembers$class
-iso_d <- bind_cols(iso_d, as_tibble(post))
-iso_d$assigned_source <- endmembers$class[apply(post, 1, which.max)]
+zsc <- \(x) (x - mean(x)) / sd(x)
+iso_v <- iso_d |>
+  inner_join(iso_attr, by = "sample_id_norm") |>
+  mutate(
+    z_cess = zsc(log_cess_exposure),
+    z_ag   = zsc(pct_agriculture),
+    z_attr = zsc(cess_minus_ag),
+    inv_NOx = 1 / NO3NO2,
+    ahupuaa_f = factor(paste(ahupuaa, island))
+  )
+iso_v_idx <- match(iso_v$sample_id_norm, iso_d$sample_id_norm)
 
-cat("Full isotope sample: n =", nrow(iso_d), "\n")
-count(iso_d, assigned_source) |> knitr::kable(caption = "Dominant isotopic source class, all 108 samples.")
+cat("Isotope samples in nox_M_int data: n =", nrow(iso_v),
+    "| ahupua'a =", n_distinct(iso_v$ahupuaa_f),
+    "| Spearman r(cesspool, agriculture) =",
+    round(cor(iso_v$z_cess, iso_v$z_ag, method = "spearman"), 2), "\n")
+
+# (1) Prior-free Keeling-type model
+iso_keeling <- gam(N15 ~ inv_NOx + z_cess + z_ag + island + s(ahupuaa_f, bs = "re"),
+                   data = iso_v, method = "REML")
+saveRDS(iso_keeling, here("output", "model_objects", "iso_keeling_gam.rds"))
+
+keel_tab <- summary(iso_keeling)$p.table[c("z_cess", "z_ag"), , drop = FALSE]
+keel_res <- tibble(
+  check = "(1) Keeling-type: d15N of added N (per mil per SD)",
+  term = rownames(keel_tab),
+  estimate = keel_tab[, "Estimate"],
+  lwr = estimate - 1.96 * keel_tab[, "Std. Error"],
+  upr = estimate + 1.96 * keel_tab[, "Std. Error"],
+  p = keel_tab[, "Pr(>|t|)"]
+)
+
+# (2)-(3) Multiple-imputation regressions over mixing-posterior draws of f
+rubin_pool <- function(fits, term) {
+  est <- sapply(fits, \(m) coef(m)[term])
+  v   <- sapply(fits, \(m) vcov(m)[term, term])
+  m <- length(est); qbar <- mean(est); W <- mean(v); B <- var(est)
+  Tv <- W + (1 + 1 / m) * B
+  df <- (m - 1) * (1 + W / ((1 + 1 / m) * B))^2
+  tibble(term = term, estimate = qbar,
+         lwr = qbar - qt(0.975, df) * sqrt(Tv),
+         upr = qbar + qt(0.975, df) * sqrt(Tv),
+         p = 2 * pt(-abs(qbar / sqrt(Tv)), df))
+}
+draw_f <- \(rows) vapply(rows, \(i) sample(iso_f_grid, 1, prob = iso_post_mat[i, ]), numeric(1))
+
+set.seed(SEED)
+n_imp <- 200
+fits_lu <- replicate(n_imp, {
+  iso_v$f <- draw_f(iso_v_idx); lm(f ~ z_cess + z_ag + island, data = iso_v)
+}, simplify = FALSE)
+fits_attr <- replicate(n_imp, {
+  iso_v$f <- draw_f(iso_v_idx); lm(f ~ z_attr + island, data = iso_v)
+}, simplify = FALSE)
+
+iso_fig5_res <- bind_rows(
+  keel_res,
+  bind_rows(rubin_pool(fits_lu, "z_cess"), rubin_pool(fits_lu, "z_ag")) |>
+    mutate(check = "(2) Cesspool fraction f vs land use (per SD)"),
+  rubin_pool(fits_attr, "z_attr") |>
+    mutate(check = "(3) Cesspool fraction f vs Fig. 5 attribution (per SD)")
+) |>
+  mutate(term = c(z_cess = "Cesspool exposure", z_ag = "% agriculture",
+                  z_attr = "Fig. 5 cesspool - agriculture contribution")[term]) |>
+  select(check, term, estimate, lwr, upr, p)
+
+write_csv(iso_fig5_res, here("output", "tables", "isotope_fig5_validation.csv"))
+iso_fig5_res |>
+  knitr::kable(digits = 3, col.names = c("Check", "Predictor", "Estimate", "Lower 95%", "Upper 95%", "p"),
+               caption = paste0("Isotope checks of the Figure 5 land-use effects (n = ", nrow(iso_v), ")."))
 ```
 
 ```{r}
-#| label: step-iso-bayes-validation
+#| label: fig-iso-mixing
+#| fig-cap: "Two-source d15N mixing model (cesspool vs agriculture) and agreement with the Figure 5 NO3+NO2 model"
 
-# External validation using data never shown to the classifier.
+iso_v_plot <- iso_v |> filter(island != "L\u0101na'i")
 
-# (1) Does the isotope-assigned "marine/background ocean" class recover the independent
-# salinity-threshold classification (Salinity > 34 PSU)? This is the key check on whether
-# delta15N alone can identify background-ocean conditions.
-iso_d$assigned_broad <- if_else(iso_d$assigned_source == "Marine/background ocean",
-                                 "Marine (isotope)", "Terrestrial (isotope)")
-xtab_marine <- table(iso_d$assigned_broad, iso_d$sal_group)
-fisher_marine <- fisher.test(xtab_marine)
-kw_sal <- kruskal.test(Salinity ~ assigned_source, data = iso_d)
-
-print(xtab_marine)
-cat("Fisher's exact test, isotope-marine vs salinity-marine agreement: p =",
-    signif(fisher_marine$p.value, 3), "\n")
-cat("Kruskal-Wallis, Salinity ~ assigned_source (4 classes): p =", signif(kw_sal$p.value, 3), "\n")
-cat("(Both non-significant -> as expected given the marine/soil-N prior overlap, the\n",
-    " isotope classifier does not reliably recover background-ocean conditions on its own;\n",
-    " Salinity, not delta15N, remains the appropriate criterion for that distinction.)\n")
-
-# (2) Terrestrial source contrast (cesspool vs soil-N) against independent land-use and
-# nutrient data, now across all 108 samples rather than a salinity-prefiltered subset.
-terr_two <- iso_d |> filter(assigned_source %in% c("Cesspool/wastewater", "Other organic matter (soil N)"))
-
-val_cess <- wilcox.test(cess_exposure_idx ~ assigned_source, data = terr_two)
-val_ag   <- wilcox.test(pct_agriculture ~ assigned_source, data = terr_two)
-val_nox  <- wilcox.test(NO3NO2 ~ assigned_source, data = terr_two)
-
-terr_two |>
-  group_by(assigned_source) |>
-  summarise(n = n(),
-            median_cess_exposure = median(cess_exposure_idx),
-            median_pct_ag        = median(pct_agriculture),
-            median_NOx           = median(NO3NO2, na.rm = TRUE)) |>
-  knitr::kable(digits = 3, caption = "External validation: independent land-use and NOx, cesspool- vs soil-N-assigned (all 108 samples).")
-
-cat("Wilcoxon, cesspool exposure (cesspool- vs soil-N-assigned): p =", signif(val_cess$p.value, 3), "\n")
-cat("Wilcoxon, % agriculture    (cesspool- vs soil-N-assigned): p =", signif(val_ag$p.value, 3), "\n")
-cat("Wilcoxon, NO3+NO2          (cesspool- vs soil-N-assigned): p =", signif(val_nox$p.value, 3), "\n")
-
-# (3) Continuous posterior probability of cesspool source vs NOx/PO4, island-controlled,
-# with and without the sal_group (storm vs marine) control to check whether any
-# association is driven by the storm/marine split rather than a within-group source signal.
-m_piso_nox       <- lm(log(NO3NO2 + 0.01) ~ `Cesspool/wastewater` + island, data = iso_d)
-m_piso_po4       <- lm(log(PO4 + 0.01)    ~ `Cesspool/wastewater` + island, data = iso_d)
-m_piso_nox_salct <- lm(log(NO3NO2 + 0.01) ~ `Cesspool/wastewater` + island + sal_group, data = iso_d)
-m_piso_po4_salct <- lm(log(PO4 + 0.01)    ~ `Cesspool/wastewater` + island + sal_group, data = iso_d)
-
-cat("\np(cesspool) -> log(NO3+NO2), island-controlled:\n")
-print(tidy(m_piso_nox) |> filter(term == "`Cesspool/wastewater`"))
-cat("\np(cesspool) -> log(NO3+NO2), island + water-type controlled:\n")
-print(tidy(m_piso_nox_salct) |> filter(term == "`Cesspool/wastewater`"))
-cat("\np(cesspool) -> log(PO4), island-controlled:\n")
-print(tidy(m_piso_po4) |> filter(term == "`Cesspool/wastewater`"))
-cat("\np(cesspool) -> log(PO4), island + water-type controlled:\n")
-print(tidy(m_piso_po4_salct) |> filter(term == "`Cesspool/wastewater`"))
-```
-
-```{r}
-#| label: fig-iso-classifier-validation
-#| fig-cap: "External validation of the N15 Bayesian source classification (all 108 samples)"
-
-iso_d_plot <- iso_d |> filter(island != "L\u0101na'i")
-
-pV1 <- ggplot(iso_d_plot, aes(x = assigned_source, y = cess_exposure_idx)) +
-  geom_boxplot(outlier.shape = NA, fill = "gray92", color = "gray30") +
-  geom_jitter(aes(color = island), width = 0.15, alpha = 0.8, size = 1.8) +
-  scale_y_continuous(trans = "log1p") +
+pM1 <- iso_d |>
+  arrange(f_cess_mean) |>
+  mutate(rank = row_number()) |>
+  ggplot(aes(x = rank, y = f_cess_mean, color = island)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray50") +
+  geom_linerange(aes(ymin = f_cess_lwr, ymax = f_cess_upr), alpha = 0.5) +
+  geom_point(size = 1.4) +
   scale_color_manual(values = island_pal, name = NULL) +
-  labs(x = NULL, y = "Cesspool exposure index", tag = "A") +
+  labs(x = "Samples (ranked)", y = "Cesspool fraction of terrestrial N", tag = "A") +
   theme_kona_paper() +
-  theme(axis.text.x = element_text(angle = 20, hjust = 1), legend.position = "none")
+  theme(legend.position = "bottom")
 
-pV2 <- ggplot(iso_d_plot, aes(x = assigned_source, y = pct_agriculture)) +
-  geom_boxplot(outlier.shape = NA, fill = "gray92", color = "gray30") +
-  geom_jitter(aes(color = island), width = 0.15, alpha = 0.8, size = 1.8) +
-  scale_y_continuous(labels = scales::percent) +
-  scale_color_manual(values = island_pal, name = NULL) +
-  labs(x = NULL, y = "% agriculture", tag = "B") +
-  theme_kona_paper() +
-  theme(axis.text.x = element_text(angle = 20, hjust = 1))
+pM2 <- ggplot(iso_v_plot, aes(x = inv_NOx, y = N15)) +
+  geom_point(aes(color = cess_minus_ag), size = 1.8) +
+  scale_color_gradient2(low = "#1B7837", mid = "gray80", high = "#762A83", midpoint = 0,
+                        name = "Fig. 5\ncesspool -\nagriculture") +
+  labs(x = expression(1/(NO[3]+NO[2])~(L~mu*mol^{-1})),
+       y = expression(delta^{15}*N~("per mil")), tag = "B") +
+  theme_kona_paper()
 
-pV3 <- ggplot(iso_d_plot, aes(x = assigned_source, y = Salinity)) +
-  geom_boxplot(outlier.shape = NA, fill = "gray92", color = "gray30") +
-  geom_jitter(aes(color = island), width = 0.15, alpha = 0.8, size = 1.8) +
-  geom_hline(yintercept = 34, linetype = "dashed", color = "gray40") +
+pM3 <- ggplot(iso_v_plot, aes(x = cess_minus_ag, y = f_cess_mean, color = island)) +
+  geom_linerange(aes(ymin = f_cess_lwr, ymax = f_cess_upr), alpha = 0.3) +
+  geom_point(size = 1.8) +
+  geom_smooth(aes(group = 1), method = "lm", se = TRUE, color = "gray15", linewidth = 0.6) +
   scale_color_manual(values = island_pal, name = NULL) +
-  labs(x = NULL, y = "Salinity (PSU)", tag = "C") +
-  theme_kona_paper() +
-  theme(axis.text.x = element_text(angle = 20, hjust = 1), legend.position = "none")
-
-pV4 <- ggplot(iso_d_plot, aes(x = `Cesspool/wastewater`, y = log(PO4 + 0.01))) +
-  geom_point(aes(color = island), size = 1.8, alpha = 0.85) +
-  scale_color_manual(values = island_pal, name = NULL) +
-  geom_smooth(method = "lm", se = TRUE, color = "gray15", linewidth = 0.6) +
-  labs(x = "Posterior probability of cesspool/wastewater source",
-       y = expression("log(PO"[4]*")"), tag = "D") +
+  labs(x = "Fig. 5 attribution: cesspool - agriculture",
+       y = "Cesspool fraction", tag = "C") +
   theme_kona_paper() + theme(legend.position = "none")
 
-fig_iso_classifier <- (pV1 | pV2) / (pV3 | pV4)
-save_supp(fig_iso_classifier, "figS11_isotope_classifier", width = 8.5, height = 7.5)
-fig_iso_classifier
+# Effect estimates are reported in the table above (different units per check)
+fig_iso_mixing <- pM1 / (pM2 | pM3) + plot_layout(heights = c(1, 1.1))
+save_supp(fig_iso_mixing, "figS11_isotope_mixing", width = 9, height = 7.5)
+fig_iso_mixing
 ```
 
 ## Optical fDOM tracers: cesspool-exposure validation {#sec-fdom}
@@ -6995,8 +7282,12 @@ supp_figs <- tibble::tribble(
   "S8",    "step19-rf-performance",         "figS8_rf_vs_gam_loao",                 "RF vs GAM LOAO spatial CV R^2",
   "S9",    "step19-rf-importance",          "figS9_rf_importance",                  "RF permutation variable importance",
   "S10",   "fig-iso-raw",                   "figS10_isotope_raw",                   "Raw delta15N vs cesspool exposure / agriculture",
-  "S11",   "fig-iso-classifier-validation", "figS11_isotope_classifier",            "N15 Bayesian source-classifier validation",
-  "S12",   "fig-fdom-brighteners",          "figS12_fdom_brighteners",              "Optical brighteners vs cesspool exposure / SiO2"
+  "S11",   "fig-iso-mixing",                "figS11_isotope_mixing",                "d15N two-source mixing model + Fig. 5 checks",
+  "S12",   "fig-fdom-brighteners",          "figS12_fdom_brighteners",              "Optical brighteners vs cesspool exposure / SiO2",
+  "S13",   "figS-nox-partial-effects",      "figS_nox_partial_effects_sig",         "NO3+NO2 partial effects (full range, rug)",
+  "S14",   "figS-po4-partial-effects",      "figS_po4_partial_effects_sig",         "PO4 partial effects (full range, rug)",
+  "S15",   "figS-nh4-partial-effects",      "figS_nh4_partial_effects_sig",         "NH4 partial effect (full range, rug)",
+  "S16",   "figS-fig6-partial-residuals",   "figS16_fig6_partial_residuals",        "Figure 6 with partial-residual tercile overlay"
 ) |>
   mutate(
     pdf      = file.exists(file.path(supp_dir, paste0(file_stem, ".pdf"))),
@@ -7010,7 +7301,7 @@ supp_figs |>
   select(figure, content, file_stem, exported) |>
   knitr::kable(
     caption = paste0(
-      "Supplementary figure inventory (S1\u2013S12), written to ",
+      "Supplementary figure inventory (S1\u2013S16), written to ",
       "output/supplement/supplementary_figure_list.csv. 'Exported' = both PDF and ",
       "PNG present in output/supplement/."),
     col.names = c("Figure", "Content", "File stem", "Exported"),

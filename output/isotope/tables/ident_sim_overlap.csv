@@ -1,0 +1,9 @@
+structure,overlap,pair,overlap_coef
+two_source,low,wastewater vs other,0.1284296266762769
+two_source,high,wastewater vs other,0.21686343724633314
+three_source,low,wastewater vs agriculture,0.05795077844545182
+three_source,low,wastewater vs background,0.13560531136747977
+three_source,low,agriculture vs background,0.531975130663243
+three_source,high,wastewater vs agriculture,0.09137805558224632
+three_source,high,wastewater vs background,0.2389256727303351
+three_source,high,agriculture vs background,0.531975130663243

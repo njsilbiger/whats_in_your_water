@@ -1,0 +1,17 @@
+endmember,enrichment,sigma_a,run_id,primary
+literature (base),none,0.3,1,TRUE
+literature (base),moderate,0.3,2,TRUE
+"cesspool-like waste N(11, 4.5)",none,0.3,3,FALSE
+"cesspool-like waste N(11, 4.5)",moderate,0.3,4,FALSE
+source means +2 SE,none,0.3,5,FALSE
+source means +2 SE,moderate,0.3,6,FALSE
+source means -2 SE,none,0.3,7,FALSE
+source means -2 SE,moderate,0.3,8,FALSE
+source SDs x1.5,none,0.3,9,FALSE
+source SDs x1.5,moderate,0.3,10,FALSE
+source SDs x0.67,none,0.3,11,FALSE
+source SDs x0.67,moderate,0.3,12,FALSE
+literature (base),weak,0.3,13,FALSE
+literature (base),strong,0.3,14,FALSE
+literature (base),none,1,15,FALSE
+literature (base),moderate,1,16,FALSE

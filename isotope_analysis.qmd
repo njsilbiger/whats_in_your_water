@@ -1,0 +1,1235 @@
+---
+title: "Nitrogen isotopes and land-use sources of coastal nitrate"
+subtitle: "Kona Low March 2026 — d15N analysis"
+author:
+  - name: Nyssa J. Silbiger
+    affiliation: University of Hawaiʻi at Mānoa
+  - name: Andrea Kealoha
+    affiliation: University of Hawaiʻi at Mānoa
+  - name: Sara Kahanamoku
+    affiliation: University of Hawaiʻi at Mānoa
+date: today
+date-format: "MMMM D, YYYY"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    number-sections: true
+    embed-resources: true
+    theme: flatly
+    code-fold: true
+    code-summary: "Show code"
+    fig-width: 9
+    fig-height: 6
+    lang: en
+execute:
+  warning: false
+  message: false
+  cache: false
+---
+```{r}
+#| label: setup
+#| include: false
+library(tidyverse)
+library(here)
+library(broom)
+library(mgcv)
+library(patchwork)
+SEED <- 2847
+set.seed(SEED)
+# Island-name apostrophes differ across files; normalise before any island join/grouping
+normalize_island <- function(x) str_replace_all(x, "['\u2018\u2019\u02bc]", "'")
+island_levels <- c("O'ahu", "Maui", "Moloka'i", "L\u0101na'i")
+island_pal <- c("O'ahu" = "#1565C0", "Maui" = "#2E7D32",
+                "Moloka'i" = "#E65100", "L\u0101na'i" = "#6A1B9A")
+dir.create(here("output", "isotope"), showWarnings = FALSE, recursive = TRUE)
+```
+# Data and quality control {#sec-data}
+Source: `scripts/isotope_01_clean_data.R`. `water_all` holds all 746 samples; `water_iso` holds the
+samples with a valid d15N. d15N was measured on NOx (nitrate + nitrite) in water that was filtered
+and frozen. `in_gam` flags the samples used in the NO3+NO2 GAM (Figure 5), and the `z_*` columns are
+standardized with the GAM subset's mean and SD so isotope-model coefficients share the GAM's scale.
+```{r}
+#| label: load-data
+water_all <- readRDS(here("output", "isotope", "data", "water_all.rds"))
+water_iso <- readRDS(here("output", "isotope", "data", "water_iso.rds"))
+iso_audit <- read_csv(here("output", "isotope", "tables", "isotope_join_audit.csv"), show_col_types = FALSE)
+tibble(
+  dataset = c("water_all", "water_iso", "water_iso also in GAM data", "GAM data (water_all)"),
+  n = c(nrow(water_all), nrow(water_iso), sum(water_iso$in_gam), sum(water_all$in_gam)),
+  n_sites = c(n_distinct(water_all$site_id), n_distinct(water_iso$site_id),
+              n_distinct(water_iso$site_id[water_iso$in_gam]), n_distinct(water_all$site_id[water_all$in_gam])),
+  n_ahupuaa = c(n_distinct(water_all$ahupuaa_key), n_distinct(water_iso$ahupuaa_key),
+                n_distinct(water_iso$ahupuaa_key[water_iso$in_gam]), n_distinct(water_all$ahupuaa_key[water_all$in_gam]))
+) |>
+  knitr::kable(caption = "Dataset sizes.")
+```
+## Isotope-to-sample matching {#sec-iso-match}
+```{r}
+#| label: iso-match-audit
+# Sample IDs in isotope.csv have inconsistent whitespace ("OA 58"); IDs are matched after
+# stripping whitespace. Unmatched IDs are reported, never auto-corrected.
+iso_audit |>
+  summarise(rows = n(), matched = sum(matched), unmatched = sum(!matched),
+            whitespace_fixed = sum(whitespace_altered), duplicated_in_isotope_file = sum(n_in_isotope_file > 1)) |>
+  knitr::kable(caption = "Isotope file join audit.")
+iso_audit |> filter(!matched) |> select(sample_id, N15, O18) |>
+  knitr::kable(caption = "Isotope rows with no matching water sample (excluded; need source-sheet check).")
+cand_path <- here("output", "isotope", "tables", "isotope_unmatched_candidates.csv")
+if (file.exists(cand_path)) {
+  read_csv(cand_path, show_col_types = FALSE) |>
+    knitr::kable(caption = "Neighbouring sample IDs, for review only. These are NOT assumed to be the correct match.")
+}
+```
+## Data quality report {#sec-dq}
+```{r}
+#| label: dq-key-vars
+key_vars <- c(N15 = "N15", O18 = "O18", NOx = "NO3NO2", nitrite = "nitrite_umol", SiO2 = "SiO2",
+              Salinity = "Salinity", rain = "chirps_storm_cumulative_mm",
+              pct_ag = "pct_agriculture", cess_idx = "cess_exposure_idx",
+              stream_dist = "dist_to_stream_mouth_m", slope = "mean_slope_deg", ksat = "mean_ksat_um_s",
+              pct_imperv = "pct_impervious", npdes_dist = "dist_to_nearest_npdes_m",
+              fetch = "fetch_mean_km", hs = "hs_mean_m")
+dq_summary <- function(df, label) {
+  df |>
+    summarise(across(all_of(unname(key_vars)), list(
+      n_missing = \(x) sum(is.na(x)), min = \(x) min(x, na.rm = TRUE),
+      median = \(x) median(x, na.rm = TRUE), max = \(x) max(x, na.rm = TRUE)), .names = "{.col}__{.fn}")) |>
+    pivot_longer(everything(), names_to = c("variable", ".value"), names_sep = "__") |>
+    mutate(set = label, .before = 1)
+}
+bind_rows(dq_summary(water_all, "water_all"), dq_summary(water_iso, "water_iso")) |>
+  mutate(across(c(min, median, max), \(x) signif(x, 3))) |>
+  knitr::kable(caption = "Missingness and range of key variables (nitrite is NA where reported as <0.07).")
+```
+```{r}
+#| label: dq-ids-bdl
+tibble(
+  check = c("Duplicate sample_id (water_all)", "Sites with >1 sample (water_all)",
+            "Sites with >1 isotope sample", "Isotope samples sharing a site with another isotope sample"),
+  n = c(sum(duplicated(water_all$sample_id)),
+        sum(table(water_all$site_id) > 1),
+        sum(table(water_iso$site_id) > 1),
+        sum(duplicated(water_iso$site_id) | duplicated(water_iso$site_id, fromLast = TRUE)))
+) |>
+  knitr::kable(caption = "Duplicate and repeated-site checks.")
+# Below-detection-limit values were set to DL/2 in chem_master, so BDL rows carry imputed values.
+bind_rows(
+  water_all |> summarise(set = "water_all", n = n(), bdl_NOx = sum(bdl_NO3NO2), bdl_SiO2 = sum(bdl_SiO2),
+                         nitrite_below_0.07 = sum(nitrite_bdl, na.rm = TRUE)),
+  water_iso |> summarise(set = "water_iso", n = n(), bdl_NOx = sum(bdl_NO3NO2), bdl_SiO2 = sum(bdl_SiO2),
+                         nitrite_below_0.07 = sum(nitrite_bdl, na.rm = TRUE))
+) |>
+  knitr::kable(caption = "Below-detection-limit counts (flags from chem_master; nitrite DL = 0.07 umol/L).")
+```
+```{r}
+#| label: dq-iso-coverage
+water_iso |> count(island) |> knitr::kable(caption = "Isotope samples by island.")
+water_iso |> count(island, ahupuaa, name = "n_iso") |> arrange(desc(n_iso)) |>
+  slice_head(n = 15) |>
+  knitr::kable(caption = paste0("Isotope samples by ahupua'a (top 15 of ", n_distinct(water_iso$ahupuaa_key), ")."))
+water_iso |> mutate(date = as.Date(collected_hst)) |> count(date, name = "n_iso") |>
+  left_join(water_all |> mutate(date = as.Date(collected_hst)) |> count(date, name = "n_all"), by = "date") |>
+  mutate(pct_with_iso = round(100 * n_iso / n_all, 1)) |>
+  knitr::kable(caption = "Isotope samples by sampling day (all samples for comparison).")
+```
+```{r}
+#| label: fig-dq-distributions
+#| fig-height: 3.5
+p_n15 <- ggplot(water_iso, aes(N15)) + geom_histogram(bins = 25, fill = "gray70", color = "white") +
+  labs(x = expression(delta^{15}*N~"(per mil vs air)"), y = "Samples", tag = "A") + theme_minimal(base_size = 10)
+p_nox <- ggplot(water_iso, aes(NO3NO2)) + geom_histogram(bins = 25, fill = "gray70", color = "white") +
+  scale_x_log10() + labs(x = expression(NO[3]+NO[2]~(mu*mol~L^{-1})), y = "Samples", tag = "B") + theme_minimal(base_size = 10)
+p_iso_nox <- ggplot(water_iso, aes(NO3NO2, N15, color = island)) + geom_point(alpha = 0.8) +
+  scale_x_log10() + scale_color_manual(values = island_pal, name = NULL) +
+  labs(x = expression(NO[3]+NO[2]~(mu*mol~L^{-1})), y = expression(delta^{15}*N~"(per mil)"), tag = "C") +
+  theme_minimal(base_size = 10)
+p_n15 | p_nox | p_iso_nox
+```
+# Representativeness of the isotope subset {#sec-representative}
+The question is whether the 108 isotope samples can stand in for the full set of 746. Each variable
+is compared between isotope samples and the 638 samples without isotopes (an independent contrast;
+comparing against all 746 would put the isotope samples on both sides). The standardized mean difference
+(SMD) is the difference in means divided by the pooled SD; |SMD| < 0.1 is usually read as balanced and
+> 0.5 as a large imbalance. NOx, silica and cesspool exposure are compared on the same log scale used in the GAM.
+```{r}
+#| label: rep-setup
+rep_vars <- tribble(
+  ~var,                          ~label,                                            ~scale_note,
+  "log_NO3NO2",                  "NO[3]+NO[2]~(log~mu*mol~L^{-1})",                 "log",
+  "pct_agriculture",             "Agriculture~(fraction)",                          "raw",
+  "log_cess_exposure",           "log(1+cesspool~exposure)",                        "log1p",
+  "chirps_storm_cumulative_mm",  "Storm~rainfall~(mm)",                             "raw",
+  "log_SiO2",                    "SiO[2]~(log~mu*mol~L^{-1})",                      "log",
+  "Salinity",                    "Salinity~(PSU)",                                  "raw"
+)
+smd <- function(x, g) {
+  a <- x[g]; b <- x[!g]
+  (mean(a, na.rm = TRUE) - mean(b, na.rm = TRUE)) / sqrt((var(a, na.rm = TRUE) + var(b, na.rm = TRUE)) / 2)
+}
+# Smallest NOx among isotope samples; used below to describe the sampling range
+nox_iso_min <- min(water_all$NO3NO2[water_all$has_iso])
+rep_long <- water_all |>
+  select(sample_id, island, has_iso, all_of(rep_vars$var)) |>
+  pivot_longer(all_of(rep_vars$var), names_to = "var", values_to = "value") |>
+  left_join(rep_vars, by = "var") |>
+  mutate(label = factor(label, levels = rep_vars$label),
+         group = if_else(has_iso, "Isotope subset", "No isotope"))
+```
+```{r}
+#| label: rep-smd-table
+smd_tab <- rep_vars |>
+  rowwise() |>
+  mutate(
+    n_iso = sum(!is.na(water_all[[var]][water_all$has_iso])),
+    n_other = sum(!is.na(water_all[[var]][!water_all$has_iso])),
+    median_iso = median(water_all[[var]][water_all$has_iso], na.rm = TRUE),
+    median_other = median(water_all[[var]][!water_all$has_iso], na.rm = TRUE),
+    smd_all = smd(water_all[[var]], water_all$has_iso),
+    smd_within_island = {
+      d <- filter(water_all, island %in% c("O'ahu", "Maui"))
+      # average of the two within-island SMDs (the only islands with enough isotope samples)
+      mean(c(smd(d[[var]][d$island == "O'ahu"], d$has_iso[d$island == "O'ahu"]),
+             smd(d[[var]][d$island == "Maui"], d$has_iso[d$island == "Maui"])))
+    },
+    smd_nox_ge_min = {
+      d <- filter(water_all, NO3NO2 >= nox_iso_min)
+      smd(d[[var]], d$has_iso)
+    },
+    ks_p = suppressWarnings(ks.test(water_all[[var]][water_all$has_iso], water_all[[var]][!water_all$has_iso])$p.value)
+  ) |>
+  ungroup() |>
+  select(-label, -scale_note)
+write_csv(smd_tab, here("output", "isotope", "tables", "isotope_representativeness_smd.csv"))
+smd_tab |>
+  knitr::kable(digits = 2, caption = paste0(
+    "Isotope samples vs samples without isotopes. smd_within_island averages the O'ahu and Maui SMDs; ",
+    "smd_nox_ge_min restricts both groups to NOx >= ", round(nox_iso_min, 2), " umol/L."))
+```
+```{r}
+#| label: fig-rep-density
+#| fig-height: 5.5
+ggplot(rep_long, aes(value, fill = group, color = group)) +
+  geom_density(alpha = 0.3, adjust = 1.2, na.rm = TRUE) +
+  facet_wrap(~label, scales = "free", labeller = label_parsed) +
+  scale_fill_manual(values = c("Isotope subset" = "#D55E00", "No isotope" = "gray50"), name = NULL) +
+  scale_color_manual(values = c("Isotope subset" = "#D55E00", "No isotope" = "gray50"), name = NULL) +
+  labs(x = NULL, y = "Density") +
+  theme_minimal(base_size = 10) + theme(legend.position = "bottom")
+```
+```{r}
+#| label: fig-rep-box-smd
+#| fig-height: 8
+p_box <- ggplot(rep_long, aes(group, value)) +
+  geom_boxplot(outlier.size = 0.6, fill = "gray92") +
+  facet_wrap(~label, scales = "free_y", labeller = label_parsed, nrow = 2) +
+  labs(x = NULL, y = NULL, tag = "A") +
+  theme_minimal(base_size = 9) + theme(axis.text.x = element_text(angle = 25, hjust = 1))
+smd_long <- smd_tab |>
+  select(var, `All samples` = smd_all, `Within island (O'ahu, Maui)` = smd_within_island,
+         `NOx at or above isotope minimum` = smd_nox_ge_min) |>
+  pivot_longer(-var, names_to = "comparison", values_to = "smd") |>
+  left_join(select(rep_vars, var, label), by = "var") |>
+  mutate(label = factor(label, levels = rev(rep_vars$label)))
+p_smd <- ggplot(smd_long, aes(smd, label, shape = comparison)) +
+  geom_vline(xintercept = c(-0.1, 0.1), linetype = "dotted", color = "gray60") +
+  geom_vline(xintercept = 0, color = "gray40") +
+  geom_point(size = 2.3) +
+  scale_y_discrete(labels = \(x) parse(text = x)) +
+  labs(x = "Standardized mean difference (isotope - no isotope)", y = NULL, shape = NULL, tag = "B") +
+  theme_minimal(base_size = 9) + theme(legend.position = "bottom")
+p_box / p_smd + plot_layout(heights = c(1.2, 1))
+```
+## Was isotope sampling random, stratified or targeted? {#sec-iso-targeting}
+```{r}
+#| label: rep-targeting
+water_all |>
+  filter(!is.na(NO3NO2)) |>
+  mutate(NOx_bin = cut(NO3NO2, c(0, 1, 2, 5, 10, 20, 50, Inf),
+                       labels = c("<=1", "1-2", "2-5", "5-10", "10-20", "20-50", ">50"))) |>
+  group_by(NOx_bin) |>
+  summarise(n_samples = n(), n_isotope = sum(has_iso), pct_with_isotope = round(100 * mean(has_iso), 1)) |>
+  knitr::kable(caption = "Isotope coverage by NOx concentration (umol/L).")
+water_all |>
+  group_by(island) |>
+  summarise(n_samples = n(), n_isotope = sum(has_iso), pct_with_isotope = round(100 * mean(has_iso), 1)) |>
+  knitr::kable(caption = "Isotope coverage by island.")
+# Which variables predict being isotope-sampled, jointly? Descriptive, not a causal model.
+target_glm <- glm(has_iso ~ scale(log_NO3NO2) + z_log_cess_exposure + z_pct_agriculture +
+                    z_chirps_storm_cumulative_mm + scale(Salinity) + island,
+                  data = water_all, family = binomial)
+tidy(target_glm, conf.int = TRUE, exponentiate = TRUE) |>
+  select(term, odds_ratio = estimate, conf.low, conf.high, p.value) |>
+  knitr::kable(digits = 3, caption = "Odds of being isotope-sampled (per SD for continuous predictors).")
+```
+**Reading the comparison.** Isotope sampling was targeted, not random or stratified. The isotope
+subset is shifted toward high NOx (SMD about 1.6 on the log scale) and, because NOx and silica covary,
+toward high silica (SMD about 0.9). No isotope sample has NOx below about 1.8 umol/L, a range that holds
+62% of the 723 samples with a NOx value, and coverage is 0% for NOx at or below 1 umol/L. Among samples above
+that minimum, isotope and non-isotope samples are much closer (see the right-hand column of the SMD table),
+and the isotope subset covers all four islands. Isotope results therefore describe nitrate-enriched water
+(NOx at or above about 1.8 umol/L) and cannot be extrapolated to low-NOx samples. Because selection
+depended on NOx, any later comparison with the GAM should be repeated on the GAM data restricted to
+the same NOx range.
+# Exploratory d15N relationships {#sec-explore}
+These analyses use the 108 isotope samples and are exploratory. They do not attribute sources. Because
+isotope samples were targeted at NOx >= about 1.8 umol/L (@sec-iso-targeting), every pattern here applies to
+nitrate-enriched water only. Predictors use the same transformations as the GAM (log1p cesspool exposure, log
+silica, raw agriculture fraction and rainfall). Smooths are single-predictor GAMs (`s(x, k = 4)`, REML) that
+ignore island and watershed clustering; they show shape, not adjusted effects.
+```{r}
+#| label: expl-setup
+expl_vars <- tribble(
+  ~var,                          ~label,
+  "pct_agriculture",             "Agriculture~(fraction)",
+  "log_cess_exposure",           "log(1+cesspool~exposure)",
+  "log_NO3NO2",                  "NO[3]+NO[2]~(log~mu*mol~L^{-1})",
+  "log_SiO2",                    "SiO[2]~(log~mu*mol~L^{-1})",
+  "chirps_storm_cumulative_mm",  "Storm~rainfall~(mm)",
+  "Salinity",                    "Salinity~(PSU)"
+)
+expl_long <- water_iso |>
+  select(sample_id, island, N15, NO3NO2, all_of(expl_vars$var)) |>
+  pivot_longer(all_of(expl_vars$var), names_to = "var", values_to = "x") |>
+  left_join(expl_vars, by = "var") |>
+  mutate(label = factor(label, levels = expl_vars$label)) |>
+  filter(!is.na(x))
+expl_stats <- expl_long |>
+  group_by(var, label) |>
+  group_modify(\(d, k) {
+    ct <- suppressWarnings(cor.test(d$x, d$N15, method = "spearman"))
+    sm <- summary(gam(N15 ~ s(x, k = 4), data = d, method = "REML"))
+    tibble(n = nrow(d), spearman_rho = unname(ct$estimate), p_rho = ct$p.value,
+           smooth_edf = sm$s.table[1, "edf"], p_smooth = sm$s.table[1, "p-value"], dev_expl = sm$dev.expl)
+  }) |>
+  ungroup()
+write_csv(select(expl_stats, -label), here("output", "isotope", "tables", "d15N_exploratory_stats.csv"))
+expl_stats |> select(-label) |>
+  knitr::kable(digits = 3, caption = "d15N vs each predictor: Spearman rank correlation and single-predictor GAM smooth (n = 108; silica n = 104).")
+```
+```{r}
+#| label: fig-expl-scatter
+#| fig-height: 6.5
+rho_lab <- expl_stats |>
+  transmute(label, text = sprintf("rho = %.2f, p = %.3f", spearman_rho, p_rho))
+ggplot(expl_long, aes(x, N15)) +
+  geom_smooth(method = "gam", formula = y ~ s(x, k = 4), method.args = list(method = "REML"),
+              color = "gray20", fill = "gray60", linewidth = 0.7) +
+  geom_point(aes(color = NO3NO2), size = 1.8, alpha = 0.9) +
+  geom_text(data = rho_lab, aes(x = -Inf, y = Inf, label = text), inherit.aes = FALSE,
+            hjust = -0.05, vjust = 1.4, size = 3) +
+  facet_wrap(~label, scales = "free_x", labeller = label_parsed) +
+  scale_color_viridis_c(trans = "log10", option = "viridis", end = 0.92,
+                        name = expression(NO[3]+NO[2]~(mu*mol~L^{-1}))) +
+  labs(x = NULL, y = expression(delta^{15}*N~"(per mil vs air)")) +
+  theme_minimal(base_size = 10) + theme(legend.position = "bottom", legend.key.width = unit(1.6, "cm"))
+```
+## Source covariates, islands and watersheds {#sec-expl-structure}
+```{r}
+#| label: expl-structure
+ag_cess <- cor.test(water_iso$pct_agriculture, water_iso$log_cess_exposure, method = "spearman", exact = FALSE)
+cat("Agriculture vs cesspool exposure (isotope samples): Spearman rho =", round(ag_cess$estimate, 2),
+    ", p =", signif(ag_cess$p.value, 2), "\n")
+cat("Isotope samples with agriculture < 1%:", sum(water_iso$pct_agriculture < 0.01),
+    "of", nrow(water_iso), "| with cesspool exposure index = 0:", sum(water_iso$cess_exposure_idx == 0), "\n")
+water_iso |>
+  group_by(island) |>
+  summarise(n = n(), n_ahupuaa = n_distinct(ahupuaa), median_d15N = median(N15), sd_d15N = sd(N15)) |>
+  knitr::kable(digits = 2, caption = "d15N by island.")
+# Between-watershed vs residual variation, after island
+vc_dat <- water_iso |> mutate(ahup = factor(ahupuaa_key))
+vc <- gam(N15 ~ island + s(ahup, bs = "re"), data = vc_dat, method = "REML")
+vc_tab <- gam.vcomp(vc, conf.lev = 0.95)
+cat("\nSD of d15N between ahupua'a (random intercept, after island): ",
+    round(vc_tab[1, "std.dev"], 2), " [", round(vc_tab[1, "lower"], 2), ", ", round(vc_tab[1, "upper"], 2),
+    "]; residual SD: ", round(vc_tab[2, "std.dev"], 2), "\n", sep = "")
+```
+```{r}
+#| label: fig-expl-structure
+#| fig-height: 8
+p_agcess <- ggplot(water_iso, aes(pct_agriculture, log_cess_exposure, color = island)) +
+  geom_point(alpha = 0.85) +
+  scale_color_manual(values = island_pal, name = NULL) +
+  labs(x = "Agriculture (fraction)", y = "log(1 + cesspool exposure)", tag = "A") +
+  theme_minimal(base_size = 10)
+p_island <- ggplot(water_iso, aes(island, N15, color = island)) +
+  geom_boxplot(outlier.shape = NA, fill = NA, color = "gray40") +
+  geom_jitter(width = 0.15, alpha = 0.85) +
+  scale_color_manual(values = island_pal, guide = "none") +
+  labs(x = NULL, y = expression(delta^{15}*N~"(per mil)"), tag = "B") +
+  theme_minimal(base_size = 10)
+ahup_sum <- water_iso |>
+  group_by(island, ahupuaa) |>
+  filter(n() >= 3) |>
+  summarise(n = n(), mean = mean(N15), se = sd(N15) / sqrt(n()), .groups = "drop") |>
+  mutate(lab = paste0(ahupuaa, " (n=", n, ")"))
+p_ahup <- ggplot(ahup_sum, aes(mean, reorder(lab, mean), color = island)) +
+  geom_pointrange(aes(xmin = mean - 1.96 * se, xmax = mean + 1.96 * se)) +
+  scale_color_manual(values = island_pal, name = NULL) +
+  labs(x = expression(Mean~delta^{15}*N~"(per mil, +/- 1.96 SE)"), y = NULL, tag = "C") +
+  theme_minimal(base_size = 10) + theme(legend.position = "none")
+(p_agcess | p_island) / p_ahup + plot_layout(heights = c(1, 1.1))
+```
+## Does d15N respond to rainfall differently along the cesspool and agriculture gradients? {#sec-expl-interaction}
+The plots split samples at the median of each land-use variable for display only; the models use the
+continuous standardized predictors (GAM z-scores), island as a fixed effect and an ahupua'a random intercept.
+With 108 samples, 48 ahupua'a and 29 ahupua'a with a single sample, these models are underpowered for interactions.
+```{r}
+#| label: expl-interaction-models
+int_dat <- water_iso |> mutate(ahup = factor(ahupuaa_key))
+int_cess <- gam(N15 ~ z_chirps_storm_cumulative_mm * z_log_cess_exposure + island + s(ahup, bs = "re"),
+                data = int_dat, method = "REML")
+int_ag <- gam(N15 ~ z_chirps_storm_cumulative_mm * z_pct_agriculture + island + s(ahup, bs = "re"),
+              data = int_dat, method = "REML")
+int_both <- gam(N15 ~ z_chirps_storm_cumulative_mm * z_log_cess_exposure +
+                  z_chirps_storm_cumulative_mm * z_pct_agriculture + island + s(ahup, bs = "re"),
+                data = int_dat, method = "REML")
+int_tab <- imap_dfr(list(cesspool_only = int_cess, agriculture_only = int_ag, both = int_both), \(m, nm) {
+  pt <- summary(m)$p.table
+  tibble(model = nm, term = rownames(pt), estimate = pt[, 1], se = pt[, 2],
+         lwr = estimate - 1.96 * se, upr = estimate + 1.96 * se, p = pt[, 4])
+}) |>
+  filter(str_detect(term, "^z_"))
+write_csv(int_tab, here("output", "isotope", "tables", "d15N_exploratory_interaction_models.csv"))
+int_tab |>
+  knitr::kable(digits = 3, caption = "d15N (per mil) per SD of predictor; island fixed, ahupua'a random intercept. Normal-approximation 95% intervals.")
+```
+```{r}
+#| label: fig-expl-interaction
+#| fig-height: 4
+split_dat <- water_iso |>
+  mutate(`Cesspool exposure` = if_else(log_cess_exposure > median(log_cess_exposure), "above median", "at or below median"),
+         `Agriculture` = if_else(pct_agriculture > median(pct_agriculture), "above median", "at or below median")) |>
+  pivot_longer(c(`Cesspool exposure`, Agriculture), names_to = "gradient", values_to = "group")
+ggplot(split_dat, aes(chirps_storm_cumulative_mm, N15, color = group, fill = group)) +
+  geom_point(alpha = 0.7, size = 1.5) +
+  geom_smooth(method = "lm", formula = y ~ x, linewidth = 0.7, alpha = 0.15) +
+  facet_wrap(~gradient) +
+  scale_x_log10() +
+  scale_color_manual(values = c("above median" = "#D55E00", "at or below median" = "#0072B2"), name = NULL) +
+  scale_fill_manual(values = c("above median" = "#D55E00", "at or below median" = "#0072B2"), name = NULL) +
+  labs(x = "Storm rainfall (mm, log scale)", y = expression(delta^{15}*N~"(per mil)")) +
+  theme_minimal(base_size = 10) + theme(legend.position = "bottom")
+```
+## Summary: relationships worth testing with Bayesian models {#sec-expl-summary}
+These are exploratory associations in 108 samples (48 ahupua'a) with no multiplicity correction. They are
+used only to choose which hypotheses to carry forward.
+- **Agriculture (lower d15N where agriculture is higher).** This is the clearest signal (Spearman rho about -0.36,
+  smooth p about 0.001) and it is monotonic. It is in the direction expected if agricultural N is isotopically
+  light (synthetic fertilizer), and it is opposite to a wastewater explanation. Caveats: agriculture is an ahupua'a-level
+  value (many samples share the same value, visible as vertical stacks), 44 of 108 samples are below 1% agriculture, and
+  the effect shrinks and loses significance once island and ahupua'a are included (about -0.7 per mil per SD, 95% interval
+  roughly -1.5 to 0.2). Carry forward as a hypothesis.
+- **Cesspool exposure (weakly heavier d15N where exposure is higher).** The direction matches a wastewater signal
+  (rho about 0.15), but it is not distinguishable from zero in the clustered model (about +0.7 per mil per SD, interval
+  just spanning zero). Carry forward.
+- **Agriculture and cesspool exposure are only weakly correlated** (rho about 0.15), so the two effects can be
+  separated in a joint model. Their estimates barely change when both are included.
+- **Silica (positive) and salinity (negative)** both indicate heavier d15N in more terrestrial, fresher water
+  (rho about 0.24 and -0.28). These could reflect a terrestrial source or the island and watershed structure; check
+  whether they survive random effects before reading anything into them.
+- **NOx (weak).** d15N has a weak, possibly non-linear relationship with log NOx (rho about 0.15, smooth edf about 2.6).
+  Because the lowest-NOx water was not sampled, the mixing signal that would show up as d15N varying with 1/NOx is
+  hard to see. Treat concentration as a covariate for dilution, not a source indicator.
+- **Rainfall (no relationship) and no evidence for interactions.** Rainfall alone is unrelated to d15N. Neither rainfall x cesspool
+  (about +0.5 per mil per SD, interval about -0.7 to 1.7) nor rainfall x agriculture (about -0.2, interval about -1.9 to 1.4) is
+  distinguishable from zero. The intervals are wide enough to include effects of the size found in the GAM, so these data
+  cannot confirm or rule out interactions. Rainfall in the isotope subset is also coarse: it comes from 5 km CHIRPS pixels,
+  so many samples share one value.
+- **Clustering is modest.** After island, the SD of d15N between ahupua'a is about 1.1 per mil (interval about 0.3 to 4.3)
+  against about 2.8 per mil of residual variation, so a watershed random effect is worth keeping but does not
+  dominate. Oʻahu has the widest spread of d15N, and Molokaʻi (n = 7) and Lānaʻi (n = 1) are too small for island-level conclusions.
+Hypotheses to take into the Bayesian steps: (1) d15N decreases with agriculture; (2) d15N increases with cesspool exposure;
+(3) the two interactions with rainfall, treated as separate prespecified tests. Each should include an island fixed effect and an ahupua'a random
+intercept, and any NOx range restriction decided in Step 2.
+# Literature endmember database {#sec-endmembers}
+Database: `data/isotope_endmember_literature.csv` (built by `scripts/isotope_02_endmember_database.R`), with
+fractionation values for the later sensitivity analysis in `data/isotope_fractionation_literature.csv`. d15N is per mil vs air.
+Each row records the study, DOI, location, N pool, sample type, mean, SD or range, n, whether the value is a direct source or
+already transformed or mixed, and how I verified it. Only values read in a source are entered; blank means not reported.
+Hawaii-specific measurements of nitrate from cesspools and septic tanks are scarce: the only direct values found are 3 cesspool samples from Puako (Abaya et al. 2018a),
+Hawaii Island, also reported by Wiegner et al. 2021. The wastewater group therefore rests on those, treated municipal effluent from Maui plants and general septic and animal-waste values.
+```{r}
+#| label: em-load
+lit <- read_csv(here("data", "isotope_endmember_literature.csv"), show_col_types = FALSE)
+lit |>
+  count(value_class, use_in_prior) |>
+  knitr::kable(caption = "Database entries by value class and whether they feed the priors.")
+lit |>
+  count(verification) |>
+  knitr::kable(caption = "How each entry was verified (read_via_page_summary and reported_in_secondary should be spot-checked against the originals).")
+lit |>
+  filter(use_in_prior) |>
+  select(entry_id, prior_group, n_pool, d15N_mean, d15N_sd, d15N_min, d15N_max, n, study, doi, verification) |>
+  knitr::kable(caption = "Entries used to build the priors.")
+```
+## Literature-informed priors {#sec-em-priors}
+Rule (set before looking at the sample data): within each group, an entry's mean is its reported mean, or the midpoint of a
+reported range; its SD is the reported SD, or (max - min) / 4 for a range. Derived values are approximations, and
+range / 4 overstates SD for skewed distributions. The group mean is the average of entry means. Between-study variation is the
+SD of entry means; within-source variation is the root-mean-square of entry SDs (entries reporting a single value contribute
+no SD). The source distribution used later is Normal(group mean, source SD), where source SD combines both. The uncertainty
+in the group mean is between-study SD / sqrt(k). Rows tagged `wastewater;manure` count in both groups because the literature
+treats human and animal waste nitrate as indistinguishable.
+```{r}
+#| label: em-priors
+prior_in <- lit |>
+  filter(use_in_prior) |>
+  mutate(group = str_split(prior_group, ";")) |>
+  unnest(group) |>
+  mutate(mean_used = coalesce(d15N_mean, (d15N_min + d15N_max) / 2),
+         sd_used = coalesce(d15N_sd, (d15N_max - d15N_min) / 4))
+em_priors <- prior_in |>
+  group_by(group) |>
+  summarise(k_entries = n(), k_with_sd = sum(!is.na(sd_used)), mean = mean(mean_used),
+            between_study_sd = sd(mean_used), within_source_sd = sqrt(mean(sd_used^2, na.rm = TRUE)),
+            .groups = "drop") |>
+  mutate(source_sd = sqrt(within_source_sd^2 + between_study_sd^2),
+         se_group_mean = between_study_sd / sqrt(k_entries)) |>
+  arrange(desc(mean))
+write_csv(em_priors, here("output", "isotope", "tables", "endmember_priors.csv"))
+em_priors |> knitr::kable(digits = 2, caption = "Literature-informed endmember priors for d15N.")
+```
+## Overlap among sources {#sec-em-overlap}
+Overlap is the area shared by two source distributions (1 = identical, 0 = disjoint). The Bayes accuracy is the best possible
+rate of assigning a single d15N draw to the right source with equal prior odds, equal to 1 - overlap / 2. The interval carries uncertainty
+in the group means (2000 draws of each mean from Normal(mean, se)), holding source SDs fixed.
+```{r}
+#| label: em-overlap
+ovl_fun <- function(m1, s1, m2, s2) {
+  integrate(\(x) pmin(dnorm(x, m1, s1), dnorm(x, m2, s2)), -100, 150)$value
+}
+set.seed(SEED)
+em_pairs <- expand_grid(a = em_priors$group, b = em_priors$group) |>
+  filter(a < b) |>
+  rowwise() |>
+  mutate(
+    pa = list(filter(em_priors, group == a)), pb = list(filter(em_priors, group == b)),
+    overlap = ovl_fun(pa$mean, pa$source_sd, pb$mean, pb$source_sd),
+    draws = list(replicate(2000, ovl_fun(rnorm(1, pa$mean, pa$se_group_mean), pa$source_sd,
+                                          rnorm(1, pb$mean, pb$se_group_mean), pb$source_sd))),
+    overlap_lwr = quantile(draws, 0.025), overlap_upr = quantile(draws, 0.975)
+  ) |>
+  ungroup() |>
+  transmute(source_a = a, source_b = b, overlap, overlap_lwr, overlap_upr, bayes_accuracy = 1 - overlap / 2) |>
+  arrange(desc(overlap))
+write_csv(em_pairs, here("output", "isotope", "tables", "endmember_overlap.csv"))
+em_pairs |> knitr::kable(digits = 2, caption = "Pairwise overlap of literature source distributions (95% interval from uncertainty in group means).")
+```
+```{r}
+#| label: fig-em-densities
+#| fig-height: 5
+em_lab <- c(wastewater = "Wastewater", manure = "Manure / organic fertilizer",
+            synthetic_fertilizer = "Synthetic fertilizer", soil_background = "Soil / low-impact groundwater",
+            marine_nitrate = "Marine nitrate")
+em_cols <- c(wastewater = "#D55E00", manure = "#CC79A7", synthetic_fertilizer = "#009E73",
+             soil_background = "#E69F00", marine_nitrate = "#0072B2")
+xg <- seq(-15, 45, length.out = 600)
+em_dens <- em_priors |>
+  rowwise() |>
+  mutate(d = list(tibble(x = xg, y = dnorm(xg, mean, source_sd)))) |>
+  ungroup() |> select(group, d) |> unnest(d)
+set.seed(SEED)
+em_unc <- em_priors |>
+  rowwise() |>
+  mutate(d = list(map_dfr(1:60, \(r) {
+    m <- rnorm(1, mean, se_group_mean)
+    tibble(draw = r, x = xg, y = dnorm(xg, m, source_sd))
+  }))) |>
+  ungroup() |> select(group, d) |> unnest(d)
+ggplot() +
+  geom_line(data = em_unc, aes(x, y, group = interaction(group, draw), color = group), alpha = 0.12, linewidth = 0.3) +
+  geom_area(data = em_dens, aes(x, y, fill = group), alpha = 0.18, position = "identity") +
+  geom_line(data = em_dens, aes(x, y, color = group), linewidth = 0.8) +
+  geom_density(data = water_iso, aes(N15), color = "black", linetype = "dashed", linewidth = 0.7, show.legend = FALSE) +
+  geom_rug(data = water_iso, aes(N15), sides = "b", alpha = 0.5, length = unit(0.04, "npc"), show.legend = FALSE) +
+  scale_color_manual(values = em_cols, labels = em_lab, name = NULL) +
+  scale_fill_manual(values = em_cols, labels = em_lab, name = NULL) +
+  coord_cartesian(xlim = c(-10, 40)) +
+  labs(x = expression(delta^{15}*N~"(per mil vs air)"), y = "Density") +
+  guides(color = guide_legend(nrow = 2), fill = guide_legend(nrow = 2)) +
+  theme_minimal(base_size = 10) + theme(legend.position = "bottom")
+```
+The dashed black curve is the density of the 108 observed sample d15N values (rug below).
+
+## What the literature can and cannot separate {#sec-em-identifiability}
+
+These conclusions are about the source distributions only; the simulation study in the next step tests them directly.
+
+- **Wastewater is separable from synthetic fertilizer and soil/background nitrate** (overlap about 0.06 to 0.14, interval up to
+  about 0.26). A single draw from these distributions would be assigned to the right group about 93 to 97% of the time.
+- **Synthetic fertilizer, soil/low-impact groundwater and marine nitrate overlap heavily** (overlap about 0.45 to 0.84). d15N alone
+  cannot separate agricultural fertilizer nitrate from background soil or ocean nitrate. This is the main constraint for the
+  agriculture question.
+- **Manure and wastewater overlap** (about 0.80, interval 0.55 to 0.89), as Kendall (1998) also notes. Animal-waste-fertilized
+  agriculture would group with wastewater, not with synthetic fertilizer.
+- **The observed samples sit between the two clusters.** Median d15N is about 8.7 per mil, above the fertilizer, soil and
+  marine groups (about 0 to 4 per mil) and below the wastewater and manure groups (about 12 to 18 per mil). The distribution is
+  unimodal and few samples fall in either tail. This is what mixtures produce, but it is also what nitrification of soil N,
+  partial denitrification of fertilizer nitrate (which can push a source near 0 into the 10 to 20 range; see the fractionation file)
+  or a heavier-than-assumed background would produce. d15N of NOx alone cannot choose among these.
+
+- **Rain and cesspool exposure, in Puako.** Abaya et al. (2018a) found that the three stations dye-traced to leaking OSDS plotted above the
+  freshwater-seawater mixing line (extra nitrogen input) on the only rainy sampling day, and the authors suggest rain may strengthen the OSDS-to-shoreline
+  connection through submarine groundwater discharge. This is one day at one site, but it is qualitatively the pattern behind the rainfall x cesspool interaction in Figure 5.
+- **A caution from Kapoho (agriculture-dominated, Hawaii Island).** Wiegner et al. (2016) used d15N and d18O of nitrate plus d11B in a Bayesian mixing model
+  and obtained sewage 27% (50% interval 1 to 40%), agricultural soil 34% and groundwater 38%, but no macroalgal tissue fell in the sewage range and
+  tide pool nitrate (5.6 to 9.1 per mil) matched groundwater and agricultural soil; the authors judged the sewage share overestimated. Agricultural soil nitrate there was
+  1.3 per mil with a range of -4.7 to 9.3, so diffuse cesspool nitrate can be masked where farm nitrate dominates. This is the same ambiguity the
+  simulation step must test for a one-isotope model.
+- **A directly comparable Hawaii case.** In Puako (cesspool/septic community, Hawaii Island), shoreline nitrate averaged 8.6 per mil
+  (48 observations) with the authors' mixing model giving a sewage share of roughly 23 to 26%, while groundwater and soil nitrate were about 2.6 to 6.4 per mil
+  (Wiegner et al. 2021). That is close to the median of the samples here, and is the pattern a minority wastewater contribution on a
+  soil/groundwater background would produce. It is context, not validation, since that model used two isotopes (d15N and d18O of nitrate).
+
+Provisional recommendation for the simulation step: test a two-group structure, **animal/human waste (wastewater + manure)** versus **other
+(synthetic fertilizer + soil + marine)**, and use the three-group version only as a contrast.
+
+**Caveats on the priors.** (1) Only four wastewater entries have an SD or a range to derive one; the three effluent values are single reports from
+Maui plants and may already be enriched by plant-side denitrification, and the Puako cesspool value (10.5 per mil, n = 3) is the nitrate fraction of cesspool effluent that is mostly ammonium (about 20 umol/L nitrate against about 6370 umol/L ammonium), so nitrification in the aquifer is not captured. (2) The only direct cesspool/septic nitrate d15N is that Puako value (Wiegner et al. 2021 report a near-duplicate set), so cesspool-specific
+priors rest on three samples. (3) The soil/background group relies partly on groundwater (Honomanu Bay, drinking wells, Waikoloa wells) whose
+low-impact status I could not confirm (the Waikoloa wells sit below a community with about 1,587 OSDS homes), and on a range quoted second-hand. (4) 21 of 58 entries were read through a page-summary
+tool and 6 are quoted second-hand; spot-check these against the originals before publication. (5) Algal and plant tissue values
+(Dailer, Derse, Bruland) are kept as context only because tissue d15N is not the same pool as dissolved NOx.
+
+**Gaps to fill before Step 9.** No published value was found for nitrification fractionation, and assimilation is covered only by a quoted upper bound of about 6 per mil for macroalgae at high nitrate (denitrification
+is the only well-covered process). Hawaii cesspool nitrate d15N still comes from one site (Puako), with septic tank sludge from a second (Kapoho, nitrate is a minor fraction there). Leads not yet read:
+Bishop et al. 2015 (Maui land use and groundwater nutrient flux, cited by Wiegner 2016 for agriculture overwhelming cesspool nitrate),
+Glenn et al. 2013 (Lahaina groundwater tracer study), Prouty et al. 2017 (Kahekili data release, doi 10.5066/F7X34VPV), and
+Kendall, Elliott and Wankel 2007 (the original source of several ranges above).
+
+# Simulation-based identifiability {#sec-identifiability}
+
+Before fitting the observed samples, simulated data with known source fractions test what a one-isotope d15N mixing model can recover.
+Code: `scripts/isotope_03_identifiability_sim.R`; outputs: `output/isotope/tables/ident_sim_*.csv`.
+
+**Design.** Source distributions are the literature-informed priors from @sec-em-priors. Two structures are compared: *two-source* (wastewater vs other, where
+other pools synthetic fertilizer, soil and marine nitrate) and *three-source* (wastewater, agriculture = synthetic fertilizer, background = soil and marine).
+Each simulated dataset has 108 samples (matching the isotope subset) and 50 datasets per scenario (5,400 samples). For each dataset the true source means are
+drawn once from their prior uncertainty; each sample draws its source values from the source distributions, its fractions from a Dirichlet distribution,
+an optional enrichment, and analytical error. The scenarios are:
+
+- **Overlap:** *low* uses the literature values. *High* replaces wastewater with a cesspool-like source, N(11, 4.5), in line with the Puako cesspool and septic values.
+- **Analytical error:** SD 0.3 or 1.0 per mil (placeholders until the lab reports its precision).
+- **Enrichment:** none, or a denitrification-like shift Uniform(0, 5) per mil added to each sample. The model is fitted either ignoring it or allowing for it
+  with the matching prior (mean 2.5, SD 1.4).
+- **Mixture regime:** low-waste, moderate, or high-waste true fractions (mean wastewater fraction about 0.16, 0.33 and 0.5 in the two-source version).
+
+**Model.** For sample i, d15N ~ Normal(sum of fraction x source mean, sqrt(sum of fraction^2 x (source SD^2 + SE of source mean^2) + analytical error^2)), with a
+uniform Dirichlet prior on the fractions. Because each sample is modelled alone, the posterior is computed exactly on a grid rather than by MCMC. The Stan model
+in the next step adds source means shared across samples and partial pooling; the results here are therefore a per-sample baseline, and the shared-mean effect
+shows up as the difference between nominal and observed coverage. `cmdstanr` is not installed in this R session; `rstan` and `brms` are.
+
+```{r}
+#| label: ident-load
+
+ident_dir <- here("output", "isotope", "tables")
+if (!file.exists(file.path(ident_dir, "ident_sim_metrics.csv"))) source(here("scripts", "isotope_03_identifiability_sim.R"))
+id_over <- read_csv(file.path(ident_dir, "ident_sim_overlap.csv"), show_col_types = FALSE)
+id_met <- read_csv(file.path(ident_dir, "ident_sim_metrics.csv"), show_col_types = FALSE)
+id_cls <- read_csv(file.path(ident_dir, "ident_sim_classification.csv"), show_col_types = FALSE)
+id_sens <- read_csv(file.path(ident_dir, "ident_sim_prior_sensitivity.csv"), show_col_types = FALSE)
+
+id_over |> knitr::kable(digits = 2, caption = "Overlap of the source distributions in each scenario (1 = identical).")
+```
+
+## Recovering fractions {#sec-ident-fractions}
+
+```{r}
+#| label: ident-baseline-table
+
+id_met |>
+  filter(regime == "moderate", !truth_enrich, !fit_enrich_aware) |>
+  select(structure, overlap, analytical_sd = sigma_a, source, bias, rmse, coverage95, ci_width, r2) |>
+  knitr::kable(digits = 2, caption = paste0("Fraction recovery, moderate mixtures, no enrichment, model without enrichment. ",
+    "bias = mean(estimate - truth); coverage95 = share of true fractions inside the 95% interval; ci_width = mean interval width; r2 = share of true-fraction variance explained by the posterior mean."))
+```
+
+```{r}
+#| label: fig-ident-regimes
+#| fig-height: 4
+
+id_met |>
+  filter(sigma_a == 0.3, !truth_enrich, !fit_enrich_aware, overlap == "low") |>
+  mutate(regime = factor(regime, c("low_waste", "moderate", "high_waste")),
+         source = factor(source, c("wastewater", "other", "agriculture", "background"))) |>
+  pivot_longer(c(bias, coverage95, r2), names_to = "metric", values_to = "value") |>
+  ggplot(aes(regime, value, color = source, shape = structure, group = interaction(source, structure))) +
+  geom_hline(data = tibble(metric = "coverage95", y = 0.95), aes(yintercept = y), linetype = "dashed", color = "gray50") +
+  geom_point(size = 2.2) + geom_line(alpha = 0.5) +
+  facet_wrap(~metric, scales = "free_y") +
+  labs(x = "True mixture regime", y = NULL, color = NULL, shape = NULL) +
+  theme_minimal(base_size = 10) + theme(legend.position = "bottom", axis.text.x = element_text(angle = 20, hjust = 1))
+```
+
+## Confident classification and enrichment {#sec-ident-class}
+
+A sample is classified by its most probable dominant source, and counts as *confident* if that probability is at least 0.8. A *confident-wrong* call is
+confident and incorrect. AUC measures how well P(source dominant) ranks truly dominant samples above others (0.5 = chance).
+
+```{r}
+#| label: ident-class-table
+
+id_cls |>
+  filter(regime == "moderate", sigma_a == 0.3, !truth_enrich, !fit_enrich_aware) |>
+  select(structure, overlap, confident_rate, accuracy_confident, confident_wrong_rate, any_of(c("auc_ww_vs_other", "auc_ww_vs_ag", "auc_ww_vs_bg", "auc_ag_vs_bg"))) |>
+  knitr::kable(digits = 2, caption = "Dominant-source classification (moderate mixtures, no enrichment, analytical SD 0.3).")
+```
+
+```{r}
+#| label: fig-ident-enrichment
+#| fig-height: 4.5
+
+enr <- id_met |>
+  filter(source == "wastewater", regime == "moderate", sigma_a == 0.3, overlap == "low") |>
+  left_join(select(id_cls, structure, overlap, sigma_a, truth_enrich, regime, fit_enrich_aware, confident_wrong_rate),
+            by = c("structure", "overlap", "sigma_a", "truth_enrich", "regime", "fit_enrich_aware")) |>
+  mutate(truth = if_else(truth_enrich, "enrichment present", "no enrichment"),
+         fit = if_else(fit_enrich_aware, "model allows enrichment", "model ignores enrichment")) |>
+  pivot_longer(c(bias, coverage95, confident_wrong_rate), names_to = "metric", values_to = "value")
+
+ggplot(enr, aes(truth, value, color = fit, shape = structure)) +
+  geom_hline(data = tibble(metric = "coverage95", y = 0.95), aes(yintercept = y), linetype = "dashed", color = "gray50") +
+  geom_point(size = 2.5, position = position_dodge(width = 0.4)) +
+  facet_wrap(~metric, scales = "free_y") +
+  labs(x = NULL, y = "Wastewater fraction", color = NULL, shape = NULL) +
+  theme_minimal(base_size = 10) + theme(legend.position = "bottom", axis.text.x = element_text(angle = 15, hjust = 1))
+```
+
+```{r}
+#| label: ident-error-table
+
+id_met |>
+  filter(source == "wastewater", regime == "moderate", !truth_enrich, !fit_enrich_aware, overlap == "low") |>
+  select(structure, analytical_sd = sigma_a, rmse, coverage95, ci_width, r2) |>
+  knitr::kable(digits = 3, caption = "Effect of analytical error on wastewater-fraction recovery (low overlap, moderate mixtures).")
+```
+
+## Sensitivity to the priors {#sec-ident-prior}
+
+```{r}
+#| label: ident-prior-table
+
+id_sens |>
+  filter(source == "wastewater", sigma_a == 0.3) |>
+  select(structure, variant, bias, rmse, coverage95, r2, confident_wrong_rate) |>
+  knitr::kable(digits = 2, caption = "Wastewater-fraction recovery when the fitted priors differ from the truth (low overlap, moderate mixtures, no enrichment, analytical SD 0.3).")
+```
+
+## What the simulations show {#sec-ident-summary}
+
+Numbers are for moderate mixtures and analytical SD 0.3 per mil unless stated; all are simulation results, conditional on the literature priors being
+roughly right.
+
+1. **Per-sample fractions are only weakly identified, even for wastewater vs other.** The two-source posterior mean explains about a third of the variance in true
+   wastewater fraction (r2 = 0.33; 0.18 with the cesspool-like source), and the mean 95% interval spans about 0.8 of the 0 to 1 range. Coverage is near nominal
+   (0.95) only because the intervals are wide. In the three-source model, wastewater r2 is about 0.5, agriculture about 0.24 and background about 0.09.
+2. **Analytical error is not the bottleneck.** Moving from 0.3 to 1.0 per mil changes two-source r2 by less than 0.01 and RMSE by about 0.003. Variability within each
+   source (SD about 6.5 per mil for wastewater and 2 to 3 for the others) limits precision, so the lab precision matters little for this question.
+3. **Wastewater can be separated from the rest at the level of classification.** Two-source AUC is 0.83 (0.80 with the cesspool-like source); 48% of samples get a confident call
+   (probability at least 0.8) of which about 91% are correct, and 4% of all samples are confident-wrong. In the three-source model wastewater vs agriculture has AUC 0.88
+   and wastewater vs background 0.83.
+4. **Agriculture cannot be separated from background.** Agriculture vs background AUC is 0.61 (0.5 is chance), no sample gets a confident call for either, and
+   agriculture r2 is 0.24 with intervals about 0.7 wide. This is the overlap seen in the literature priors (0.53), not a failure of the sampler.
+5. **Unmodelled enrichment is the largest threat.** If nitrate is enriched by 0 to 5 per mil (denitrification-like) and the model ignores it, wastewater fractions are
+   overestimated by about 0.10 (three-source) to 0.19 (two-source), 95% coverage falls to 0.82 to 0.84, and confident-wrong calls rise to 6 to 9%. Allowing for
+   enrichment with the matching prior restores coverage to about 0.95 and cuts confident-wrong calls to 1 to 4%, at the cost of fewer confident calls and a small
+   underestimate when no enrichment occurred. That allowance matched the simulated truth exactly, so the benefit is optimistic.
+6. **Mixture regime and priors matter.** When true wastewater fractions are low (mean about 0.16), the two-source estimate is pulled towards 0.5 (bias +0.18) and coverage
+   drops to 0.84; with high-waste mixtures it is 0.98. A denser Dirichlet prior (concentration 2) lowers coverage to 0.85 to 0.86, narrower source SDs to 0.87 to 0.89,
+   and shifting the source means by 2 standard errors moves the wastewater bias by roughly -0.07 to +0.16 (two-source r2 from 0.50 to 0.03).
+
+**Recommendation for the observed-data model.**
+
+- Use the **two-source structure, waste-associated vs other**, as the primary model. Do not use the three-source model as primary. Agriculture (synthetic fertilizer) and
+  background nitrate overlap too much for d15N alone; manure overlaps wastewater, so animal-waste agriculture would fall in the waste class.
+- Report **P(waste-associated N dominant)**, and population-level summaries across samples (for example, mean probability by cesspool-exposure class), in preference to
+  single-sample fractions. Per-sample point estimates should not be interpreted as measured fractions.
+- Fit the model both with and without an enrichment allowance and show the difference; the unmodelled-enrichment bias is larger than any other effect tested.
+- **What this means for the Figure 5 question.** An isotope signal can test whether higher cesspool exposure goes with more waste-like nitrate. It cannot confirm an agricultural
+  contribution, because a lack of waste-like d15N where agriculture is high is equally expected from fertilizer nitrate or natural soil nitrate.
+- Still to test in the next step: whether sharing source means across samples and partial pooling by site or watershed improves population-level estimates. This is not tested here.
+
+# Isotope-only Bayesian mixing model {#sec-mixing-model}
+
+**Question.** Using only d15N and the literature priors, how much of the nitrate in each of the 108 isotope samples looks waste-associated rather than from other sources?
+The fractions are estimated without agricultural land cover, the cesspool index, NOx concentration or any GAM result, so they can be compared with those predictors afterwards.
+
+**Structure (from the identifiability study).** Two sources: waste-associated N (W) and other N (O: synthetic fertilizer, soil and marine nitrate pooled). For sample i,
+
+$$y_i \sim \mathrm{Normal}\Big(f_i\,\mu_W + (1-f_i)\,\mu_O + e,\ \sqrt{f_i^2 s_W^2 + (1-f_i)^2 s_O^2 + \sigma_a^2 + \tau_e^2}\Big)$$
+
+with source means $$\mu_k \sim \mathrm{Normal}(m_k, \mathrm{SE}_k)$$ shared by all samples, source SDs $$s_k \sim \mathrm{LogNormal}(\log \mathrm{sd}_k, 0.25)$$ taken from
+@sec-em-priors, and analytical SD $$\sigma_a = 0.3$$ per mil (fixed; the lab precision is not yet known). The enrichment allowance adds a shift $$e$$ and spread $$\tau_e$$: none (0, 0) or moderate
+(2.5, 1.44, equivalent to a denitrification-like shift of Uniform(0, 5) per mil). Two fraction priors are fitted: *independent* (uniform on (0, 1) for every sample), and *pooled*
+(sample fractions drawn from a Beta distribution with population mean $$\pi_W$$ and concentration $$\kappa$$, still using d15N only). Four chains of 2,000 iterations (independent) or 6,000 (pooled), run with rstan; code in
+`scripts/isotope_two_source_mixing.stan`, `isotope_two_source_mixing_pooled.stan`, `isotope_04_mixing_model.R` and `isotope_04b_mixing_pooled_and_loo.R`.
+
+```{r}
+#| label: mix-load
+
+mix_dir <- here("output", "isotope", "tables")
+mx_diag <- read_csv(file.path(mix_dir, "mix_diagnostics.csv"), show_col_types = FALSE)
+mx_par <- read_csv(file.path(mix_dir, "mix_parameter_posteriors.csv"), show_col_types = FALSE)
+mx_samp <- read_csv(file.path(mix_dir, "mix_sample_posteriors_all_runs.csv"), show_col_types = FALSE)
+mx_runs <- read_csv(file.path(mix_dir, "mix_runs.csv"), show_col_types = FALSE)
+mx_ppc <- read_csv(file.path(mix_dir, "mix_ppc_stats.csv"), show_col_types = FALSE)
+pl_diag <- read_csv(file.path(mix_dir, "mix_pooled_diagnostics.csv"), show_col_types = FALSE)
+pl_par <- read_csv(file.path(mix_dir, "mix_pooled_parameters.csv"), show_col_types = FALSE)
+pl_samp <- read_csv(file.path(mix_dir, "mix_pooled_sample_posteriors.csv"), show_col_types = FALSE)
+pl_ppc <- read_csv(file.path(mix_dir, "mix_pooled_ppc_stats.csv"), show_col_types = FALSE)
+loo_tab <- read_csv(file.path(mix_dir, "mix_loo_marginal_compare.csv"), show_col_types = FALSE)
+
+bind_rows(
+  mx_diag |> filter(endmember == "literature (base)", sigma_a == 0.3, enrichment %in% c("none", "moderate")) |>
+    transmute(model = "independent", enrichment, n_divergent, max_rhat, min_ess_bulk, min_ess_tail, min_ebfmi),
+  pl_diag) |>
+  knitr::kable(digits = 2, caption = "Convergence: 4 chains each. Rhat should be near 1, no divergences, ESS in the hundreds or more, E-BFMI above about 0.3.")
+```
+
+```{r}
+#| label: mix-params
+
+bind_rows(
+  mx_par |> filter(endmember == "literature (base)", sigma_a == 0.3, enrichment %in% c("none", "moderate")) |>
+    transmute(model = "independent", enrichment, variable, mean, sd, q2.5, q97.5),
+  pl_par |> transmute(model, enrichment, variable, mean, sd, q2.5, q97.5)) |>
+  arrange(model, enrichment) |>
+  knitr::kable(digits = 2, caption = paste0("Posterior of source and population parameters (per mil, except pi_w and kappa). Priors: mu_w mean ",
+    "15.9 (SE 1.7), mu_o 2.1 (SE 0.5), s_w 6.6, s_o 2.8."))
+```
+
+## Does the model fit? {#sec-mix-ppc}
+
+```{r}
+#| label: fig-mix-ppc
+#| fig-height: 5
+
+ppc_files <- tribble(~model, ~enrichment, ~file,
+  "independent", "none", "mix_ppc_none.rds", "independent", "moderate", "mix_ppc_moderate.rds",
+  "pooled", "none", "mix_pooled_ppc_none.rds", "pooled", "moderate", "mix_pooled_ppc_moderate.rds")
+ppc_dens <- pmap_dfr(ppc_files, \(model, enrichment, file) {
+  o <- readRDS(here("output", "isotope", "model_objects", file))
+  xs <- seq(-5, 30, length.out = 200)
+  rep <- map_dfr(1:60, \(r) tibble(draw = r, x = xs, d = approxfun(density(o$y_rep[r, ], from = -5, to = 30, n = 200)$x, density(o$y_rep[r, ], from = -5, to = 30, n = 200)$y)(xs)))
+  obs <- tibble(x = xs, d = approxfun(density(o$y, from = -5, to = 30, n = 200)$x, density(o$y, from = -5, to = 30, n = 200)$y)(xs))
+  bind_rows(mutate(rep, kind = "replicate"), mutate(obs, draw = 0, kind = "observed")) |> mutate(model = model, enrichment = enrichment)
+})
+
+ggplot(ppc_dens, aes(x, d, group = interaction(draw, kind), color = kind, alpha = kind, linewidth = kind)) +
+  geom_line() +
+  scale_color_manual(values = c(replicate = "#0072B2", observed = "black"), name = NULL) +
+  scale_alpha_manual(values = c(replicate = 0.15, observed = 1), guide = "none") +
+  scale_linewidth_manual(values = c(replicate = 0.3, observed = 0.9), guide = "none") +
+  facet_grid(enrichment ~ model, labeller = label_both) +
+  labs(x = expression(delta^{15}*N~"(per mil vs air)"), y = "Density") +
+  theme_minimal(base_size = 10) + theme(legend.position = "bottom")
+```
+
+```{r}
+#| label: mix-ppc-table
+
+bind_rows(mx_ppc |> filter(enrichment %in% c("none", "moderate")) |> transmute(model = "independent", enrichment, statistic, observed, rep_mean, ppp),
+          pl_ppc) |>
+  filter(statistic %in% c("mean", "sd", "min", "max", "frac_gt12", "frac_lt6")) |>
+  knitr::kable(digits = 2, caption = "Posterior predictive checks. ppp = share of replicated datasets with a statistic at least as large as observed; values near 0 or 1 flag misfit.")
+
+loo_tab |> select(model, elpd_diff, se_diff, elpd_loo, p_loo) |>
+  knitr::kable(digits = 1, caption = "Leave-one-out comparison with the sample fractions integrated out (higher elpd is better).")
+```
+
+## Sample-level posteriors {#sec-mix-samples}
+
+```{r}
+#| label: mix-samples
+
+mx_prim <- read_csv(file.path(mix_dir, "mix_sample_posteriors_primary.csv"), show_col_types = FALSE) |>
+  transmute(model = "independent", enrichment, sample_id, N15, island, f_mean, f_lwr, f_upr, p_gt10, p_gt20, p_gt50)
+mx_all <- bind_rows(mx_prim, pl_samp |> select(model, enrichment, sample_id, N15, f_mean, f_lwr, f_upr, p_gt10, p_gt20, p_gt50))
+
+mx_all |>
+  group_by(model, enrichment) |>
+  arrange(N15, .by_group = TRUE) |>
+  summarise(mean_f = mean(f_mean), median_ci_width = median(f_upr - f_lwr),
+            d15N_at_p20 = approx(p_gt50, N15, 0.2, ties = mean)$y, d15N_at_p50 = approx(p_gt50, N15, 0.5, ties = mean)$y,
+            d15N_at_p80 = approx(p_gt50, N15, 0.8, ties = mean)$y,
+            n_conf_waste = sum(p_gt50 >= 0.8), n_conf_other = sum(p_gt50 <= 0.2), n_unresolved = sum(p_gt50 > 0.2 & p_gt50 < 0.8),
+            .groups = "drop") |>
+  knitr::kable(digits = 2, caption = paste0("Sample-level summary (108 samples). P(waste dominant) = P(f > 0.5). n_conf_waste = samples with P >= 0.8; ",
+    "n_conf_other = P <= 0.2. d15N_at_pXX = d15N at which P(waste dominant) = 0.2, 0.5, 0.8."))
+
+write_csv(mx_all, here("output", "isotope", "tables", "mix_sample_posteriors_four_variants.csv"))
+```
+
+```{r}
+#| label: fig-mix-samples
+#| fig-height: 5.5
+
+ggplot(mx_all, aes(N15, f_mean)) +
+  geom_ribbon(aes(ymin = f_lwr, ymax = f_upr), alpha = 0.15, fill = "gray40") +
+  geom_point(aes(color = p_gt50), size = 1.3) +
+  scale_color_viridis_c(name = "P(waste dominant)", limits = c(0, 1)) +
+  facet_grid(enrichment ~ model, labeller = label_both) +
+  labs(x = expression(delta^{15}*N~"(per mil vs air)"), y = "Waste-associated fraction (mean, 95% interval)") +
+  theme_minimal(base_size = 10) + theme(legend.position = "bottom")
+```
+
+## Sensitivity to endmembers and enrichment {#sec-mix-sensitivity}
+
+```{r}
+#| label: mix-sensitivity
+
+ref <- mx_samp |> filter(run_id %in% c(1, 2)) |> transmute(enr = if_else(run_id == 1, "none", "moderate"), sample_id, ref_p = p_gt50)
+mx_samp |>
+  left_join(mx_runs, by = "run_id") |>
+  mutate(enr = if_else(enrichment == "none", "none", "moderate")) |>
+  left_join(ref, by = c("enr", "sample_id")) |>
+  group_by(run_id, endmember, enrichment, sigma_a) |>
+  summarise(mean_f = mean(f_mean), n_conf_waste = sum(p_gt50 >= 0.8), n_conf_other = sum(p_gt50 <= 0.2),
+            rank_corr_with_base = cor(p_gt50, ref_p, method = "spearman"), .groups = "drop") |>
+  knitr::kable(digits = 2, caption = "Independent-fraction model across endmember, enrichment and analytical-error variants (rank_corr_with_base compares P(waste dominant) with the base fit that has the same enrichment setting; for the weak and strong enrichment runs the comparison is with the moderate fit).")
+```
+
+### What the model says {#sec-mix-summary}
+
+- **Convergence is fine for the independent model** (Rhat at most 1.01, no divergences, bulk ESS above 1,400, E-BFMI at least 0.40). The pooled model also has no divergences and
+  Rhat 1.01, but E-BFMI is low (0.16 to 0.21) and bulk ESS is 546 to 910, so its population parameters should be read cautiously.
+- **The independent model overstates the spread of the data.** The observed SD (3.1 per mil) is smaller than almost every replicated dataset (ppp 0.97 to 0.98), with too many
+  simulated values below 6 and above 12. Pooling the fractions fixes this (ppp 0.61 to 0.69) and improves leave-one-out prediction by about 10 elpd over the independent model without
+  enrichment (3.8 over the independent model with enrichment). The data cannot tell enrichment from no enrichment (pooled: difference 0.4 +/- 0.6).
+- **The population share of waste-associated nitrate depends on the enrichment assumption.** Pooled, with no enrichment allowance, pi_W is 0.49 (95% interval 0.38 to 0.62); with the moderate
+  allowance it is 0.31 (0.22 to 0.43). The assumption moves the estimate by more than the width of either interval. The unpooled mean fraction behaves the same way (0.52 vs 0.48).
+- **Per-sample fractions add no information beyond d15N rank.** The posterior mean fraction is a monotone function of d15N (rank correlation 0.999), intervals are about 0.5 to 0.9 wide, and
+  the order of samples is the same in every variant (rank correlation at least 0.99). What changes with assumptions is where the cut-offs fall: the d15N at which waste-associated N becomes more likely than not is 8.6
+  (independent, no enrichment), 9.5 (independent, enrichment), 9.9 (pooled, none) and 16.3 per mil (pooled, enrichment). The median sample is 8.7.
+- **Confident calls depend heavily on the model.** Samples with P(waste dominant) at least 0.8: 24, 10, 8 and 1 across the four variants; at most 0.2: 17, 11, 6 and 98. Pooling with an
+  enrichment allowance puts nearly every sample in the other-N class because the population mean is pulled down to 0.31, so those probabilities are driven by the population prior as much as by each sample.
+- **Threshold probabilities at 10% and 20% are not informative.** A uniform prior already gives P(f > 0.1) = 0.90 and P(f > 0.2) = 0.80, and the posterior values stay close to that (between 69% and 100% of samples have P(f > 0.1) of at least 0.9, depending on the variant).
+  Only P(f > 0.5) is reported as a sample-level quantity (also stored: p_gt10, p_gt20).
+- **Endmember and analytical-error choices matter less than enrichment.** Across the 16 fits the mean fraction ranges 0.45 to 0.55; analytical SD 0.3 vs 1.0 changes almost nothing.
+
+**Use in the next step.** Because the sample-level results are essentially re-expressed d15N, the comparison with cesspool exposure and agriculture should be run with the fractions kept as latent
+variables (or posterior draws propagated), under both enrichment settings, and judged mainly by whether the direction of the association survives. Posterior draws of the fractions are saved in
+`output/isotope/model_objects/mix_draws_f_*.rds`; sample summaries in `output/isotope/tables/mix_sample_posteriors_*.csv`.
+
+# Does the waste-associated fraction track land use? {#sec-land-use}
+
+**Question.** Does the isotope-derived waste-associated fraction rise with cesspool exposure, and how does it relate to agriculture, NOx concentration and rainfall? Only d15N
+sets the fractions; land use is used only as a predictor. Two analyses carry the isotope uncertainty into the effect estimates (code: `scripts/isotope_05_land_use_tests.R`):
+
+- **Joint model (primary).** The mixing model of @sec-mixing-model is fitted together with a regression: the logit of each sample's waste fraction is a linear function of standardized
+  predictors (the same z-scores as the GAM), island (Oʻahu is the reference), an ahupuaʻa random intercept and a sample-level residual. Coefficients have Normal(0, 1) priors on the logit scale.
+  Estimates are reported per standard deviation of the predictor on the logit scale ($$\beta$$) with 95% credible intervals and P($$\beta$$ > 0); the change in the waste fraction of a sample with median random effects is
+  also given. It is fitted with no enrichment allowance and with the moderate allowance from the previous step.
+- **Modular repeated-draw analysis (conservative check).** 300 draws of the fractions from the isotope-only independent model are each regressed (logit scale, ahupuaʻa-clustered standard errors)
+  on the same predictors and pooled with Rubin's rules, so the isotope uncertainty enters through the between-draw variance. Those draws ignore the covariates, so this approach is expected
+  to be attenuated; it keeps the isotope-only estimates untouched.
+
+Prespecified models: M1 = cesspool + agriculture; M2 = M1 + log NOx; M3 = M1 + storm rainfall; M4a and M4b add rainfall x cesspool and rainfall x agriculture separately (the two interactions are not fitted together, given 108 samples and 48 ahupuaʻa).
+
+```{r}
+#| label: lu-load
+
+lu_joint <- read_csv(file.path(mix_dir, "lu_joint_effects.csv"), show_col_types = FALSE)
+lu_mod <- read_csv(file.path(mix_dir, "lu_modular_effects.csv"), show_col_types = FALSE)
+lu_perm <- read_csv(file.path(mix_dir, "lu_permutation_null.csv"), show_col_types = FALSE)
+lu_cor <- read_csv(file.path(mix_dir, "lu_unadjusted_rank_correlations.csv"), show_col_types = FALSE)
+
+lu_terms <- c("z_log_cess_exposure", "z_pct_agriculture", "z_log_NOx", "z_chirps_storm_cumulative_mm", "rain_x_cess", "rain_x_ag")
+
+lu_joint |>
+  filter(term %in% lu_terms) |>
+  select(model, enrichment, term, beta_mean, beta_lwr, beta_upr, p_positive, dfrac_mean) |>
+  knitr::kable(digits = 2, caption = "Joint model: effect on the logit of the waste-associated fraction per SD of the predictor (95% credible interval, P(beta > 0), and change in the fraction for a median sample).")
+
+lu_joint |>
+  distinct(model, enrichment, n_divergent, max_rhat, min_ess_bulk, min_ebfmi) |>
+  knitr::kable(digits = 2, caption = "Joint-model convergence (4 chains, 3,000 iterations).")
+```
+
+```{r}
+#| label: fig-lu-forest
+#| fig-height: 6
+
+forest <- bind_rows(
+  lu_joint |> filter(term %in% lu_terms) |> transmute(analysis = "joint", model, enrichment, term, est = beta_mean, lwr = beta_lwr, upr = beta_upr),
+  lu_mod |> filter(term %in% lu_terms) |> transmute(analysis = "modular", model, enrichment, term, est = estimate, lwr, upr)) |>
+  mutate(term = factor(term, rev(lu_terms), labels = rev(c("Cesspool exposure", "Agriculture", "log NOx", "Storm rainfall", "Rainfall x cesspool", "Rainfall x agriculture"))),
+         label = paste(term, "|", model))
+
+ggplot(forest, aes(est, interaction(term, model, sep = " | "), color = analysis, xmin = lwr, xmax = upr)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_pointrange(position = position_dodge(width = 0.5), size = 0.35) +
+  facet_wrap(~enrichment, labeller = label_both) +
+  scale_color_manual(values = c(joint = "#0072B2", modular = "#D55E00"), name = NULL) +
+  labs(x = "Effect on logit(waste-associated fraction) per SD of predictor", y = NULL) +
+  theme_minimal(base_size = 9) + theme(legend.position = "bottom")
+```
+
+```{r}
+#| label: lu-modular-perm
+
+lu_mod |> filter(term %in% lu_terms) |>
+  select(model, enrichment, term, estimate, lwr, upr, p_two_sided, share_variance_from_isotopes = frac_between) |>
+  knitr::kable(digits = 2, caption = "Modular repeated-draw analysis (pooled over 300 draws; clustered standard errors).")
+
+obs_m1 <- lu_joint |> filter(model == "M1_cess_ag", term %in% c("z_log_cess_exposure", "z_pct_agriculture")) |>
+  select(enrichment, term, obs_beta = beta_mean, obs_p_positive = p_positive)
+lu_perm |>
+  group_by(enrichment, term) |>
+  summarise(null_sd_of_posterior_means = sd(beta_mean), null_mean_posterior_sd = mean(beta_sd),
+            n_perm = n(), n_P_ge_0.95 = sum(p_positive >= 0.95), n_P_le_0.05 = sum(p_positive <= 0.05), .groups = "drop") |>
+  left_join(obs_m1, by = c("enrichment", "term")) |>
+  left_join(lu_perm |> left_join(obs_m1, by = c("enrichment", "term")) |> group_by(enrichment, term) |>
+              summarise(share_null_abs_beta_ge_observed = mean(abs(beta_mean) >= abs(obs_beta)), .groups = "drop"), by = c("enrichment", "term")) |>
+  knitr::kable(digits = 2, caption = paste0("Permutation null for M1: d15N shuffled across samples (10 shuffles per enrichment setting), covariates and sites unchanged. ",
+    "With only 10 shuffles the null shares have a resolution of 0.1."))
+
+lu_cor |> knitr::kable(digits = 2, caption = "Unadjusted Spearman correlation of the sample posterior-mean waste fraction with each predictor (all variants).")
+```
+
+## Comparison with the GAM {#sec-land-use-gam}
+
+```{r}
+#| label: lu-gam-table
+
+pick <- \(m, t, e, d = lu_joint) {
+  r <- d[d$model == m & d$term == t & d$enrichment == e, ]
+  sprintf("%.2f [%.2f, %.2f], P(>0) = %.2f", r$beta_mean, r$beta_lwr, r$beta_upr, r$p_positive)
+}
+pickm <- \(m, t, e) { r <- lu_mod[lu_mod$model == m & lu_mod$term == t & lu_mod$enrichment == e, ]; sprintf("%.2f [%.2f, %.2f]", r$estimate, r$lwr, r$upr) }
+
+tribble(
+  ~gam_finding, ~gam_effect, ~isotope_quantity, ~joint_none, ~joint_moderate, ~modular_none, ~verdict,
+  "NOx rises with cesspool exposure", "+0.14 [0.01, 0.26]", "waste fraction vs cesspool exposure",
+    pick("M1_cess_ag", "z_log_cess_exposure", "none"), pick("M1_cess_ag", "z_log_cess_exposure", "moderate"), pickm("M1_cess_ag", "z_log_cess_exposure", "none"),
+    "Suggestive: positive, interval touches zero; inconclusive in the conservative check",
+  "NOx rises with agricultural land cover", "+0.46 [0.11, 0.81]", "waste fraction vs agriculture",
+    pick("M1_cess_ag", "z_pct_agriculture", "none"), pick("M1_cess_ag", "z_pct_agriculture", "moderate"), pickm("M1_cess_ag", "z_pct_agriculture", "none"),
+    "Not testable as stated: waste fraction falls where agriculture is high, which fits fertilizer-like or soil nitrate but cannot confirm it",
+  "NOx rises with rainfall x cesspool", "+0.20 [0.07, 0.33]", "waste fraction vs rainfall x cesspool",
+    pick("M4a_rain_x_cess", "rain_x_cess", "none"), pick("M4a_rain_x_cess", "rain_x_cess", "moderate"), pickm("M4a_rain_x_cess", "rain_x_cess", "none"),
+    "Inconclusive: centred near zero, wide interval",
+  "NOx rises with rainfall x agriculture", "+0.66 [0.24, 1.08]", "waste fraction vs rainfall x agriculture",
+    pick("M4b_rain_x_ag", "rain_x_ag", "none"), pick("M4b_rain_x_ag", "rain_x_ag", "moderate"), pickm("M4b_rain_x_ag", "rain_x_ag", "none"),
+    "Inconclusive, and not a waste-fraction question",
+  "(isotope-only) waste fraction vs NOx", "-", "waste fraction vs log NOx",
+    pick("M2_plus_NOx", "z_log_NOx", "none"), pick("M2_plus_NOx", "z_log_NOx", "moderate"), pickm("M2_plus_NOx", "z_log_NOx", "none"),
+    "Suggestive: waste-like d15N is more likely at higher NOx; modular check inconclusive"
+) |>
+  knitr::kable(caption = "GAM findings (standardized effects on log NOx, Figure 5 model) against the isotope-based tests (effects on the logit of the waste fraction per SD; 95% credible intervals).")
+```
+
+### What the tests show {#sec-land-use-summary}
+
+- **Cesspool exposure: positive, but not conclusive.** In the joint model the effect is +0.20 (95% interval -0.02 to 0.47) with no enrichment allowance and +0.27 (0.00 to 0.61) with it;
+  P(positive) is 0.96 to 0.97. For a median sample that is a rise of about 0.05 to 0.06 in the waste fraction per SD. The conservative modular check gives +0.18 (-0.20 to 0.57), and in the
+  permutation null 2 of 10 shuffles produced an effect at least as large, so the data are compatible with a modest positive effect but do not establish it.
+- **Agriculture: the waste fraction goes down, not up.** The joint model gives -0.20 (-0.42 to 0.01) and -0.33 (-0.74 to -0.005) and P(positive) of 0.02 to 0.03; the modular check is -0.24 (-0.59 to 0.11).
+  The raw rank correlation between d15N-based fraction and agriculture is -0.35. This is what fertilizer-like or soil nitrate would produce, but the isotope signal for those sources
+  overlaps (@sec-ident-summary), so it neither confirms nor contradicts the GAM's agricultural effect on NOx.
+- **NOx: higher concentrations carry more waste-like nitrate**, +0.22 (0.00 to 0.49) with no enrichment allowance and +0.29 (0.02 to 0.62) with it (P = 0.98), after adjusting for cesspool and agriculture; the conservative check is inconclusive.
+  Note that isotope samples were targeted at NOx of at least about 1.8 umol/L, so this applies within that range.
+- **Rainfall and its interactions: no evidence either way.** Rainfall alone is about 0 (P of 0.56 to 0.65). Both interactions are centred near zero with wide intervals (for rainfall x agriculture up to about +/-1 on the logit scale),
+  so these data cannot confirm or rule out the GAM interactions. The earlier plot of d15N against rainfall led to the same conclusion.
+- **Enrichment assumption:** effect directions do not change; magnitudes are 25 to 70% larger and intervals wider with the allowance. The data therefore support the direction, but not a precise size, of the associations.
+- **Supported by the isotopes vs driven by the prior.** The posterior SD of each main effect is 0.11 to 0.20 against a prior SD of 1, and the shuffled-d15N fits give posterior means that vary about as much as the posterior SD (0.13 to 0.17),
+  so the posteriors are data-driven and about as wide as expected under no relationship. Interaction terms (SD 0.25 to 0.5) are the least informed.
+- **Caveats.** 108 samples and 48 ahupuaʻa, with 29 ahupuaʻa having a single sample; cesspool and agriculture are ahupuaʻa-level values; island effects for Molokaʻi (7 samples) and Lānaʻi (1) rest mostly on the prior;
+  the 10 permutations are a coarse check; and the waste-associated class pools wastewater with manure, so a positive link with agriculture could still arise from animal-waste fertilizer.
+
+# Rainfall interactions {#sec-rain}
+
+**Question.** The GAM found that NOx rises more steeply with storm rainfall where cesspool exposure and agricultural land cover are high. If rainfall delivered more waste-associated nitrate where exposure is high,
+the waste-associated fraction should increase with rainfall more steeply at high than at low exposure (a positive rainfall x exposure interaction). An enriched d15N during rain would not by itself prove more cesspool nitrogen,
+because transformation, dilution or residence time can also change d15N.
+
+**Prespecified models** (code: `scripts/isotope_06_rainfall_interactions.R`). Each has storm rainfall, cesspool exposure, agriculture, island and an ahupuaʻa random intercept, plus the interaction terms:
+M4a adds rainfall x cesspool, M4b adds rainfall x agriculture, and M5 adds both together to check whether the two can be estimated jointly. Each is fitted two ways:
+
+- as the **joint mixing + regression model** of @sec-land-use (response = waste-associated fraction, with and without the enrichment allowance); and
+- with **observed d15N as the response** (brms Gaussian model, Normal(0, 2) priors on coefficients), which makes no mixing-model assumption.
+
+Predictions use the ahupuaʻa-level z-scores at the 10th and 90th percentile of the isotope samples for the exposure of interest (the other exposure at its median, Oʻahu as the island), across rainfall from the 5th to the 95th percentile of the samples
+(about 139 to 650 mm). The joint-model curves show the population-average waste fraction (integrating over the sample-level and ahupuaʻa spread), with 95% credible bands.
+
+```{r}
+#| label: rain-load
+
+rn_int <- read_csv(file.path(mix_dir, "rain_joint_interactions.csv"), show_col_types = FALSE)
+rn_pred <- read_csv(file.path(mix_dir, "rain_joint_predictions.csv"), show_col_types = FALSE)
+rn_bint <- read_csv(file.path(mix_dir, "rain_brms_interactions.csv"), show_col_types = FALSE)
+rn_bpred <- read_csv(file.path(mix_dir, "rain_brms_predictions.csv"), show_col_types = FALSE)
+rn_lev <- read_csv(file.path(mix_dir, "rain_exposure_levels.csv"), show_col_types = FALSE)
+rn_cover <- read_csv(file.path(mix_dir, "rain_design_coverage.csv"), show_col_types = FALSE)
+
+# observed rainfall range of samples within 0.5 SD of each exposure level (beyond it the curves are extrapolation)
+rn_range <- pmap_dfr(list(rn_lev$exposure, rn_lev$z_lo, rn_lev$z_hi), \(ex, lo, hi) {
+  col <- if (ex == "cesspool") "z_log_cess_exposure" else "z_pct_agriculture"
+  map_dfr(c(low = lo, high = hi), \(z) {
+    s <- water_iso[abs(water_iso[[col]] - z) <= 0.5, ]
+    tibble(n_samples = nrow(s), rain_min = min(s$chirps_storm_cumulative_mm), rain_max = max(s$chirps_storm_cumulative_mm),
+           n_above_450mm = sum(s$chirps_storm_cumulative_mm > 450))
+  }, .id = "level") |> mutate(exposure = ex, .before = 1)
+})
+
+rn_cover |> knitr::kable(caption = "Samples by exposure group (lowest quartile, middle, highest quartile) and storm rainfall band: where the data can inform an interaction.")
+rn_range |> knitr::kable(digits = 0, caption = "Samples within 0.5 SD of the low (10th percentile) and high (90th percentile) exposure levels, and the rainfall range they cover.")
+```
+
+```{r}
+#| label: rain-effects
+
+bind_rows(
+  rn_int |> transmute(response = "waste fraction (joint model, logit scale)", model, enrichment, term, estimate = beta_int_mean, sd = beta_int_sd, lwr = beta_int_lwr, upr = beta_int_upr, p_positive),
+  rn_bint |> transmute(response = "observed d15N (per mil per SD x SD)", model, enrichment = "not applicable",
+                       term = if_else(str_detect(term, "cess"), "rain_x_cess", "rain_x_ag"), estimate = mean, sd, lwr, upr, p_positive)) |>
+  knitr::kable(digits = 2, caption = "Interaction coefficients per SD of rainfall x SD of exposure. Positive = rainfall slope steeper at higher exposure.")
+
+rn_int |>
+  select(model, enrichment, exposure, contrast_mean, contrast_lwr, contrast_upr, n_divergent, max_rhat, min_ess_bulk, min_ebfmi) |>
+  knitr::kable(digits = 2, caption = paste0("Difference in the rainfall slope (logit scale, per SD of rainfall) between the 90th and 10th percentile of exposure, and convergence ",
+    "(brms models: at most 2 divergent transitions in 10,000 draws, Rhat at most 1.00)."))
+```
+
+```{r}
+#| label: fig-rain-fraction
+#| fig-height: 6
+
+pf <- rn_pred |>
+  filter((model == "M4a_rain_x_cess" & exposure == "cesspool") | (model == "M4b_rain_x_ag" & exposure == "agriculture")) |>
+  left_join(rn_range, by = c("exposure", "level")) |>
+  mutate(in_range = rain_mm >= rain_min & rain_mm <= rain_max, level = factor(level, c("low", "high")),
+         grp = interaction(level, in_range))
+
+ggplot(pf, aes(rain_mm, fraction, color = level, fill = level)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr, group = level), alpha = 0.15, color = NA) +
+  geom_line(aes(group = grp, linetype = in_range), linewidth = 0.8) +
+  scale_linetype_manual(values = c(`TRUE` = "solid", `FALSE` = "dashed"), labels = c(`TRUE` = "within observed range", `FALSE` = "extrapolated"), name = NULL) +
+  scale_color_manual(values = c(low = "#0072B2", high = "#D55E00"), name = "exposure level") +
+  scale_fill_manual(values = c(low = "#0072B2", high = "#D55E00"), guide = "none") +
+  coord_cartesian(ylim = c(0, 1)) +
+  facet_grid(enrichment ~ exposure, labeller = label_both) +
+  labs(x = "Storm rainfall (mm)", y = "Predicted waste-associated fraction (mean, 95% interval)") +
+  theme_minimal(base_size = 10) + theme(legend.position = "bottom")
+```
+
+```{r}
+#| label: fig-rain-d15n
+#| fig-height: 4
+
+pb <- rn_bpred |>
+  filter((model == "M4a_rain_x_cess" & exposure == "cesspool") | (model == "M4b_rain_x_ag" & exposure == "agriculture")) |>
+  left_join(rn_range, by = c("exposure", "level")) |>
+  mutate(in_range = rain_mm >= rain_min & rain_mm <= rain_max, level = factor(level, c("low", "high")), grp = interaction(level, in_range))
+
+ggplot(pb, aes(rain_mm, d15N, color = level, fill = level)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr, group = level), alpha = 0.15, color = NA) +
+  geom_line(aes(group = grp, linetype = in_range), linewidth = 0.8) +
+  scale_linetype_manual(values = c(`TRUE` = "solid", `FALSE` = "dashed"), labels = c(`TRUE` = "within observed range", `FALSE` = "extrapolated"), name = NULL) +
+  scale_color_manual(values = c(low = "#0072B2", high = "#D55E00"), name = "exposure level") +
+  scale_fill_manual(values = c(low = "#0072B2", high = "#D55E00"), guide = "none") +
+  facet_wrap(~exposure, labeller = label_both) +
+  labs(x = "Storm rainfall (mm)", y = expression(Predicted~delta^{15}*N~"(per mil; mean, 95% interval)")) +
+  theme_minimal(base_size = 10) + theme(legend.position = "bottom")
+```
+
+### What the rainfall tests show {#sec-rain-summary}
+
+- **Neither interaction is distinguishable from zero, in either response.** Rainfall x cesspool is +0.10 (95% interval -0.36 to 0.65) on the logit scale with no enrichment allowance and +0.02 (-0.51 to 0.57) with it; for observed d15N it is
+  +0.27 (-0.84 to 1.40) per mil. Rainfall x agriculture is +0.02 (-0.56 to 0.68) and +0.13 (-0.80 to 1.13), and +0.13 (-1.45 to 1.69) per mil. P(interaction > 0) is 0.47 to 0.69 throughout.
+- **The data cannot rule out sizeable effects.** Between the 90th and 10th percentile of cesspool exposure the rainfall slope could differ by up to about +1.6 logit units per SD of rainfall (upper 95% bound), and by up to about +1.9 (no allowance) to +3.1 (with allowance) for agriculture. Posterior SDs of the interactions (0.25 to 0.53 logit units; 0.57 to 0.81 per mil) are too large to detect
+  anything much smaller than that, so a null result here is weak evidence of no effect.
+- **Both interactions can be fitted together, but add little.** M5 gives almost the same interaction estimates as the separate models (cesspool +0.10, agriculture -0.01 with no allowance) with slightly wider intervals (SD 0.27 and 0.33).
+- **Predicted curves overlap.** At high cesspool exposure the predicted waste fraction goes from about 0.62 to 0.70 across the rainfall range, and at low exposure from 0.54 to 0.51; the bands (about 0.45 wide) overlap throughout.
+  With no enrichment allowance the high-agriculture fraction is lower than the low-agriculture fraction at every rainfall (about 0.42 to 0.48 vs 0.56 to 0.60) with parallel slopes, repeating the negative agriculture association from the previous section; with the allowance the high-agriculture curve rises (about 0.18 to 0.38) but its band spans most of 0 to 1.
+- **Much of the plot is extrapolation.** There are no samples above 450 mm among the lowest-cesspool quartile, and the highest-agriculture samples (12 within 0.5 SD of the 90th percentile) cover only 140 to 294 mm.
+  Beyond those ranges the curves are dashed. Because rainfall comes from 5 km CHIRPS pixels, many samples share a value, and the largest rainfall values rest on few pixels.
+- **Mechanistic reading.** The isotopes neither show that rainfall delivers more waste-like nitrate where cesspool density is high nor argue against it. The GAM interaction (higher NOx at high exposure in storm-affected areas) could still arise from more
+  delivery of waste-associated or fertilizer-like nitrate, with no change in the waste fraction if the added nitrate has a d15N similar to the background. An enriched signal during rainfall would not have proved cesspool loading, and the absence of one does not
+  exclude it. Direct evidence would need a second tracer (for example nitrate d18O, or a wastewater indicator such as the optical brighteners already measured).
+
+# Figures: what the isotopes say about the drivers of nitrate {#sec-figures}
+
+Figures are produced by `scripts/isotope_07_figures.R` from the saved model outputs and written to `output/isotope/figures/` as vector PDF and 600-dpi PNG. Panel letters are used, titles are left to the captions,
+and the island colours match the rest of the project.
+
+```{r}
+#| label: figs-build
+#| include: false
+
+source(here("scripts", "isotope_07_figures.R"))
+```
+
+```{r}
+#| label: fig-iso-1
+#| fig-height: 6
+#| fig-cap: "Observed d15N of nitrate (grey histogram) against the literature distributions of nitrogen sources (A), and the probability that waste-associated nitrogen dominates a sample as a function of d15N (B). Lines in B are the four mixing models; the grey band marks probabilities between 0.2 and 0.8, where a sample cannot be classified confidently; ticks mark the 108 samples. The independent models give each sample its own fraction; the pooled models share a population distribution of fractions; the enrichment allowance adds a denitrification-like shift of Uniform(0, 5) per mil."
+
+fig1
+```
+
+```{r}
+#| label: fig-iso-2
+#| fig-height: 3.8
+#| fig-cap: "Nitrate concentration and d15N. (A) d15N against NO3+NO2 for the 108 isotope samples (line: GAM smooth with 95% band). (B) Mean waste-associated fraction by NO3+NO2 class (points and 95% credible intervals from the isotope-only independent mixing model, carrying posterior uncertainty; dotted line: 0.5; n = samples per class). Intervals cover isotope uncertainty only, not sampling variation among samples."
+
+fig2
+```
+
+```{r}
+#| label: fig-iso-3
+#| fig-height: 7.4
+#| fig-cap: "Land-use drivers. d15N against cesspool exposure (A) and agricultural land cover (B), with linear fits and 95% bands (unadjusted; Spearman correlations shown). (C) Effects on the logit of the waste-associated fraction per SD of each predictor, adjusted for the other predictors, island and ahupua'a: joint mixing-regression models without and with an enrichment allowance, and the conservative modular check (95% intervals)."
+
+fig3
+```
+
+```{r}
+#| label: fig-iso-4
+#| fig-height: 6.4
+#| fig-cap: "Rainfall interactions. Predicted waste-associated fraction (A; joint model, solid with 95% band = no enrichment allowance, dashed = enrichment allowance) and predicted d15N (B; observed-d15N model, 95% band) against storm rainfall at low (10th percentile) and high (90th percentile) cesspool exposure and agricultural land cover. Curves are shown only over the rainfall range of samples near each exposure level (rug marks)."
+
+fig4
+```
+
+```{r}
+#| label: fig-iso-5
+#| fig-height: 3.8
+#| fig-cap: "Drivers of NOx in the GAM (A; standardized effects on log NOx, 95% intervals) and the isotope-based tests of the same drivers (B; effects on the logit of the waste-associated fraction per SD of the predictor, joint model). Text gives the reading of each driver."
+
+fig5
+```
+
+**What the figures show.**
+
+- **The isotopes place most samples between the sources (Figure 1).** Median d15N is 8.7 per mil, above the fertilizer, soil and marine distributions and below the centre of the wastewater distribution. P(waste-associated N dominates) is a smooth function of d15N,
+  and where it crosses 0.5 shifts from about 9 per mil to about 16 per mil depending on the model, so d15N alone cannot classify most samples.
+- **Nitrate concentration is not clearly tied to a source (Figure 2).** d15N is weakly related to NOx (Spearman rho = 0.15) and the mean waste fraction is about 0.45 to 0.6 in every concentration class with overlapping intervals.
+- **The clearest isotope-visible land-use signals are agricultural lightening and a modest cesspool enrichment (Figure 3).** d15N is lower where agricultural land cover is high (rho = -0.35) and slightly higher with cesspool exposure (rho = 0.15). After adjustment the cesspool effect on the waste fraction is positive but touches zero, and the agriculture effect is negative.
+- **There is no detectable rainfall amplification in the isotopes (Figure 4).** Predicted curves at low and high exposure have overlapping bands over the range the data cover, so rainfall x exposure effects are not resolved.
+- **Taken together (Figure 5),** the isotopes lean toward the GAM's cesspool effect on NOx but cannot confirm it, cannot test the agricultural or interaction effects as stated, and show nothing that contradicts the GAM.
+  Direct support for either source would need a second tracer.
+
+# Background
+# Methods
+
+## Isotope laboratory methods (from the lab's description; to be completed)
+
+Water samples were filtered and frozen before analysis (user-reported). The lab's method note says the analysis used a
+ThermoFinnigan instrument (the text is cut off in the screenshot provided, so the exact model and the nitrate conversion method are not recorded yet).
+Isotopic corrections used standards prepared by the lab and run alongside the samples: IAEA-N3, USGS32, USGS34, USGS35,
+and an off-the-shelf NaNO3 with a d15N of -52.2 per mil.
+
+Still needed for this section: the nitrate conversion method (for example bacterial denitrifier), the analyzer model, the reported precision
+(SD of replicate standards or samples, which sets the analytical error term in the mixing model), the minimum nitrate mass or concentration for reliable d15N,
+and whether the measured pool is NO3 only or NO3 + NO2 (the user reports it as NOx).
+
+# Results
+# Discussion
+# Reproducibility
+```{r}
+#| label: session-info
+sessioninfo::session_info()
+```

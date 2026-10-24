@@ -1,0 +1,7 @@
+exposure,group,<200 mm,200-300,300-450,>450 mm
+agriculture,high,12,15,1,0
+agriculture,low,1,19,2,6
+agriculture,middle,19,13,13,7
+cesspool,high,13,6,6,2
+cesspool,low,7,17,3,0
+cesspool,middle,12,24,7,11
