@@ -44,17 +44,37 @@ island_levels <- c("O'ahu", "Maui", "Moloka'i", "L\u0101na'i")
 island_pal <- c("O'ahu" = "#1565C0", "Maui" = "#2E7D32",
                 "Moloka'i" = "#E65100", "L\u0101na'i" = "#6A1B9A")
 dir.create(here("output", "isotope"), showWarnings = FALSE, recursive = TRUE)
+
+# Data and counts used by inline text throughout
+water_all <- readRDS(here("output", "isotope", "data", "water_all.rds"))
+water_iso <- readRDS(here("output", "isotope", "data", "water_iso.rds"))
+iso_audit <- read_csv(here("output", "isotope", "tables", "isotope_join_audit.csv"), show_col_types = FALSE)
+
+# Sample counts quoted in the text, computed from the data (never hand-typed)
+n_all     <- nrow(water_all)
+n_iso     <- nrow(water_iso)
+n_noniso  <- n_all - n_iso
+n_nox     <- sum(!is.na(water_all$NO3NO2))
+n_si_iso  <- sum(!is.na(water_iso$SiO2))
+n_ahup    <- n_distinct(water_iso$ahupuaa_key)
+n_single  <- sum(table(water_iso$ahupuaa_key) == 1)
+n_ag_low  <- sum(water_iso$pct_agriculture < 0.01)
+n_mol     <- sum(water_iso$island == "Moloka'i")
+n_lan     <- sum(water_iso$island == "Lāna'i")
+nox_min   <- min(water_iso$NO3NO2)
+pct_below_nox_min <- round(100 * mean(water_all$NO3NO2[!is.na(water_all$NO3NO2)] < nox_min))
+
+# Number of samples the cached Bayesian fits (output/isotope/model_objects) were run on
+fit_path <- here("output", "isotope", "model_objects", "mix_draws_f_none.rds")
+n_fit <- if (file.exists(fit_path)) ncol(readRDS(fit_path)) else NA_integer_
 ```
 # Data and quality control {#sec-data}
-Source: `scripts/isotope_01_clean_data.R`. `water_all` holds all 746 samples; `water_iso` holds the
+Source: `scripts/isotope_01_clean_data.R`. `water_all` holds all `r n_all` samples; `water_iso` holds the
 samples with a valid d15N. d15N was measured on NOx (nitrate + nitrite) in water that was filtered
 and frozen. `in_gam` flags the samples used in the NO3+NO2 GAM (Figure 5), and the `z_*` columns are
 standardized with the GAM subset's mean and SD so isotope-model coefficients share the GAM's scale.
 ```{r}
 #| label: load-data
-water_all <- readRDS(here("output", "isotope", "data", "water_all.rds"))
-water_iso <- readRDS(here("output", "isotope", "data", "water_iso.rds"))
-iso_audit <- read_csv(here("output", "isotope", "tables", "isotope_join_audit.csv"), show_col_types = FALSE)
 tibble(
   dataset = c("water_all", "water_iso", "water_iso also in GAM data", "GAM data (water_all)"),
   n = c(nrow(water_all), nrow(water_iso), sum(water_iso$in_gam), sum(water_all$in_gam)),
@@ -64,6 +84,20 @@ tibble(
                 n_distinct(water_iso$ahupuaa_key[water_iso$in_gam]), n_distinct(water_all$ahupuaa_key[water_all$in_gam]))
 ) |>
   knitr::kable(caption = "Dataset sizes.")
+```
+```{r}
+#| label: n-fit-consistency
+#| output: asis
+if (!is.na(n_fit) && n_fit != n_iso) {
+  cat("::: {.callout-warning}
+**Cached Bayesian fits are out of date.** The mixing, land-use and rainfall models ",
+      "(sections on the Bayesian models; `output/isotope/model_objects`) were fitted on ", n_fit,
+      " isotope samples, but `water_iso` now has ", n_iso, ". Everything computed live in this report uses ",
+      n_iso, " samples; the cached-model sections and their quoted estimates reflect ", n_fit,
+      " until the model scripts are re-run.
+:::
+", sep = "")
+}
 ```
 ## Isotope-to-sample matching {#sec-iso-match}
 ```{r}
@@ -148,9 +182,9 @@ p_iso_nox <- ggplot(water_iso, aes(NO3NO2, N15, color = island)) + geom_point(al
 p_n15 | p_nox | p_iso_nox
 ```
 # Representativeness of the isotope subset {#sec-representative}
-The question is whether the 108 isotope samples can stand in for the full set of 746. Each variable
-is compared between isotope samples and the 638 samples without isotopes (an independent contrast;
-comparing against all 746 would put the isotope samples on both sides). The standardized mean difference
+The question is whether the `r n_iso` isotope samples can stand in for the full set of `r n_all`. Each variable
+is compared between isotope samples and the `r n_noniso` samples without isotopes (an independent contrast;
+comparing against all `r n_all` would put the isotope samples on both sides). The standardized mean difference
 (SMD) is the difference in means divided by the pooled SD; |SMD| < 0.1 is usually read as balanced and
 > 0.5 as a large imbalance. NOx, silica and cesspool exposure are compared on the same log scale used in the GAM.
 ```{r}
@@ -265,15 +299,15 @@ tidy(target_glm, conf.int = TRUE, exponentiate = TRUE) |>
 ```
 **Reading the comparison.** Isotope sampling was targeted, not random or stratified. The isotope
 subset is shifted toward high NOx (SMD about 1.6 on the log scale) and, because NOx and silica covary,
-toward high silica (SMD about 0.9). No isotope sample has NOx below about 1.8 umol/L, a range that holds
-62% of the 723 samples with a NOx value, and coverage is 0% for NOx at or below 1 umol/L. Among samples above
+toward high silica (SMD about 0.9). No isotope sample has NOx below about `r signif(nox_min, 2)` umol/L, a range that holds
+`r pct_below_nox_min`% of the `r n_nox` samples with a NOx value, and coverage is 0% for NOx at or below 1 umol/L. Among samples above
 that minimum, isotope and non-isotope samples are much closer (see the right-hand column of the SMD table),
 and the isotope subset covers all four islands. Isotope results therefore describe nitrate-enriched water
 (NOx at or above about 1.8 umol/L) and cannot be extrapolated to low-NOx samples. Because selection
 depended on NOx, any later comparison with the GAM should be repeated on the GAM data restricted to
 the same NOx range.
 # Exploratory d15N relationships {#sec-explore}
-These analyses use the 108 isotope samples and are exploratory. They do not attribute sources. Because
+These analyses use the `r n_iso` isotope samples and are exploratory. They do not attribute sources. Because
 isotope samples were targeted at NOx >= about 1.8 umol/L (@sec-iso-targeting), every pattern here applies to
 nitrate-enriched water only. Predictors use the same transformations as the GAM (log1p cesspool exposure, log
 silica, raw agriculture fraction and rainfall). Smooths are single-predictor GAMs (`s(x, k = 4)`, REML) that
@@ -306,7 +340,7 @@ expl_stats <- expl_long |>
   ungroup()
 write_csv(select(expl_stats, -label), here("output", "isotope", "tables", "d15N_exploratory_stats.csv"))
 expl_stats |> select(-label) |>
-  knitr::kable(digits = 3, caption = "d15N vs each predictor: Spearman rank correlation and single-predictor GAM smooth (n = 108; silica n = 104).")
+  knitr::kable(digits = 3, caption = paste0("d15N vs each predictor: Spearman rank correlation and single-predictor GAM smooth (n = ", n_iso, "; silica n = ", n_si_iso, ")."))
 ```
 ```{r}
 #| label: fig-expl-scatter
@@ -374,7 +408,7 @@ p_ahup <- ggplot(ahup_sum, aes(mean, reorder(lab, mean), color = island)) +
 ## Does d15N respond to rainfall differently along the cesspool and agriculture gradients? {#sec-expl-interaction}
 The plots split samples at the median of each land-use variable for display only; the models use the
 continuous standardized predictors (GAM z-scores), island as a fixed effect and an ahupua'a random intercept.
-With 108 samples, 48 ahupua'a and 29 ahupua'a with a single sample, these models are underpowered for interactions.
+With `r n_iso` samples, `r n_ahup` ahupua'a and `r n_single` ahupua'a with a single sample, these models are underpowered for interactions.
 ```{r}
 #| label: expl-interaction-models
 int_dat <- water_iso |> mutate(ahup = factor(ahupuaa_key))
@@ -413,12 +447,12 @@ ggplot(split_dat, aes(chirps_storm_cumulative_mm, N15, color = group, fill = gro
   theme_minimal(base_size = 10) + theme(legend.position = "bottom")
 ```
 ## Summary: relationships worth testing with Bayesian models {#sec-expl-summary}
-These are exploratory associations in 108 samples (48 ahupua'a) with no multiplicity correction. They are
+These are exploratory associations in `r n_iso` samples (`r n_ahup` ahupua'a) with no multiplicity correction. They are
 used only to choose which hypotheses to carry forward.
 - **Agriculture (lower d15N where agriculture is higher).** This is the clearest signal (Spearman rho about -0.36,
   smooth p about 0.001) and it is monotonic. It is in the direction expected if agricultural N is isotopically
   light (synthetic fertilizer), and it is opposite to a wastewater explanation. Caveats: agriculture is an ahupua'a-level
-  value (many samples share the same value, visible as vertical stacks), 44 of 108 samples are below 1% agriculture, and
+  value (many samples share the same value, visible as vertical stacks), `r n_ag_low` of `r n_iso` samples are below 1% agriculture, and
   the effect shrinks and loses significance once island and ahupua'a are included (about -0.7 per mil per SD, 95% interval
   roughly -1.5 to 0.2). Carry forward as a hypothesis.
 - **Cesspool exposure (weakly heavier d15N where exposure is higher).** The direction matches a wastewater signal
@@ -439,7 +473,7 @@ used only to choose which hypotheses to carry forward.
   so many samples share one value.
 - **Clustering is modest.** After island, the SD of d15N between ahupua'a is about 1.1 per mil (interval about 0.3 to 4.3)
   against about 2.8 per mil of residual variation, so a watershed random effect is worth keeping but does not
-  dominate. Oʻahu has the widest spread of d15N, and Molokaʻi (n = 7) and Lānaʻi (n = 1) are too small for island-level conclusions.
+  dominate. Oʻahu has the widest spread of d15N, and Molokaʻi (n = `r n_mol`) and Lānaʻi (n = `r n_lan`) are too small for island-level conclusions.
 Hypotheses to take into the Bayesian steps: (1) d15N decreases with agriculture; (2) d15N increases with cesspool exposure;
 (3) the two interactions with rainfall, treated as separate prespecified tests. Each should include an island fixed effect and an ahupua'a random
 intercept, and any NOx range restriction decided in Step 2.
@@ -551,7 +585,7 @@ ggplot() +
   guides(color = guide_legend(nrow = 2), fill = guide_legend(nrow = 2)) +
   theme_minimal(base_size = 10) + theme(legend.position = "bottom")
 ```
-The dashed black curve is the density of the 108 observed sample d15N values (rug below).
+The dashed black curve is the density of the `r n_iso` observed sample d15N values (rug below).
 
 ## What the literature can and cannot separate {#sec-em-identifiability}
 
@@ -753,7 +787,7 @@ roughly right.
 
 # Isotope-only Bayesian mixing model {#sec-mixing-model}
 
-**Question.** Using only d15N and the literature priors, how much of the nitrate in each of the 108 isotope samples looks waste-associated rather than from other sources?
+**Question.** Using only d15N and the literature priors, how much of the nitrate in each of the `r n_fit` isotope samples (the samples the cached fits were run on) looks waste-associated rather than from other sources?
 The fractions are estimated without agricultural land cover, the cesspool index, NOx concentration or any GAM result, so they can be compared with those predictors afterwards.
 
 **Structure (from the identifiability study).** Two sources: waste-associated N (W) and other N (O: synthetic fertilizer, soil and marine nitrate pooled). For sample i,
@@ -856,7 +890,7 @@ mx_all |>
             d15N_at_p80 = approx(p_gt50, N15, 0.8, ties = mean)$y,
             n_conf_waste = sum(p_gt50 >= 0.8), n_conf_other = sum(p_gt50 <= 0.2), n_unresolved = sum(p_gt50 > 0.2 & p_gt50 < 0.8),
             .groups = "drop") |>
-  knitr::kable(digits = 2, caption = paste0("Sample-level summary (108 samples). P(waste dominant) = P(f > 0.5). n_conf_waste = samples with P >= 0.8; ",
+  knitr::kable(digits = 2, caption = paste0("Sample-level summary (", n_fit, " samples). P(waste dominant) = P(f > 0.5). n_conf_waste = samples with P >= 0.8; ",
     "n_conf_other = P <= 0.2. d15N_at_pXX = d15N at which P(waste dominant) = 0.2, 0.5, 0.8."))
 
 write_csv(mx_all, here("output", "isotope", "tables", "mix_sample_posteriors_four_variants.csv"))
@@ -926,7 +960,7 @@ sets the fractions; land use is used only as a predictor. Two analyses carry the
   on the same predictors and pooled with Rubin's rules, so the isotope uncertainty enters through the between-draw variance. Those draws ignore the covariates, so this approach is expected
   to be attenuated; it keeps the isotope-only estimates untouched.
 
-Prespecified models: M1 = cesspool + agriculture; M2 = M1 + log NOx; M3 = M1 + storm rainfall; M4a and M4b add rainfall x cesspool and rainfall x agriculture separately (the two interactions are not fitted together, given 108 samples and 48 ahupuaʻa).
+Prespecified models: M1 = cesspool + agriculture; M2 = M1 + log NOx; M3 = M1 + storm rainfall; M4a and M4b add rainfall x cesspool and rainfall x agriculture separately (the two interactions are not fitted together, given `r n_fit` samples and 48 ahupuaʻa).
 
 ```{r}
 #| label: lu-load
@@ -1036,7 +1070,7 @@ tribble(
 - **Enrichment assumption:** effect directions do not change; magnitudes are 25 to 70% larger and intervals wider with the allowance. The data therefore support the direction, but not a precise size, of the associations.
 - **Supported by the isotopes vs driven by the prior.** The posterior SD of each main effect is 0.11 to 0.20 against a prior SD of 1, and the shuffled-d15N fits give posterior means that vary about as much as the posterior SD (0.13 to 0.17),
   so the posteriors are data-driven and about as wide as expected under no relationship. Interaction terms (SD 0.25 to 0.5) are the least informed.
-- **Caveats.** 108 samples and 48 ahupuaʻa, with 29 ahupuaʻa having a single sample; cesspool and agriculture are ahupuaʻa-level values; island effects for Molokaʻi (7 samples) and Lānaʻi (1) rest mostly on the prior;
+- **Caveats.** `r n_fit` samples and 48 ahupuaʻa, with 29 ahupuaʻa having a single sample; cesspool and agriculture are ahupuaʻa-level values; island effects for Molokaʻi (7 samples) and Lānaʻi (1) rest mostly on the prior;
   the 10 permutations are a coarse check; and the waste-associated class pools wastewater with manure, so a positive link with agriculture could still arise from animal-waste fertilizer.
 
 # Rainfall interactions {#sec-rain}
@@ -1165,7 +1199,7 @@ source(here("scripts", "isotope_07_figures.R"))
 ```{r}
 #| label: fig-iso-1
 #| fig-height: 6
-#| fig-cap: "Observed d15N of nitrate (grey histogram) against the literature distributions of nitrogen sources (A), and the probability that waste-associated nitrogen dominates a sample as a function of d15N (B). Lines in B are the four mixing models; the grey band marks probabilities between 0.2 and 0.8, where a sample cannot be classified confidently; ticks mark the 108 samples. The independent models give each sample its own fraction; the pooled models share a population distribution of fractions; the enrichment allowance adds a denitrification-like shift of Uniform(0, 5) per mil."
+#| fig-cap: !expr 'paste0("Observed d15N of nitrate (grey histogram) against the literature distributions of nitrogen sources (A), and the probability that waste-associated nitrogen dominates a sample as a function of d15N (B). Lines in B are the four mixing models; the grey band marks probabilities between 0.2 and 0.8, where a sample cannot be classified confidently; ticks mark the ", n_fit, " samples. The independent models give each sample its own fraction; the pooled models share a population distribution of fractions; the enrichment allowance adds a denitrification-like shift of Uniform(0, 5) per mil.")'
 
 fig1
 ```
@@ -1173,7 +1207,7 @@ fig1
 ```{r}
 #| label: fig-iso-2
 #| fig-height: 3.8
-#| fig-cap: "Nitrate concentration and d15N. (A) d15N against NO3+NO2 for the 108 isotope samples (line: GAM smooth with 95% band). (B) Mean waste-associated fraction by NO3+NO2 class (points and 95% credible intervals from the isotope-only independent mixing model, carrying posterior uncertainty; dotted line: 0.5; n = samples per class). Intervals cover isotope uncertainty only, not sampling variation among samples."
+#| fig-cap: !expr 'paste0("Nitrate concentration and d15N. (A) d15N against NO3+NO2 for the ", n_iso, " isotope samples (line: GAM smooth with 95% band). (B) Mean waste-associated fraction by NO3+NO2 class (points and 95% credible intervals from the isotope-only independent mixing model, carrying posterior uncertainty; dotted line: 0.5; n = samples per class). Intervals cover isotope uncertainty only, not sampling variation among samples.")'
 
 fig2
 ```

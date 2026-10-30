@@ -131,6 +131,10 @@ fix_island <- function(x) {
     stringr::str_trim()
 }
 
+# Normalise apostrophe variants only (keeps macrons) — use on both sides of
+# island-level joins; soilmoist/livestock use ASCII ', chem_master uses U+2018
+normalize_island <- function(x) str_replace_all(x, "['\u2018\u2019\u02bc]", "'")
+
 # Canonical island factor levels (display form)
 island_levels <- c("O'ahu", "Maui", "Moloka'i", "Lāna'i")
 
@@ -241,77 +245,119 @@ save_supp <- function(plot, name, width, height) {
 
 ---
 
-# Data Inventory and QA/QC {#sec-data-inventory}
+# Data Assembly {#sec-data-assembly}
 
-> **Step 1.** Audit the sample data before doing any modeling.
-> Target: explicit sample-flow table, site_id creation, coordinate QA.
+> **Steps 1–5.** Import and QA every dataset, compute derived covariates (stream and
+> NPDES distances, CHIRPS storm rainfall, cesspool exposure index), merge the fDOM and
+> isotope tracer panels, and write the complete one-row-per-sample `chem_master` used by
+> every section below. Nothing downstream re-reads `data/chem_master.csv` or modifies
+> `chem_master`.
+
+::: {.callout-tip}
+**Updating with new fDOM or isotope results.** Add the new rows to
+`data/WIYW_FDOM_data_QCed.csv` and/or `data/isotope.csv`, then run the chunks in this
+section only (in RStudio, place the cursor in the first chunk of
+[§ Sampling Coverage](#sec-sampling-coverage) and use *Run All Chunks Above*)
+or render the whole document. `data/chem_master.csv` is rewritten at the end of the
+section (`save-master-dataset`). Tracer sample IDs are matched whitespace-insensitively
+(`"OA 58"` = `"OA58"`); IDs that do not match a chemistry sample are listed in
+@sec-tracer-merge rather than guessed. Repeated lab runs of the same sample are averaged.
+:::
+
+## Input files {#sec-data-inputs}
 
 ```{r}
-#| label: load-raw-chemistry
+#| label: data-input-paths
 
-chem_raw <- read_csv(here("data", "clean_chemdata.csv"), show_col_types = FALSE)
+# Single registry of every input file. Change a path here and nowhere else.
+input_files <- list(
+  # Core chemistry and tracer panels (updated regularly)
+  chemistry        = here("data", "clean_chemdata.csv"),
+  fdom             = here("data", "WIYW_FDOM_data_QCed.csv"),
+  isotope          = here("data", "isotope.csv"),
+  # Sample-level spatial covariates
+  ahupuaa          = here("data", "ahupuaa_cache.csv"),
+  cess_dist        = here("data", "sample_cesspool_distances.csv"),
+  cess_buf         = here("data", "cesspool_buffer_counts.csv"),
+  fetch            = here("data", "wave_fetch.csv"),
+  waveheight       = here("data", "sample_waveheight.csv"),
+  # Ahupuaʻa-level covariates (join on ahupuaa + mokupuni)
+  cess_ahu         = here("data", "cesspool_by_ahupuaa.csv"),
+  ccap             = here("data", "ccap_ahupuaa_summary.csv"),
+  slope            = here("data", "ahupuaa_slope.csv"),
+  ksat             = here("data", "ahupuaa_ksat.csv"),
+  discharge        = here("data", "usgs_discharge_march2026.csv"),
+  pop_dens         = here("data", "pop_density_ahupuaa.csv"),
+  # Island-level covariates
+  soilmoist        = here("data", "nasa_power_soilmoist.csv"),
+  livestock        = here("data", "usda_nass_livestock_hi.csv"),
+  # Point layers / rasters used to derive sample-level covariates
+  stream_mouths    = here("data", "osm_stream_mouths.csv"),
+  npdes            = here("data", "epa_facilities_hi.csv"),
+  chirps_daily     = here("data", "chirps_march2026_daily_raw.rds"),
+  cesspools_hcpt   = here("data", "cesspool_points.rds"),
+  cesspools_molokai = here("data", "molokai_osds_layer.geojson"),
+  # Auxiliary datasets (not joined to chem_master)
+  ahupuaa_boundaries = here("data", "ahupuaa_boundaries.geojson"),
+  hui_south        = here("data", "background_nutrients", "hui-south-maui-thru-2026-1st-quarter.0.xlsx"),
+  hui_west         = here("data", "background_nutrients", "hui-west-maui-thru-2026-1st-quarter.0.xlsx"),
+  chirps_monthly   = here("data", "chirps_maui_monthly_full.csv"),
+  ncep_daily       = here("hawaii_ncep_janjun_cache.csv"),
+  usgs_daily       = here("data", "usgs_discharge_cache.csv")
+)
+
+missing_inputs <- names(input_files)[!file.exists(unlist(input_files))]
+if (length(missing_inputs) > 0) {
+  stop("Missing input files: ", paste(missing_inputs, collapse = ", "))
+}
+
+tibble(
+  dataset       = names(input_files),
+  file          = basename(unlist(input_files)),
+  last_modified = format(file.mtime(unlist(input_files)), "%Y-%m-%d %H:%M")
+) |>
+  kable(caption = "Input files and last-modified times (check that newly updated tracer files are picked up).",
+        col.names = c("Dataset", "File", "Last modified")) |>
+  kable_styling(bootstrap_options = "condensed", full_width = FALSE)
 ```
 
 ```{r}
-#| label: load-spatial-support-files
+#| label: load-inputs
 
-ahupuaa   <- read_csv(here("data", "ahupuaa_cache.csv"),             show_col_types = FALSE)
-cess_dist <- read_csv(here("data", "sample_cesspool_distances.csv"), show_col_types = FALSE)
-cess_buf  <- read_csv(here("data", "cesspool_buffer_counts.csv"),    show_col_types = FALSE)
-cess_ahu  <- read_csv(here("data", "cesspool_by_ahupuaa.csv"),       show_col_types = FALSE)
-ccap      <- read_csv(here("data", "ccap_ahupuaa_summary.csv"),      show_col_types = FALSE)
-slope     <- read_csv(here("data", "ahupuaa_slope.csv"),             show_col_types = FALSE)
-ksat      <- read_csv(here("data", "ahupuaa_ksat.csv"),              show_col_types = FALSE)
-discharge <- read_csv(here("data", "usgs_discharge_march2026.csv"),  show_col_types = FALSE)
-fetch     <- read_csv(here("data", "wave_fetch.csv"),                show_col_types = FALSE)
+chem_raw   <- read_csv(input_files$chemistry,  show_col_types = FALSE)
+
+ahupuaa    <- read_csv(input_files$ahupuaa,    show_col_types = FALSE)
+cess_dist  <- read_csv(input_files$cess_dist,  show_col_types = FALSE)
+cess_buf   <- read_csv(input_files$cess_buf,   show_col_types = FALSE)
+fetch      <- read_csv(input_files$fetch,      show_col_types = FALSE)
+waveheight <- read_csv(input_files$waveheight, show_col_types = FALSE)
+
+cess_ahu   <- read_csv(input_files$cess_ahu,   show_col_types = FALSE)
+ccap       <- read_csv(input_files$ccap,       show_col_types = FALSE)
+slope      <- read_csv(input_files$slope,      show_col_types = FALSE)
+ksat       <- read_csv(input_files$ksat,       show_col_types = FALSE)
+discharge  <- read_csv(input_files$discharge,  show_col_types = FALSE)
+pop_dens   <- read_csv(input_files$pop_dens,   show_col_types = FALSE)
+
+soilmoist  <- read_csv(input_files$soilmoist,  show_col_types = FALSE)
+livestock  <- read_csv(input_files$livestock,  show_col_types = FALSE)
+
+stream_mouths    <- read_csv(input_files$stream_mouths, show_col_types = FALSE)
+epa              <- read_csv(input_files$npdes,         show_col_types = FALSE)
+chirps_daily_raw <- readRDS(input_files$chirps_daily)
+
+# Combined cesspool point layer: HCPT layer 32 (Oʻahu/Maui) + DOH OSDS 2010 Class I
+# systems on Molokaʻi (n = 417). Different source/vintage — see comparability caveat.
+cess_pts_hcpt    <- readRDS(input_files$cesspools_hcpt) |> select(geometry)
+cess_pts_molokai <- st_read(input_files$cesspools_molokai, quiet = TRUE) |>
+  filter(class_i >= 1) |>
+  select(geometry)
 ```
 
-```{r}
-#| label: resolve-duplicate-ahupuaa
-# Several ahupuaa-level tables contain duplicate rows from multi-polygon
-# boundary intersections during raster extraction. Resolved by averaging
-# within the composite key ahupuaa + mokupuni (island).
-#
-# CRITICAL: ahupuaa names are NOT unique across islands. Seven names recur
-# on multiple islands (Hālawa, Kahana, Kalihi, Kawela, Waiheʻe, Wailua, Waimea).
-# All joins MUST use ahupuaa + mokupuni as a composite key.
-# cesspool_by_ahupuaa uses column name 'island' (same encoding as mokupuni);
-# rename to mokupuni before joining.
+## Chemistry QA/QC {#sec-data-inventory}
 
-slope_clean <- slope |>
-  group_by(ahupuaa, mokupuni) |>
-  summarise(mean_slope_deg = mean(mean_slope_deg, na.rm = TRUE), .groups = "drop")
-
-ksat_clean <- ksat |>
-  group_by(ahupuaa, mokupuni) |>
-  summarise(mean_ksat_um_s = mean(mean_ksat_um_s, na.rm = TRUE), .groups = "drop")
-
-ccap_clean <- ccap |>
-  group_by(ahupuaa, mokupuni) |>
-  summarise(
-    pct_impervious  = mean(pct_impervious,  na.rm = TRUE),
-    pct_agriculture = mean(pct_agriculture, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-cess_ahu_clean <- cess_ahu |>
-  rename(mokupuni = island) |>   # harmonise column name; encoding matches mokupuni
-  group_by(ahupuaa, mokupuni) |>
-  summarise(
-    cesspool_density_per_km2 = mean(cesspool_density_per_km2, na.rm = TRUE),
-    n_cesspools              = mean(n_cesspools,              na.rm = TRUE),
-    .groups = "drop"
-  )
-
-discharge_clean <- discharge |>
-  group_by(ahupuaa, mokupuni) |>
-  summarise(
-    total_cfs_march            = mean(total_cfs_march,            na.rm = TRUE),
-    specific_discharge_cfs_km2 = mean(specific_discharge_cfs_km2, na.rm = TRUE),
-    .groups = "drop"
-  ) |>
-  mutate(across(where(is.numeric), \(x) if_else(is.nan(x), NA_real_, x)))
-```
+> **Step 1.** Audit the sample data before doing any modeling: site_id creation,
+> coordinate QA, below-detection-limit handling.
 
 ```{r}
 #| label: filter-coords-assign-site-id
@@ -329,14 +375,15 @@ site_lookup <- has_coords |>
 
 chem_audit <- has_coords |>
   left_join(site_lookup, by = c("latitude", "longitude"))
-```
 
-*Table S1 (sample attrition) and Table S2 (missingness matrix) are generated after all
-covariates are joined — see the end of [§ Master analytical dataset](#sec-master-dataset).*
+stopifnot(!anyDuplicated(chem_audit$sample_id))
+
+write_csv(site_lookup, here("data", "site_lookup.csv"))
+```
 
 ```{r}
 #| label: coordinate-duplicate-audit
-# Classify the 33 multi-sample sites
+# Classify the multi-sample sites
 site_type_tbl <- chem_audit |>
   group_by(site_id) |>
   filter(n() > 1) |>
@@ -355,7 +402,8 @@ site_type_tbl <- chem_audit |>
 
 site_type_tbl |>
   count(site_type, name = "n_sites") |>
-  kable(caption = "Multi-sample sites by classification (33 sites share coordinates with ≥1 other sample).",
+  kable(caption = paste0("Multi-sample sites by classification (", nrow(site_type_tbl),
+                         " sites share coordinates with ≥1 other sample)."),
         col.names = c("Site type", "n sites")) |>
   kable_styling(bootstrap_options = "condensed", full_width = FALSE)
 ```
@@ -372,32 +420,159 @@ landscape-scale models.
 :::
 
 ```{r}
+#| label: bdl-substitution
+# All reported zeros are below-detection-limit (BDL), not true zeros.
+# Substitution rule: replace with DL/2 where DL = minimum observed non-zero value.
+# BDL indicator columns (bdl_*) retain the original flag for sensitivity analyses.
+
+dl_half <- c(
+  NO3NO2 = min(chem_audit$NO3NO2[chem_audit$NO3NO2 > 0], na.rm = TRUE) / 2,
+  PO4    = min(chem_audit$PO4[chem_audit$PO4 > 0],       na.rm = TRUE) / 2,
+  NH3    = min(chem_audit$NH3[chem_audit$NH3 > 0],       na.rm = TRUE) / 2,
+  SiO2   = min(chem_audit$SiO2[chem_audit$SiO2 > 0],     na.rm = TRUE) / 2
+)
+
+chem_audit <- chem_audit |>
+  mutate(
+    bdl_NO3NO2 = !is.na(NO3NO2) & NO3NO2 == 0,
+    bdl_PO4    = !is.na(PO4)    & PO4    == 0,
+    bdl_NH3    = !is.na(NH3)    & NH3    == 0,
+    bdl_SiO2   = !is.na(SiO2)  & SiO2   == 0,
+    NO3NO2 = if_else(bdl_NO3NO2, dl_half["NO3NO2"], NO3NO2),
+    PO4    = if_else(bdl_PO4,    dl_half["PO4"],    PO4),
+    NH3    = if_else(bdl_NH3,    dl_half["NH3"],     NH3),
+    SiO2   = if_else(bdl_SiO2,  dl_half["SiO2"],    SiO2)
+  )
+
+# Summary table
+bdl_tbl <- tibble(
+  Nutrient    = c("NO\u2083+NO\u2082", "PO\u2084", "NH\u2084", "SiO\u2082"),
+  n_bdl       = c(sum(chem_audit$bdl_NO3NO2), sum(chem_audit$bdl_PO4),
+                  sum(chem_audit$bdl_NH3),    sum(chem_audit$bdl_SiO2)),
+  n_available = c(sum(!is.na(chem_audit$NO3NO2)), sum(!is.na(chem_audit$PO4)),
+                  sum(!is.na(chem_audit$NH3)),     sum(!is.na(chem_audit$SiO2))),
+  pct_bdl     = round(100 * n_bdl / n_available, 1),
+  `DL/2 substituted (umol/L)` = round(dl_half, 4)
+)
+
+bdl_tbl |>
+  kable(caption = "BDL substitution summary. All zeros replaced with DL/2 (half the minimum observed non-zero value). BDL flags retained in `bdl_*` columns for sensitivity analyses.",
+        align = c("l", "r", "r", "r", "r")) |>
+  kable_styling(bootstrap_options = "condensed", full_width = FALSE)
+```
+
+::: {.callout-warning}
+**NH₄ has 30.4% BDL observations.** DL/2 substitution is defensible for modest BDL fractions,
+but at 30% the substituted values can meaningfully inflate apparent precision.
+The NH₄ model should be treated as a candidate for censored regression (e.g., `survival::Surv`
+left-censored, or a Bayesian truncated-normal likelihood in `brms`). A sensitivity analysis
+comparing DL/2 results to a censored model is required for any inferential claim about NH₄.
+:::
+
+## Spatial covariates {#sec-covariates}
+
+```{r}
+#| label: resolve-duplicate-ahupuaa
+# Several ahupuaa-level tables contain duplicate rows from multi-polygon
+# boundary intersections during raster extraction. Resolved by averaging
+# within the composite key ahupuaa + mokupuni (island).
+#
+# CRITICAL: ahupuaa names are NOT unique across islands. Seven names recur
+# on multiple islands (Hālawa, Kahana, Kalihi, Kawela, Waiheʻe, Wailua, Waimea).
+# All joins MUST use ahupuaa + mokupuni as a composite key.
+# cesspool_by_ahupuaa and pop_density_ahupuaa use column name 'island' (same
+# ʻokina encoding as mokupuni); rename to mokupuni before joining.
+
+slope_clean <- slope |>
+  group_by(ahupuaa, mokupuni) |>
+  summarise(mean_slope_deg = mean(mean_slope_deg, na.rm = TRUE), .groups = "drop")
+
+ksat_clean <- ksat |>
+  group_by(ahupuaa, mokupuni) |>
+  summarise(mean_ksat_um_s = mean(mean_ksat_um_s, na.rm = TRUE), .groups = "drop")
+
+ccap_clean <- ccap |>
+  group_by(ahupuaa, mokupuni) |>
+  summarise(
+    pct_impervious  = mean(pct_impervious,  na.rm = TRUE),
+    pct_agriculture = mean(pct_agriculture, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cess_ahu_clean <- cess_ahu |>
+  rename(mokupuni = island) |>
+  group_by(ahupuaa, mokupuni) |>
+  summarise(
+    cesspool_density_per_km2 = mean(cesspool_density_per_km2, na.rm = TRUE),
+    n_cesspools              = mean(n_cesspools,              na.rm = TRUE),
+    .groups = "drop"
+  )
+
+discharge_clean <- discharge |>
+  group_by(ahupuaa, mokupuni) |>
+  summarise(
+    total_cfs_march            = mean(total_cfs_march,            na.rm = TRUE),
+    specific_discharge_cfs_km2 = mean(specific_discharge_cfs_km2, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(across(where(is.numeric), \(x) if_else(is.nan(x), NA_real_, x)))
+
+pop_clean <- pop_dens |>
+  rename(mokupuni = island) |>
+  group_by(ahupuaa, mokupuni) |>
+  summarise(pop_density_km2 = mean(pop_density_km2, na.rm = TRUE), .groups = "drop")
+```
+
+```{r}
 #| label: build-master-dataset
-# Build one-row-per-sample master dataset with all covariates joined.
-# This is the base for all downstream analyses.
+# One row per water sample with all tabular covariates joined.
 
 chem_master <- chem_audit |>
-  left_join(ahupuaa |> select(sample_id, ahupuaa, moku, mokupuni),
+  # Sample-level joins
+  left_join(ahupuaa |> select(sample_id, ahupuaa, moku, mokupuni), by = "sample_id") |>
+  left_join(cess_dist, by = "sample_id") |>
+  left_join(cess_buf,  by = "sample_id") |>
+  left_join(fetch |> select(sample_id, fetch_mean_km, fetch_min_km), by = "sample_id") |>
+  left_join(waveheight |> select(sample_id, hs_at_collection_m, hs_mean_m, hs_max_m),
             by = "sample_id") |>
-  left_join(cess_dist,                                          by = "sample_id") |>
-  left_join(cess_buf,                                           by = "sample_id") |>
-  left_join(fetch |> select(sample_id, fetch_mean_km, fetch_min_km),
-            by = "sample_id") |>
-  # All ahupuaa-level joins use composite key ahupuaa + mokupuni to prevent
-  # cross-island name collisions (7 ahupuaa names recur on multiple islands)
+  # Ahupuaʻa-level joins: composite key ahupuaa + mokupuni (names recur across islands)
   left_join(slope_clean,    by = c("ahupuaa", "mokupuni")) |>
   left_join(ksat_clean,     by = c("ahupuaa", "mokupuni")) |>
   left_join(ccap_clean,     by = c("ahupuaa", "mokupuni")) |>
-  left_join(cess_ahu_clean  |> select(ahupuaa, mokupuni, cesspool_density_per_km2, n_cesspools),
+  left_join(cess_ahu_clean |> select(ahupuaa, mokupuni, cesspool_density_per_km2, n_cesspools),
             by = c("ahupuaa", "mokupuni")) |>
   left_join(discharge_clean |> select(ahupuaa, mokupuni, total_cfs_march, specific_discharge_cfs_km2),
-            by = c("ahupuaa", "mokupuni"))
+            by = c("ahupuaa", "mokupuni")) |>
+  left_join(pop_clean |> select(ahupuaa, mokupuni, pop_density_km2),
+            by = c("ahupuaa", "mokupuni")) |>
+  # Island-level joins: soilmoist/livestock use ASCII apostrophes, chem uses U+2018
+  mutate(island_key = normalize_island(island)) |>
+  left_join(soilmoist |> mutate(island = normalize_island(island)) |>
+              select(island, mean_gwetroot),
+            by = c("island_key" = "island")) |>
+  left_join(livestock |> mutate(island = normalize_island(island)) |>
+              select(island, cattle_per_km2),
+            by = c("island_key" = "island")) |>
+  select(-island_key)
 
-# site_lookup saved here; chem_master saved after BDL substitution and cesspool correction
-write_csv(site_lookup, here("data", "site_lookup.csv"))
+# A duplicated key in any covariate table would silently duplicate samples
+stopifnot(nrow(chem_master) == nrow(chem_audit), !anyDuplicated(chem_master$sample_id))
 ```
 
-
+```{r}
+#| label: cesspool-island-corrections
+# Molokaʻi: cesspool metrics come from the DOH OSDS 2010 inventory (integrated
+#   2026-09-10); different source/vintage than HCPT — see comparability caveat in Step 12.
+# Lānaʻi: island absent from cesspool_by_ahupuaa → density NA. Buffer counts are
+#   correctly 0 (no on-island cesspools). dist_to_nearest_cesspool_m values (16–34 km)
+#   reference off-island sources and are set to NA. The earlier "Kamoku 9-cesspool"
+#   flag was a cross-island join artefact resolved by the composite key.
+chem_master <- chem_master |>
+  mutate(
+    dist_to_nearest_cesspool_m = if_else(grepl("n.?a.?i", island, ignore.case = TRUE),
+                                          NA_real_, dist_to_nearest_cesspool_m)
+  )
+```
 
 ::: {.callout-warning}
 **Key data gaps to note before modeling.**
@@ -427,103 +602,43 @@ write_csv(site_lookup, here("data", "site_lookup.csv"))
 :::
 
 ```{r}
-#| label: bdl-substitution
-# All reported zeros are below-detection-limit (BDL), not true zeros.
-# Substitution rule: replace with DL/2 where DL = minimum observed non-zero value.
-# BDL indicator columns (bdl_*) retain the original flag for sensitivity analyses.
-
-dl_half <- c(
-  NO3NO2 = min(chem_master$NO3NO2[chem_master$NO3NO2 > 0], na.rm = TRUE) / 2,
-  PO4    = min(chem_master$PO4[chem_master$PO4 > 0],       na.rm = TRUE) / 2,
-  NH3    = min(chem_master$NH3[chem_master$NH3 > 0],       na.rm = TRUE) / 2,
-  SiO2   = min(chem_master$SiO2[chem_master$SiO2 > 0],     na.rm = TRUE) / 2
-)
-
-chem_master <- chem_master |>
-  mutate(
-    bdl_NO3NO2 = !is.na(NO3NO2) & NO3NO2 == 0,
-    bdl_PO4    = !is.na(PO4)    & PO4    == 0,
-    bdl_NH3    = !is.na(NH3)    & NH3    == 0,
-    bdl_SiO2   = !is.na(SiO2)  & SiO2   == 0,
-    NO3NO2 = if_else(bdl_NO3NO2, dl_half["NO3NO2"], NO3NO2),
-    PO4    = if_else(bdl_PO4,    dl_half["PO4"],    PO4),
-    NH3    = if_else(bdl_NH3,    dl_half["NH3"],     NH3),
-    SiO2   = if_else(bdl_SiO2,  dl_half["SiO2"],    SiO2)
-  )
-
-# Summary table
-bdl_tbl <- tibble(
-  Nutrient    = c("NO\u2083+NO\u2082", "PO\u2084", "NH\u2084", "SiO\u2082"),
-  n_bdl       = c(sum(chem_master$bdl_NO3NO2), sum(chem_master$bdl_PO4),
-                  sum(chem_master$bdl_NH3),    sum(chem_master$bdl_SiO2)),
-  n_available = c(sum(!is.na(chem_master$NO3NO2)), sum(!is.na(chem_master$PO4)),
-                  sum(!is.na(chem_master$NH3)),     sum(!is.na(chem_master$SiO2))),
-  pct_bdl     = round(100 * n_bdl / n_available, 1),
-  `DL/2 substituted (umol/L)` = round(dl_half, 4)
-)
-
-bdl_tbl |>
-  kable(caption = "BDL substitution summary. All zeros replaced with DL/2 (half the minimum observed non-zero value). BDL flags retained in `bdl_*` columns for sensitivity analyses.",
-        align = c("l", "r", "r", "r", "r")) |>
-  kable_styling(bootstrap_options = "condensed", full_width = FALSE)
-```
-
-::: {.callout-warning}
-**NH₄ has 30.4% BDL observations.** DL/2 substitution is defensible for modest BDL fractions,
-but at 30% the substituted values can meaningfully inflate apparent precision.
-The NH₄ model should be treated as a candidate for censored regression (e.g., `survival::Surv`
-left-censored, or a Bayesian truncated-normal likelihood in `brms`). A sensitivity analysis
-comparing DL/2 results to a censored model is required for any inferential claim about NH₄.
-:::
-
-```{r}
-#| label: cesspool-island-corrections
-# Molokaʻi: HCPT layer 32 has no coverage — all cesspool metrics set to NA.
-# Lānaʻi: no on-island cesspools in the layer for most ahupuaʻa; buffer counts
-# and density are correctly 0 where present, but dist_to_nearest_cesspool_m
-# values (16–34 km) reference off-island sources and are set to NA.
-# Molokaʻi: layer does not cover island → all cesspool metrics NA.
-# Lānaʻi: island absent from cesspool_by_ahupuaa → density NA.
-#   dist_to_nearest set to NA (sample-level values pointed off-island, 16–34 km).
-#   Buffer counts correctly 0 (no on-island cesspools in HCPT layer).
-#   The earlier "Kamoku 9-cesspool" flag was a cross-island join artefact
-#   (Hawaiʻi Island's Kamoku); resolved by the composite ahupuaa+mokupuni key.
-# Molokaʻi: UPDATED 2026-09-10 — cesspool data now available from DOH OSDS 2010 inventory.
-#   Keep Molokaʻi cesspool metrics (no longer NA). Different data source/vintage than HCPT.
-#   See comparability caveat in Step 12.
-chem_master <- chem_master |>
-  mutate(
-    # Keep Molokaʻi cesspool data (now integrated from DOH OSDS 2010 inventory)
-    # Lānaʻi: no meaningful cesspool distances (references off-island cesspools)
-    dist_to_nearest_cesspool_m = if_else(grepl("n.?a.?i", island, ignore.case = TRUE),
-                                          NA_real_, dist_to_nearest_cesspool_m)
-  )
-```
-
-```{r}
-#| label: dist-to-stream-mouth
-# Compute distance from each sample to the nearest OSM stream mouth.
-# Source: osm_stream_mouths.csv (OpenStreetMap, filtered to 400 m coastal buffer).
-# Missing discharge data reflects gauge-coverage gaps, not absent streams:
-# 91% of ungauged samples are within 5 km of a mapped stream mouth.
-# dist_to_stream_mouth_m is therefore the primary connectivity variable.
-
-stream_mouths <- read_csv(here("data", "osm_stream_mouths.csv"), show_col_types = FALSE)
+#| label: point-distances
+# Distances (UTM 4N, m) from each sample to the nearest OSM stream mouth and the
+# nearest NPDES-permitted facility.
+# Stream mouths: osm_stream_mouths.csv (OpenStreetMap, 400 m coastal buffer filter).
+# Missing discharge reflects gauge-coverage gaps, not absent streams (91% of
+# ungauged samples are within 5 km of a mapped stream mouth), so
+# dist_to_stream_mouth_m is the primary connectivity variable.
+# NPDES: EPA ECHO facilities (all permit types — not all are wastewater sources).
 
 samples_sf <- chem_master |>
   select(sample_id, latitude, longitude) |>
   st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
-  st_transform(32604)   # UTM zone 4N
+  st_transform(32604)
 
 streams_sf <- stream_mouths |>
   st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
   st_transform(32604)
 
-nearest_idx <- st_nearest_feature(samples_sf, streams_sf)
+npdes_pts <- epa |>
+  filter(!is.na(lat), !is.na(lon), between(lat, 18, 23), between(lon, -161, -154)) |>
+  distinct(lat, lon) |>
+  st_as_sf(coords = c("lon", "lat"), crs = 4326) |>
+  st_transform(32604)
+
+nearest_stream <- st_nearest_feature(samples_sf, streams_sf)
+nearest_npdes  <- st_nearest_feature(samples_sf, npdes_pts)
+
 chem_master <- chem_master |>
-  mutate(dist_to_stream_mouth_m = as.numeric(
-    st_distance(samples_sf, streams_sf[nearest_idx, ], by_element = TRUE)
-  ))
+  mutate(
+    dist_to_stream_mouth_m = as.numeric(
+      st_distance(samples_sf, streams_sf[nearest_stream, ], by_element = TRUE)
+    ),
+    dist_to_nearest_npdes_m = as.numeric(
+      st_distance(samples_sf, npdes_pts[nearest_npdes, ], by_element = TRUE)
+    ),
+    log_dist_npdes = log(dist_to_nearest_npdes_m)
+  )
 ```
 
 ```{r}
@@ -539,26 +654,26 @@ chem_master <- chem_master |>
 #   in genuinely stream-sparse dry terrain. Leeward samples retain
 #   valid CHIRPS land-pixel data and are kept in landscape models with
 #   the caveat that stream-proximity effects are poorly constrained there.
+# CHIRPS -9999 fill values indicate ocean/off-land pixels — same set as offshore
+# samples. These receive NA for all CHIRPS metrics (next chunk).
 
 chem_master <- chem_master |>
   mutate(
     offshore_reference = ahupuaa == "Open Ocean",
     far_from_stream    = dist_to_stream_mouth_m > 10000
   )
-
-# CHIRPS -9999 fill values indicate ocean/off-land pixels — same set as offshore samples.
-# These receive NA for all CHIRPS metrics.
 ```
 
 ```{r}
 #| label: chirps-storm-rainfall
 # Step 5 — Spatially resolved CHIRPS storm rainfall metrics.
 # Source: CHC server (data.chc.ucsb.edu), 0.05° (~5 km) daily resolution,
-#   March 10–31 2026. Cached to data/chirps_march2026_daily_raw.rds.
+#   March 10–31 2026. Cached to data/chirps_march2026_daily_raw.rds, queried at
+#   each sample location rounded to 0.01°.
 # Fill value -9999 (ocean pixels) → NA.
 # April 1–8 data unavailable from CHC; post-storm April rainfall was near-zero
 #   (0–2.4 mm/day), so Mar 10–31 cumulative captures effectively all storm rainfall.
-# Metrics computed (Step 5 complete):
+# Metrics:
 #   chirps_storm_cumulative_mm — Mar 10–31 total (primary event-exposure variable)
 #   chirps_peak_day_mm         — maximum single-day rainfall
 #   chirps_3day_max_mm         — maximum rolling 3-day sum
@@ -567,17 +682,11 @@ chem_master <- chem_master |>
 #   chirps_peak_date           — date of maximum daily rainfall
 #   chirps_days_since_peak     — days from pixel peak to sample collection
 
-chirps_march_all <- readRDS(here("data", "chirps_march2026_daily_raw.rds"))
-
-unique_locs <- chem_master |>
-  mutate(chirps_lon = round(longitude, 2), chirps_lat = round(latitude, 2)) |>
-  distinct(chirps_lon, chirps_lat) |>
-  arrange(chirps_lat, chirps_lon) |>
-  mutate(id = row_number())
-
-chirps_daily <- as_tibble(chirps_march_all) |>
-  left_join(unique_locs, by = "id") |>
-  mutate(chirps = if_else(chirps == -9999, NA_real_, chirps)) |>
+# Joined on the rounded query coordinates (not the cache's row id) so that adding
+# samples cannot silently misalign pixels.
+chirps_daily <- as_tibble(chirps_daily_raw) |>
+  mutate(chirps_lon = round(lon, 2), chirps_lat = round(lat, 2),
+         chirps = if_else(chirps == -9999, NA_real_, chirps)) |>
   arrange(chirps_lon, chirps_lat, date)
 
 # Per-pixel summary metrics
@@ -611,19 +720,393 @@ chirps_peak_date_df <- chirps_daily |>
 chirps_pixel <- chirps_pixel |>
   left_join(chirps_peak_date_df, by = c("chirps_lon", "chirps_lat"))
 
-# Join all metrics to chem_master
 chem_master <- chem_master |>
   mutate(chirps_lon = round(longitude, 2), chirps_lat = round(latitude, 2)) |>
   left_join(chirps_pixel, by = c("chirps_lon", "chirps_lat")) |>
   mutate(chirps_days_since_peak = as.integer(
     as.Date(collected_hst) - chirps_peak_date
   ))
+
+n_no_chirps <- sum(is.na(chem_master$chirps_ocean_pixel))
+if (n_no_chirps > 0) {
+  warning(n_no_chirps, " sample location(s) are not in the CHIRPS cache ",
+          "(new coordinates?) — re-download CHIRPS for these points.")
+}
 ```
+
+## Cesspool exposure index {#sec-cesspool-index}
+
+```{r}
+#| label: cesspool-exposure-index
+
+# The two existing cesspool metrics used together in earlier drafts — the 1 km buffer
+# count (n_cess_1km) and distance to the nearest cesspool — are moderately collinear
+# (Spearman r ≈ -0.79, VIF ≈ 2.7 for both) once density is dropped in favour of the
+# buffer count. Rather than force one metric out or accept the collinearity, combine
+# proximity and abundance into a single distance-decay "cesspool exposure index":
+#   exposure_i = sum_j exp(-d_ij / bandwidth)
+# summed over every cesspool j within a cutoff radius of sample i. A cesspool close by
+# contributes more than one far away, and multiple nearby cesspools add up — closer AND
+# more numerous both increase exposure.
+# bandwidth = 500 m (matches the finer of the two existing buffer scales); cutoff = 2500 m
+# (5 bandwidths; weight ≈ 0.007 there, negligible beyond). Built from the combined
+# cesspool point layer (HCPT layer 32 + DOH OSDS 2010 Class I on Molokaʻi), so it
+# inherits the same comparability caveat as the other cesspool metrics.
+
+all_cesspools_exp <- bind_rows(cess_pts_hcpt, cess_pts_molokai) |>
+  st_transform(32604)
+
+EXP_BW     <- 500   # bandwidth, metres
+EXP_CUTOFF <- 2500  # cutoff radius, metres
+
+# Planar (UTM) distances computed from coordinate matrices — identical to
+# st_distance() in a projected CRS, but ~50x faster.
+nb_idx <- st_is_within_distance(samples_sf, all_cesspools_exp, dist = EXP_CUTOFF)
+xy_samp <- st_coordinates(samples_sf)
+xy_cess <- st_coordinates(all_cesspools_exp)
+
+cess_exposure_idx <- vapply(seq_len(nrow(samples_sf)), function(i) {
+  nb <- nb_idx[[i]]
+  if (length(nb) == 0) return(0)
+  d <- sqrt((xy_cess[nb, 1] - xy_samp[i, 1])^2 + (xy_cess[nb, 2] - xy_samp[i, 2])^2)
+  sum(exp(-d / EXP_BW))
+}, numeric(1))
+
+# samples_sf rows are in chem_master order (built from chem_master in point-distances)
+stopifnot(identical(samples_sf$sample_id, chem_master$sample_id))
+chem_master$cess_exposure_idx <- cess_exposure_idx
+
+chem_master |>
+  group_by(island) |>
+  summarise(n = n(), n_missing = sum(is.na(cess_exposure_idx)),
+            median = round(median(cess_exposure_idx, na.rm = TRUE), 2),
+            max = round(max(cess_exposure_idx, na.rm = TRUE), 1)) |>
+  kable(caption = "Cesspool exposure index by island (distance-decay weighted cesspool count, 500 m bandwidth). Lānaʻi is 0 by construction — no cesspools within the cutoff radius, not missing data.") |>
+  kable_styling(bootstrap_options = "condensed", full_width = FALSE)
+```
+
+The exposure index combines both proximity and abundance into a single number: each cesspool
+within 2.5 km contributes $\exp(-d/500)$ to the sum, so a cesspool immediately adjacent
+contributes 1.0, one at 500 m contributes ≈ 0.37, and one at 1,500 m contributes ≈ 0.05.
+The total is interpretable as an **effective nearby cesspool count** — the number of cesspools
+that would need to be located immediately adjacent to produce the same exposure signal as the
+actual spatial arrangement. Some reference anchors:
+
+| Index value | Natural interpretation |
+|---|---|
+| 0 | No cesspools within 2.5 km (Lānaʻi by construction) |
+| ≈ 1 | One cesspool immediately adjacent, or 2–3 scattered within a few hundred meters |
+| ≈ 5 | A small cluster within the immediate neighborhood (~500 m) |
+| ≈ 20 | Moderate density: dozens of cesspools within 500–800 m (mid-century residential subdivision) |
+| ≈ 45 | High exposure: equivalent to ~45 cesspools right next door — in practice, ~80–120 cesspools within a 500 m radius, or hundreds spread across 1–1.5 km |
+
+## Tracer panels: fDOM and nitrogen isotopes {#sec-tracer-merge}
+
+```{r}
+#| label: tracer-load-qc
+
+# Tracer sample IDs carry inconsistent whitespace (e.g. "OA 58"); match on a
+# whitespace-stripped key. sample_id_norm is kept in chem_master for downstream joins.
+norm_id <- function(x) str_replace_all(x, "\\s+", "")
+chem_master <- chem_master |> mutate(sample_id_norm = norm_id(sample_id))
+stopifnot(!anyDuplicated(chem_master$sample_id_norm))
+
+# ── fDOM ─────────────────────────────────────────────────────────────────────
+# (1) Duplicate sample_id: repeated lab runs of the same physical sample (e.g. OA288
+#     run on 5/3 and 5/22) are technical re-runs, not independent samples — averaged.
+# (2) Ratio-index QC: BIX, HIX, FI, and M_to_C are ratios of Coble-peak intensities.
+#     When total fluorescence is near the instrument blank these ratios become
+#     numerically unstable. The QCed file already sets many such rows to NA, but some
+#     implausible values slip through (FI = 0 is not physically meaningful; BIX/HIX far
+#     outside typical 0-1 / 0-20 ranges). Flagged and set to NA by the rule below.
+fdom_raw <- read_csv(input_files$fdom, show_col_types = FALSE) |>
+  select(-matches("^\\.\\.\\.")) |>
+  rename(sample_id = `Sample ID`, run_date = `Run Date`) |>
+  filter(!is.na(sample_id)) |>
+  mutate(sample_id_norm = norm_id(sample_id))
+
+fdom_num_cols <- fdom_raw |> select(where(is.numeric)) |> names()
+fdom_chr_cols <- setdiff(names(fdom_raw), c("sample_id", "sample_id_norm", "run_date", fdom_num_cols))
+if (length(fdom_chr_cols) > 0) {
+  warning("fDOM columns read as non-numeric (check for text entries): ",
+          paste(fdom_chr_cols, collapse = ", "))
+}
+stopifnot(length(intersect(fdom_num_cols, names(chem_master))) == 0)
+
+fdom_raw |>
+  filter(n() > 1, .by = sample_id_norm) |>
+  select(sample_id, run_date, CobleA, CobleC, Optical_Brighteners, FI, BIX, HIX) |>
+  arrange(sample_id) |>
+  kable(digits = 3, caption = "fDOM samples with repeated lab runs (averaged below).") |>
+  kable_styling(bootstrap_options = "condensed", full_width = FALSE)
+
+fdom_clean <- fdom_raw |>
+  group_by(sample_id_norm) |>
+  summarise(
+    fdom_run_date = paste(unique(run_date), collapse = "; "),
+    fdom_n_runs   = n(),
+    across(all_of(fdom_num_cols), ~ mean(.x, na.rm = TRUE)),
+    .groups = "drop"
+  ) |>
+  mutate(
+    across(all_of(fdom_num_cols), ~ if_else(is.nan(.x), NA_real_, .x)),
+    total_signal = CobleA + CobleB + CobleC + CobleM + CobleT,
+    bad_ratio = total_signal < 0.01 |
+      (!is.na(FI)  & FI  < 0.3) |
+      (!is.na(BIX) & BIX > 5)   |
+      (!is.na(HIX) & HIX > 20)
+  )
+
+fdom_clean |>
+  filter(bad_ratio) |>
+  select(sample_id_norm, total_signal, BIX, HIX, FI, M_to_C) |>
+  kable(digits = 3, caption = "fDOM rows flagged by ratio-index QC (BIX/HIX/FI/M_to_C set to NA).") |>
+  kable_styling(bootstrap_options = "condensed", full_width = FALSE)
+
+fdom_clean <- fdom_clean |>
+  mutate(across(c(BIX, HIX, FI, M_to_C), ~ if_else(bad_ratio, NA_real_, .x))) |>
+  select(-total_signal, -bad_ratio)
+
+# ── Nitrogen isotopes ───────────────────────────────────────────────────────
+# N15: delta15N of NO3+NO2 (per mil vs air); O18: delta18O (per mil vs VSMOW).
+# Repeated measurements of the same sample are averaged.
+iso_raw <- read_csv(input_files$isotope, show_col_types = FALSE) |>
+  filter(!is.na(sample_id)) |>
+  mutate(sample_id_norm = norm_id(sample_id))
+
+iso_clean <- iso_raw |>
+  group_by(sample_id_norm) |>
+  summarise(iso_n_runs = n(),
+            N15 = mean(N15, na.rm = TRUE),
+            O18 = mean(O18, na.rm = TRUE),
+            .groups = "drop") |>
+  mutate(across(c(N15, O18), ~ if_else(is.nan(.x), NA_real_, .x)))
+
+# ── Merge both panels into chem_master ──────────────────────────────────────
+chem_master <- chem_master |>
+  left_join(fdom_clean, by = "sample_id_norm") |>
+  left_join(iso_clean,  by = "sample_id_norm") |>
+  mutate(has_fdom    = !is.na(fdom_n_runs),
+         has_isotope = !is.na(iso_n_runs))
+
+stopifnot(!anyDuplicated(chem_master$sample_id))
+
+tibble(
+  panel       = c("fDOM", "Isotopes (N15)"),
+  rows_in_file = c(nrow(fdom_raw), nrow(iso_raw)),
+  unique_ids  = c(nrow(fdom_clean), nrow(iso_clean)),
+  repeat_runs = c(sum(fdom_clean$fdom_n_runs > 1), sum(iso_clean$iso_n_runs > 1)),
+  matched     = c(sum(chem_master$has_fdom), sum(chem_master$has_isotope)),
+  unmatched   = c(sum(!fdom_clean$sample_id_norm %in% chem_master$sample_id_norm),
+                  sum(!iso_clean$sample_id_norm %in% chem_master$sample_id_norm))
+) |>
+  kable(caption = "Tracer panel merge summary.",
+        col.names = c("Panel", "Rows in file", "Unique IDs", "IDs with repeat runs",
+                      "Matched to chemistry", "Unmatched")) |>
+  kable_styling(bootstrap_options = "condensed", full_width = FALSE)
+
+# Unmatched IDs are reported, never auto-corrected
+bind_rows(
+  tibble(panel = "fDOM",     sample_id = setdiff(fdom_clean$sample_id_norm, chem_master$sample_id_norm)),
+  tibble(panel = "Isotopes", sample_id = setdiff(iso_clean$sample_id_norm,  chem_master$sample_id_norm))
+) |>
+  summarise(unmatched_ids = paste(sort(sample_id), collapse = ", "), .by = panel) |>
+  kable(caption = "Tracer sample IDs with no matching chemistry sample (check for typos or blanks).",
+        col.names = c("Panel", "Unmatched sample IDs")) |>
+  kable_styling(bootstrap_options = "condensed", full_width = FALSE)
+```
+
+## Master analytical dataset {#sec-master-dataset}
 
 ```{r}
 #| label: save-master-dataset
 write_csv(chem_master, here("data", "chem_master.csv"))
 ```
+
+`chem_master` contains `r nrow(chem_master)` samples × `r ncol(chem_master)` columns
+(`r sum(chem_master$has_fdom)` with fDOM, `r sum(chem_master$has_isotope)` with δ¹⁵N)
+and is written to `data/chem_master.csv`.
+
+::: {.callout-note}
+**Step 2 missingness summary.**
+
+| Variable | n missing | % | Note |
+|---|--:|--:|---|
+| `total_cfs_march` | 470 | 63.0 | Gauge coverage gap — not absent streams |
+| `cess_exposure_idx` | 0 | 0 | **Primary cesspool metric** (distance-decay weighted count, all 4 islands, including a well-defined 0 on Lānaʻi); supersedes density/distance/buffer-count below |
+| `cesspool_density_per_km2` | 72 | 9.7 | Ahupuaʻa-level; superseded metric, retained for §Step 23 sensitivity comparison |
+| `dist_to_nearest_cesspool_m` | 20 | 2.7 | Lānaʻi only (no cesspool layer on the island); superseded metric, retained for §Step 23 |
+| `n_cess_500m / n_cess_1km` | 0 | 0 | Complete coverage on all four islands, including Molokaʻi (DOH OSDS 2010 integration); this is now the **primary anthropogenic cesspool metric** used in the models below because of its fuller coverage and (per §Step 23) clearer nutrient signal relative to ahupuaʻa-level density |
+| `chirps_storm_cumulative_mm` | 32 | 4.3 | Ocean-pixel locations (offshore samples) |
+| `mean_ksat_um_s` | 19 | 2.5 | Ahupuaʻa with no SSURGO coverage |
+| `mean_slope_deg / pct_impervious / pct_agriculture / pop_density_km2` | 11 | 1.5 | Open Ocean ahupuaʻa |
+| All other predictors | 0 | 0 | — |
+
+Apostrophe encoding mismatch between `soilmoist`/`livestock` (ASCII `'`, byte 39) and
+`chem_master$island` (Unicode left-quote U+2018, byte 8216) — resolved by the
+`normalize_island()` helper before joining.
+:::
+
+```{r}
+#| label: sample-flow-table
+
+# Helper: n samples, n unique sites, n islands for any filtered tibble
+flow_row <- function(label, df) {
+  tibble(
+    Stage       = label,
+    `n samples` = nrow(df),
+    `n sites`   = df |> distinct(latitude, longitude) |> nrow(),
+    `n islands` = df |> distinct(island) |> nrow()
+  )
+}
+
+full_ids <- chem_master |>
+  filter(
+    !is.na(ahupuaa),
+    !is.na(pct_impervious),
+    !is.na(chirps_storm_cumulative_mm),
+    !is.na(hs_mean_m),
+    !is.na(dist_to_nearest_npdes_m),
+    !is.na(pop_density_km2)
+  ) |>
+  pull(sample_id)
+
+bind_rows(
+  tibble(Stage       = "Raw chemistry dataset",
+         `n samples` = nrow(chem_raw),
+         `n sites`   = chem_raw |> filter(!is.na(latitude)) |>
+                         distinct(latitude, longitude) |> nrow(),
+         `n islands` = chem_raw |> filter(!is.na(island)) |>
+                         distinct(island) |> nrow()),
+  flow_row("Coordinates available",             chem_master),
+  flow_row("NO\u2083+NO\u2082 available",       chem_master |> filter(!is.na(NO3NO2))),
+  flow_row("PO\u2084 available",                chem_master |> filter(!is.na(PO4))),
+  flow_row("NH\u2084 available",                chem_master |> filter(!is.na(NH3))),
+  flow_row("Si available",                      chem_master |> filter(!is.na(SiO2))),
+  flow_row("Ahupua\u02BBa assigned",            chem_master |> filter(!is.na(ahupuaa))),
+  flow_row("USGS stream discharge",             chem_master |> filter(!is.na(total_cfs_march))),
+  flow_row("Land-cover data (C-CAP)",           chem_master |> filter(!is.na(pct_impervious))),
+  flow_row("Cesspool data (sample-level dist)", chem_master |> filter(!is.na(dist_to_nearest_cesspool_m))),
+  flow_row("CHIRPS storm rainfall",             chem_master |> filter(!is.na(chirps_storm_cumulative_mm))),
+  flow_row("Wave height (WW3 PacIOOS)",         chem_master |> filter(!is.na(hs_mean_m))),
+  flow_row("Population density",                chem_master |> filter(!is.na(pop_density_km2))),
+  flow_row("NPDES outfall distance",            chem_master |> filter(!is.na(dist_to_nearest_npdes_m))),
+  flow_row("Full landscape model dataset",      chem_master |> filter(sample_id %in% full_ids)),
+  flow_row("fDOM panel",                        chem_master |> filter(has_fdom)),
+  flow_row("\u03b4\u00b9\u2075N panel",         chem_master |> filter(has_isotope))
+) |>
+  kable(caption = paste0("Table S1. Sample availability through data stages (n = ",
+                         nrow(chem_master), " samples with coordinates)."),
+        align = c("l", "r", "r", "r")) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+```{r}
+#| label: missingness-matrix
+
+chem_master |>
+  summarise(across(
+    c(NO3NO2, PO4, NH3, SiO2,
+      total_cfs_march, dist_to_stream_mouth_m, chirps_storm_cumulative_mm,
+      mean_slope_deg, mean_ksat_um_s, mean_gwetroot,
+      fetch_mean_km, hs_mean_m, hs_at_collection_m,
+      cess_exposure_idx, cesspool_density_per_km2, dist_to_nearest_cesspool_m,
+      n_cess_500m, n_cess_1km,
+      pct_impervious, pct_agriculture,
+      pop_density_km2, dist_to_nearest_npdes_m, cattle_per_km2),
+    ~ sum(is.na(.x)),
+    .names = "{.col}"
+  )) |>
+  pivot_longer(everything(), names_to = "Variable", values_to = "n_missing") |>
+  mutate(
+    pct_missing = round(100 * n_missing / nrow(chem_master), 1),
+    Group = case_when(
+      Variable %in% c("NO3NO2", "PO4", "NH3", "SiO2")
+        ~ "A — Response",
+      Variable %in% c("total_cfs_march", "dist_to_stream_mouth_m",
+                      "chirps_storm_cumulative_mm", "mean_slope_deg",
+                      "mean_ksat_um_s", "mean_gwetroot",
+                      "fetch_mean_km", "hs_mean_m", "hs_at_collection_m")
+        ~ "B — Hydrologic / physical",
+      Variable %in% c("cess_exposure_idx", "cesspool_density_per_km2", "dist_to_nearest_cesspool_m",
+                      "n_cess_500m", "n_cess_1km",
+                      "pct_impervious", "pct_agriculture",
+                      "pop_density_km2", "dist_to_nearest_npdes_m", "cattle_per_km2")
+        ~ "C — Anthropogenic"
+    )
+  ) |>
+  arrange(Group, desc(n_missing)) |>
+  select(Group, Variable, n_missing, pct_missing) |>
+  kable(caption = paste0("Table S2. Missingness across all predictor variables (n = ",
+                         nrow(chem_master), " samples with coordinates)."),
+        col.names = c("Group", "Variable", "n missing", "% missing"),
+        align = c("l", "l", "r", "r")) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+## Auxiliary datasets {#sec-aux-data}
+
+> Datasets used for figures and the long-term context analysis but not joined to
+> `chem_master`.
+
+```{r}
+#| label: load-aux-data
+
+ahupuaa_boundaries <- st_read(input_files$ahupuaa_boundaries, quiet = TRUE)
+
+ncep_daily     <- read_csv(input_files$ncep_daily,     show_col_types = FALSE)
+usgs_daily     <- read_csv(input_files$usgs_daily,     show_col_types = FALSE)
+chirps_monthly <- read_csv(input_files$chirps_monthly, show_col_types = FALSE)
+```
+
+```{r}
+#| label: step8-load-hui
+
+# Hui o Ka Wai Ola (Step 8). Explicit NA strings handle #N/A cells.
+hui_s_raw <- read_excel(input_files$hui_south, sheet = "data", na = c("", "NA", "#N/A"))
+hui_w_raw <- read_excel(input_files$hui_west,  sheet = "data", na = c("", "NA", "#N/A"))
+
+# Combine; coerce any remaining character columns to numeric
+hui_raw <- bind_rows(
+  hui_s_raw |> mutate(coast = "south"),
+  hui_w_raw |> mutate(coast = "west")
+) |>
+  mutate(across(c(Turbidity, NNN, Phosphate, Silicate, NH4), as.numeric))
+
+cat("Combined Hui: n =", nrow(hui_raw),
+    "| stations:", n_distinct(hui_raw$Station),
+    "| dates:", format(min(hui_raw$Date), "%Y-%m"),
+    "to", format(max(hui_raw$Date), "%Y-%m"), "\n")
+```
+
+```{r}
+#| label: step8-clean-convert
+
+# Unit conversions (µg/L → µmol/L) per AGENTS.md:
+#   NNN  ÷ 14.007  (µg N/L → µmol/L)
+#   NH4  ÷ 14.007  (µg N/L → µmol/L)
+#   Phosphate ÷ 30.974 (µg P/L → µmol/L)
+#   Silicate  ÷ 28.086 (µg Si/L → µmol/L)
+hui <- hui_raw |>
+  select(coast, Station, SiteName, Date, Lat, Long,
+         NNN, Phosphate, Silicate, NH4) |>
+  mutate(
+    year        = year(Date),
+    month       = month(Date),
+    ym          = floor_date(Date, "month"),
+    NO3NO2_umol = NNN       / 14.007,
+    PO4_umol    = Phosphate / 30.974,
+    SiO2_umol   = Silicate  / 28.086,
+    NH3_umol    = NH4       / 14.007
+  )
+
+# Missingness per nutrient
+hui |>
+  summarise(across(c(NO3NO2_umol, PO4_umol, SiO2_umol, NH3_umol),
+                   \(x) sum(is.na(x)))) |>
+  knitr::kable(caption = "Missing values per nutrient after unit conversion.")
+```
+
 
 ---
 
@@ -686,9 +1169,7 @@ island_counts_norm <- chem_master |>
 # ── Cumulative storm rainfall raster (Mar 10–25, IDW from CHIRPS points) ──────
 RAIN_MIN <- 0L; RAIN_MAX <- 1200L
 
-chirps_raw <- readRDS(here("data", "chirps_march2026_daily_raw.rds"))
-
-storm_cumulative <- chirps_raw |>
+storm_cumulative <- as_tibble(chirps_daily_raw) |>
   dplyr::filter(date >= as.Date("2026-03-10"),
                 date <= as.Date("2026-03-25")) |>
   mutate(chirps = if_else(chirps < 0, NA_real_, chirps)) |>
@@ -713,10 +1194,8 @@ names(rain_template) <- "cum_rain_mm"
 
 # Use ahupua'a union for the land mask — same precise coastline as all other
 # spatial analysis in this project; avoids the ne_states coastline mismatch
-# with Esri World Imagery.  Read directly here so this chunk is self-contained
-# (ahupuaa_sf is defined later in the fig4 section and not yet available).
-hi_land_precise <- sf::st_read(
-    here::here("data", "ahupuaa_boundaries.geojson"), quiet = TRUE) |>
+# with Esri World Imagery.
+hi_land_precise <- ahupuaa_boundaries |>
   sf::st_union() |>
   sf::st_transform(terra::crs(rain_template))
 rain_fine <- terra::disagg(rain_template, fact = 5, method = "bilinear")
@@ -866,8 +1345,7 @@ win_rects  <- list(
 )
 
 # ── NCEP rainfall (upper; x-axis labels hidden) ───────────────────────────────
-ncep_trim <- read_csv(here("hawaii_ncep_janjun_cache.csv"),
-                      show_col_types = FALSE) |>
+ncep_trim <- ncep_daily |>
   dplyr::filter(island %in% c("Oahu","Maui","Molokai","Lanai"),
                 date >= tl_limits[1], date <= tl_limits[2]) |>
   group_by(date) |>
@@ -909,8 +1387,7 @@ p_rain <- ggplot() +
 
 # ── USGS discharge (lower; island labels at storm-peak positions) ─────────────
 # Single gauge: Maui / Hanawi Stream (16508000) — highest storm peak (~1040 cfs)
-usgs_maui <- read_csv(here("data","usgs_discharge_cache.csv"),
-                      show_col_types = FALSE) |>
+usgs_maui <- usgs_daily |>
   dplyr::filter(site_no == 16508000,
                 Date >= tl_limits[1], Date <= tl_limits[2],
                 !is.na(Flow), Flow >= 0.5)
@@ -1201,62 +1678,9 @@ save_fig(
 
 ## Long-term Hui baseline comparison {#sec-hui-baseline}
 
-> **Step 8.** Load Hui o Ka Wai Ola data, compute station-specific historical baselines,
-> calculate fold-changes relative to pre-2026 medians.
-
-```{r}
-#| label: step8-load-hui
-
-# Read both Hui files with explicit NA strings to handle #N/A cells
-hui_s_raw <- read_excel(
-  here("data/background_nutrients/hui-south-maui-thru-2026-1st-quarter.0.xlsx"),
-  sheet = "data", na = c("", "NA", "#N/A")
-)
-hui_w_raw <- read_excel(
-  here("data/background_nutrients/hui-west-maui-thru-2026-1st-quarter.0.xlsx"),
-  sheet = "data", na = c("", "NA", "#N/A")
-)
-
-# Combine; coerce any remaining character columns to numeric
-hui_raw <- bind_rows(
-  hui_s_raw |> mutate(coast = "south"),
-  hui_w_raw |> mutate(coast = "west")
-) |>
-  mutate(across(c(Turbidity, NNN, Phosphate, Silicate, NH4), as.numeric))
-
-cat("Combined Hui: n =", nrow(hui_raw),
-    "| stations:", n_distinct(hui_raw$Station),
-    "| dates:", format(min(hui_raw$Date), "%Y-%m"),
-    "to", format(max(hui_raw$Date), "%Y-%m"), "\n")
-```
-
-```{r}
-#| label: step8-clean-convert
-
-# Unit conversions (µg/L → µmol/L) per AGENTS.md:
-#   NNN  ÷ 14.007  (µg N/L → µmol/L)
-#   NH4  ÷ 14.007  (µg N/L → µmol/L)
-#   Phosphate ÷ 30.974 (µg P/L → µmol/L)
-#   Silicate  ÷ 28.086 (µg Si/L → µmol/L)
-hui <- hui_raw |>
-  select(coast, Station, SiteName, Date, Lat, Long,
-         NNN, Phosphate, Silicate, NH4) |>
-  mutate(
-    year        = year(Date),
-    month       = month(Date),
-    ym          = floor_date(Date, "month"),
-    NO3NO2_umol = NNN       / 14.007,
-    PO4_umol    = Phosphate / 30.974,
-    SiO2_umol   = Silicate  / 28.086,
-    NH3_umol    = NH4       / 14.007
-  )
-
-# Missingness per nutrient
-hui |>
-  summarise(across(c(NO3NO2_umol, PO4_umol, SiO2_umol, NH3_umol),
-                   \(x) sum(is.na(x)))) |>
-  knitr::kable(caption = "Missing values per nutrient after unit conversion.")
-```
+> **Step 8.** Compute station-specific historical baselines from the Hui o Ka Wai Ola
+> data (loaded and unit-converted in @sec-aux-data) and fold-changes relative to
+> pre-2026 medians.
 
 ```{r}
 #| label: step8-baselines
@@ -1320,10 +1744,7 @@ hui_monthly <- hui_fc |>
     .groups = "drop"
   )
 
-# Join CHIRPS monthly rainfall
-chirps_monthly <- read_csv(here("data/chirps_maui_monthly_full.csv"),
-                            show_col_types = FALSE)
-
+# Join CHIRPS monthly rainfall (chirps_monthly loaded in §sec-aux-data)
 hui_chirps <- hui_monthly |>
   left_join(chirps_monthly |> select(ym, chirps_mm), by = "ym")
 
@@ -2168,10 +2589,8 @@ make_cb_strip_fig4 <- function(meta) {
 #| label: fig4-kriging-data
 #| cache: false
 
-# Load ahupuaa boundaries (needed for land polygon masking)
-ahupuaa_sf_fig4 <- sf::st_read(
-  here::here("data", "ahupuaa_boundaries.geojson"), quiet = TRUE
-)
+# Ahupuaʻa boundaries (loaded in §sec-aux-data) for land polygon masking
+ahupuaa_sf_fig4 <- ahupuaa_boundaries
 
 # Build island geometries
 islands_krige_fig4 <- c("O'ahu", "Maui", "Moloka'i")
@@ -2301,265 +2720,6 @@ fig4_pub
 ---
 
 # Terrestrial Connectivity {#sec-connectivity}
-
-## Master analytical dataset {#sec-master-dataset}
-
-> **Steps 2–5.** Load and join all spatial covariates; build `analysis_master`;
-> missingness matrix; predictor correlations; define four predictor groups.
-
-```{r}
-#| label: step2-load-remaining-covariates
-# Load the five covariate sources not yet joined in §2 (Data Inventory):
-#   wave height, population density, soil moisture, livestock, NPDES distance.
-# All ahupuaa-level joins use composite key ahupuaa + mokupuni.
-# pop_density uses 'island' with ʻokina encoding = mokupuni.
-# soilmoist and livestock use straight-apostrophe encoding = island;
-#   apostrophe variants normalised before joining.
-
-waveheight <- read_csv(here("data", "sample_waveheight.csv"),      show_col_types = FALSE)
-pop_dens   <- read_csv(here("data", "pop_density_ahupuaa.csv"),    show_col_types = FALSE)
-epa        <- read_csv(here("data", "epa_facilities_hi.csv"),      show_col_types = FALSE)
-soilmoist  <- read_csv(here("data", "nasa_power_soilmoist.csv"),   show_col_types = FALSE)
-livestock  <- read_csv(here("data", "usda_nass_livestock_hi.csv"), show_col_types = FALSE)
-
-# Normalise apostrophe variants for island-level joins
-normalize_island <- function(x) str_replace_all(x, "['\u2018\u2019\u02bc]", "'")
-
-# 1. Wave height — sample_id join
-chem_master <- chem_master |>
-  left_join(waveheight |> select(sample_id, hs_at_collection_m, hs_mean_m, hs_max_m),
-            by = "sample_id")
-
-# 2. Population density — composite key (pop_dens$island uses ʻokina = mokupuni)
-pop_clean <- pop_dens |>
-  rename(mokupuni = island) |>
-  group_by(ahupuaa, mokupuni) |>
-  summarise(pop_density_km2 = mean(pop_density_km2, na.rm = TRUE), .groups = "drop")
-
-chem_master <- chem_master |>
-  left_join(pop_clean |> select(ahupuaa, mokupuni, pop_density_km2),
-            by = c("ahupuaa", "mokupuni"))
-
-# 3. Soil moisture & 4. Livestock — island-level; normalise apostrophe first
-chem_master <- chem_master |>
-  mutate(island_key = normalize_island(island)) |>
-  left_join(soilmoist |> mutate(island = normalize_island(island)) |>
-              select(island, mean_gwetroot),
-            by = c("island_key" = "island")) |>
-  left_join(livestock |> mutate(island = normalize_island(island)),
-            by = c("island_key" = "island")) |>
-  select(-island_key)
-
-# 5. NPDES distance — spatial computation
-npdes_pts <- epa |>
-  filter(!is.na(lat), !is.na(lon), between(lat, 18, 23), between(lon, -161, -154)) |>
-  distinct(lat, lon) |>
-  st_as_sf(coords = c("lon", "lat"), crs = 4326) |>
-  st_transform(32604)
-
-samples_sf <- chem_master |>
-  select(sample_id, latitude, longitude) |>
-  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
-  st_transform(32604)
-
-nearest_npdes <- st_nearest_feature(samples_sf, npdes_pts)
-chem_master <- chem_master |>
-  mutate(
-    dist_to_nearest_npdes_m = as.numeric(
-      st_distance(samples_sf, npdes_pts[nearest_npdes, ], by_element = TRUE)
-    ),
-    log_dist_npdes = log(dist_to_nearest_npdes_m)
-  )
-```
-
-```{r}
-#| label: cesspool-exposure-index
-#| cache: true
-
-# The two existing cesspool metrics used together in earlier drafts — the 1 km buffer
-# count (n_cess_1km) and distance to the nearest cesspool — are moderately collinear
-# (Spearman r ≈ -0.79, VIF ≈ 2.7 for both) once density is dropped in favour of the
-# buffer count. Rather than force one metric out or accept the collinearity, combine
-# proximity and abundance into a single distance-decay "cesspool exposure index":
-#   exposure_i = sum_j exp(-d_ij / bandwidth)
-# summed over every cesspool j within a cutoff radius of sample i. A cesspool close by
-# contributes more than one far away, and multiple nearby cesspools add up — closer AND
-# more numerous both increase exposure, which is the "intensity" combination requested.
-# bandwidth = 500 m (matches the finer of the two existing buffer scales); cutoff = 2500 m
-# (5 bandwidths; weight ≈ 0.007 there, negligible beyond). Rebuilt from the same combined
-# cesspool point layer used elsewhere (data/cesspool_points.rds = HCPT layer 32 +
-# data/molokai_osds_layer.geojson (Class I filter, n=417) = DOH OSDS 2010 on Molokaʻi), so it inherits
-# the same comparability caveat as the other cesspool metrics.
-
-cess_pts_hcpt    <- readRDS(here("data", "cesspool_points.rds")) |> select(geometry)
-cess_pts_molokai <- st_read(here("data", "molokai_osds_layer.geojson"), quiet = TRUE) |>
-  filter(class_i >= 1) |>
-  select(geometry)
-all_cesspools_exp <- bind_rows(cess_pts_hcpt, cess_pts_molokai) |>
-  st_transform(32604)
-
-samples_exp_sf <- chem_master |>
-  filter(!is.na(latitude), !is.na(longitude)) |>
-  distinct(sample_id, latitude, longitude) |>
-  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) |>
-  st_transform(32604)
-
-EXP_BW <- 500      # bandwidth, metres
-EXP_CUTOFF <- 2500 # cutoff radius, metres
-
-nb_idx <- st_is_within_distance(samples_exp_sf, all_cesspools_exp, dist = EXP_CUTOFF)
-cess_exposure_idx <- vapply(seq_len(nrow(samples_exp_sf)), function(i) {
-  nb <- nb_idx[[i]]
-  if (length(nb) == 0) return(0)
-  d <- as.numeric(st_distance(samples_exp_sf[i, ], all_cesspools_exp[nb, ]))
-  sum(exp(-d / EXP_BW))
-}, numeric(1))
-
-samples_exp_sf$cess_exposure_idx <- cess_exposure_idx
-
-chem_master <- chem_master |>
-  left_join(samples_exp_sf |> st_drop_geometry() |> select(sample_id, cess_exposure_idx),
-            by = "sample_id")
-
-cat("Cesspool exposure index computed for", sum(!is.na(chem_master$cess_exposure_idx)),
-    "of", nrow(chem_master), "samples (0 by construction on Lānaʻi — no cesspools",
-    "within the cutoff radius, not missing data).\n")
-chem_master |> group_by(island) |>
-  summarise(n = n(), n_missing = sum(is.na(cess_exposure_idx)),
-            median = round(median(cess_exposure_idx, na.rm = TRUE), 2),
-            max = round(max(cess_exposure_idx, na.rm = TRUE), 1)) |>
-  knitr::kable(caption = "Cesspool exposure index by island (distance-decay weighted cesspool count, 500 m bandwidth).")
-```
-
-The exposure index combines both proximity and abundance into a single number: each cesspool
-within 2.5 km contributes $\exp(-d/500)$ to the sum, so a cesspool immediately adjacent
-contributes 1.0, one at 500 m contributes ≈ 0.37, and one at 1,500 m contributes ≈ 0.05.
-The total is interpretable as an **effective nearby cesspool count** — the number of cesspools
-that would need to be located immediately adjacent to produce the same exposure signal as the
-actual spatial arrangement. Some reference anchors:
-
-| Index value | Natural interpretation |
-|---|---|
-| 0 | No cesspools within 2.5 km (Lānaʻi by construction) |
-| ≈ 1 | One cesspool immediately adjacent, or 2–3 scattered within a few hundred meters |
-| ≈ 5 | A small cluster within the immediate neighborhood (~500 m) |
-| ≈ 20 | Moderate density: dozens of cesspools within 500–800 m (mid-century residential subdivision) |
-| ≈ 45 | High exposure: equivalent to ~45 cesspools right next door — in practice, ~80–120 cesspools within a 500 m radius, or hundreds spread across 1–1.5 km |
-
-::: {.callout-note}
-**Step 2 missingness summary.**
-
-| Variable | n missing | % | Note |
-|---|--:|--:|---|
-| `total_cfs_march` | 470 | 63.0 | Gauge coverage gap — not absent streams |
-| `cess_exposure_idx` | 0 | 0 | **Primary cesspool metric** (distance-decay weighted count, all 4 islands, including a well-defined 0 on Lānaʻi); supersedes density/distance/buffer-count below |
-| `cesspool_density_per_km2` | 72 | 9.7 | Ahupuaʻa-level; superseded metric, retained for §Step 23 sensitivity comparison |
-| `dist_to_nearest_cesspool_m` | 20 | 2.7 | Lānaʻi only (no cesspool layer on the island); superseded metric, retained for §Step 23 |
-| `n_cess_500m / n_cess_1km` | 0 | 0 | Complete coverage on all four islands, including Molokaʻi (DOH OSDS 2010 integration); this is now the **primary anthropogenic cesspool metric** used in the models below because of its fuller coverage and (per §Step 23) clearer nutrient signal relative to ahupuaʻa-level density |
-| `chirps_storm_cumulative_mm` | 32 | 4.3 | Ocean-pixel locations (offshore samples) |
-| `mean_ksat_um_s` | 19 | 2.5 | Ahupuaʻa with no SSURGO coverage |
-| `mean_slope_deg / pct_impervious / pct_agriculture / pop_density_km2` | 11 | 1.5 | Open Ocean ahupuaʻa |
-| All other predictors | 0 | 0 | — |
-
-Apostrophe encoding mismatch between `soilmoist`/`livestock` (ASCII `'`, byte 39) and
-`chem_master$island` (Unicode left-quote U+2018, byte 8216) — resolved by the
-`normalize_island()` helper before joining.
-:::
-
-```{r}
-#| label: sample-flow-table
-
-# Helper: n samples, n unique sites, n islands for any filtered tibble
-flow_row <- function(label, df) {
-  tibble(
-    Stage       = label,
-    `n samples` = nrow(df),
-    `n sites`   = df |> distinct(latitude, longitude) |> nrow(),
-    `n islands` = df |> distinct(island) |> nrow()
-  )
-}
-
-full_ids <- chem_master |>
-  filter(
-    !is.na(ahupuaa),
-    !is.na(pct_impervious),
-    !is.na(chirps_storm_cumulative_mm),
-    !is.na(hs_mean_m),
-    !is.na(dist_to_nearest_npdes_m),
-    !is.na(pop_density_km2)
-  ) |>
-  pull(sample_id)
-
-bind_rows(
-  tibble(Stage       = "Raw chemistry dataset",
-         `n samples` = nrow(chem_raw),
-         `n sites`   = chem_raw |> filter(!is.na(latitude)) |>
-                         distinct(latitude, longitude) |> nrow(),
-         `n islands` = chem_raw |> filter(!is.na(island)) |>
-                         distinct(island) |> nrow()),
-  flow_row("Coordinates available",             chem_master),
-  flow_row("NO\u2083+NO\u2082 available",       chem_master |> filter(!is.na(NO3NO2))),
-  flow_row("PO\u2084 available",                chem_master |> filter(!is.na(PO4))),
-  flow_row("NH\u2084 available",                chem_master |> filter(!is.na(NH3))),
-  flow_row("Si available",                      chem_master |> filter(!is.na(SiO2))),
-  flow_row("Ahupua\u02BBa assigned",            chem_master |> filter(!is.na(ahupuaa))),
-  flow_row("USGS stream discharge",             chem_master |> filter(!is.na(total_cfs_march))),
-  flow_row("Land-cover data (C-CAP)",           chem_master |> filter(!is.na(pct_impervious))),
-  flow_row("Cesspool data (sample-level dist)", chem_master |> filter(!is.na(dist_to_nearest_cesspool_m))),
-  flow_row("CHIRPS storm rainfall",             chem_master |> filter(!is.na(chirps_storm_cumulative_mm))),
-  flow_row("Wave height (WW3 PacIOOS)",         chem_master |> filter(!is.na(hs_mean_m))),
-  flow_row("Population density",                chem_master |> filter(!is.na(pop_density_km2))),
-  flow_row("NPDES outfall distance",            chem_master |> filter(!is.na(dist_to_nearest_npdes_m))),
-  flow_row("Full landscape model dataset",      chem_master |> filter(sample_id %in% full_ids))
-) |>
-  kable(caption = paste0("Table S1. Sample availability through data stages (n = ",
-                         nrow(chem_master), " samples with coordinates)."),
-        align = c("l", "r", "r", "r")) |>
-  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
-```
-
-```{r}
-#| label: missingness-matrix
-
-chem_master |>
-  summarise(across(
-    c(NO3NO2, PO4, NH3, SiO2,
-      total_cfs_march, dist_to_stream_mouth_m, chirps_storm_cumulative_mm,
-      mean_slope_deg, mean_ksat_um_s, mean_gwetroot,
-      fetch_mean_km, hs_mean_m, hs_at_collection_m,
-      cess_exposure_idx, cesspool_density_per_km2, dist_to_nearest_cesspool_m,
-      n_cess_500m, n_cess_1km,
-      pct_impervious, pct_agriculture,
-      pop_density_km2, dist_to_nearest_npdes_m, cattle_per_km2),
-    ~ sum(is.na(.x)),
-    .names = "{.col}"
-  )) |>
-  pivot_longer(everything(), names_to = "Variable", values_to = "n_missing") |>
-  mutate(
-    pct_missing = round(100 * n_missing / nrow(chem_master), 1),
-    Group = case_when(
-      Variable %in% c("NO3NO2", "PO4", "NH3", "SiO2")
-        ~ "A — Response",
-      Variable %in% c("total_cfs_march", "dist_to_stream_mouth_m",
-                      "chirps_storm_cumulative_mm", "mean_slope_deg",
-                      "mean_ksat_um_s", "mean_gwetroot",
-                      "fetch_mean_km", "hs_mean_m", "hs_at_collection_m")
-        ~ "B — Hydrologic / physical",
-      Variable %in% c("cess_exposure_idx", "cesspool_density_per_km2", "dist_to_nearest_cesspool_m",
-                      "n_cess_500m", "n_cess_1km",
-                      "pct_impervious", "pct_agriculture",
-                      "pop_density_km2", "dist_to_nearest_npdes_m", "cattle_per_km2")
-        ~ "C — Anthropogenic"
-    )
-  ) |>
-  arrange(Group, desc(n_missing)) |>
-  select(Group, Variable, n_missing, pct_missing) |>
-  kable(caption = paste0("Table S2. Missingness across all predictor variables (n = ",
-                         nrow(chem_master), " samples with coordinates)."),
-        col.names = c("Group", "Variable", "n missing", "% missing"),
-        align = c("l", "l", "r", "r")) |>
-  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
-```
 
 ## Predictor correlations and VIF {#sec-collinearity}
 
@@ -6440,7 +6600,8 @@ Two Step 23 checks require going back to raw inputs and are documented but not i
 
 ## Nitrogen isotopes: d15N source corroboration {#sec-isotopes}
 
-> A small d15N subsample (n = 113; d18O for only n = 16) was collected for a subset of
+> A small d15N subsample (n = `r sum(chem_master$has_isotope)` matched to chemistry; d18O for
+> n = `r sum(!is.na(chem_master$O18))`) was collected for a subset of
 > sites. This section (1) tests raw d15N against the primary cesspool-exposure and
 > agriculture predictors, (2) fits a two-source (cesspool vs agriculture) d15N mixing
 > model with a mass-balance correction for marine background nitrate, giving each sample
@@ -6452,26 +6613,10 @@ Two Step 23 checks require going back to raw inputs and are documented but not i
 ```{r}
 #| label: step-iso-load-merge
 
-# data/isotope.csv: sample_id, N15 (per mil vs air), O18 (per mil vs VSMOW; n=16 only).
-# sample_id in the isotope file carries inconsistent whitespace (e.g. "OA 58"); strip it
-# before joining. cess_exposure_idx already exists in chem_master (cesspool-exposure-index
-# chunk, computed earlier in this document).
-iso_raw <- read_csv(here("data", "isotope.csv"), show_col_types = FALSE) |>
-  mutate(sample_id_norm = str_replace_all(sample_id, "\\s+", ""))
-
-chem_iso_join <- chem_master |>
-  mutate(sample_id_norm = str_replace_all(sample_id, "\\s+", ""))
-
-iso_d <- inner_join(iso_raw, chem_iso_join, by = "sample_id_norm", suffix = c("_iso", ""))
-
-unmatched_iso <- iso_raw$sample_id[!(iso_raw$sample_id_norm %in% chem_iso_join$sample_id_norm)]
-
-cat("Isotope samples:", nrow(iso_raw), "| matched to chem_master:", nrow(iso_d),
-    "| unmatched:", length(unmatched_iso), "\n")
-cat("Unmatched sample_id values (not present in chem_master; not guessed/corrected):\n")
-print(unmatched_iso)
-
-iso_d <- iso_d |>
+# N15/O18 were merged into chem_master in @sec-tracer-merge (matching and
+# unmatched-ID audit happen there).
+iso_d <- chem_master |>
+  filter(has_isotope) |>
   mutate(
     sal_group = factor(if_else(Salinity > 34, "Marine background", "Storm-influenced"),
                         levels = c("Storm-influenced", "Marine background")),
@@ -6498,7 +6643,8 @@ bind_rows(
   tidy(m_iso_both) |> filter(term %in% c("log_cess_exposure", "pct_agriculture")) |> mutate(model = "+ island, mutually adjusted")
 ) |>
   select(model, term, estimate, std.error, p.value) |>
-  knitr::kable(digits = 3, caption = "Raw N15 ~ cesspool exposure / agriculture, island-controlled OLS (n = 108).")
+  knitr::kable(digits = 3, caption = paste0("Raw N15 ~ cesspool exposure / agriculture, island-controlled OLS (n = ",
+                                            nobs(m_iso_both), ")."))
 
 wilcox_sal <- wilcox.test(N15 ~ sal_group, data = iso_d)
 cat("\nStorm-influenced vs marine-background N15 (Wilcoxon): W =", wilcox_sal$statistic,
@@ -6801,8 +6947,8 @@ fig_iso_mixing
 ## Optical fDOM tracers: cesspool-exposure validation {#sec-fdom}
 
 > `data/WIYW_FDOM_data_QCed.csv` provides fluorescent dissolved organic matter (fDOM)
-> indices for a subset of samples (298 unique `sample_id`, 288 matched to `chem_master`,
-> all four islands, all collected within the Mar 28-Apr 8 community-sampling window).
+> indices for a subset of samples (`r sum(chem_master$has_fdom)` matched to `chem_master`;
+> merge audit in @sec-tracer-merge), collected within the Mar 28-Apr 8 community-sampling window.
 > Three index families are relevant here: terrestrial-source tracers (`Lignin`, `FI`,
 > `HIX`, `CobleA`/`CobleC`, `M_to_C`), fresh/microbial production (`CobleB`, `CobleT`,
 > `BIX`), and anthropogenic-source tracers -- `Optical_Brighteners` (fluorescent
@@ -6816,69 +6962,10 @@ fig_iso_mixing
 ```{r}
 #| label: step-fdom-load-qc
 
-# Load and QC the fDOM panel before any merge/model use.
-#
-# (1) Duplicate sample_id: OA288 was run twice (5/3 and 5/22) -- a technical lab
-#     re-run of the same physical sample, not two independent samples. Resolved by
-#     averaging the numeric columns across runs.
-# (2) Ratio-index QC: BIX, HIX, FI, and M_to_C are all ratios of specific Coble-peak
-#     emission intensities. When total fluorescence signal is near the instrument
-#     blank (the water is very weakly fluorescent overall), these ratios become
-#     numerically unstable -- the existing QCed file already sets many such rows to
-#     NA, but a handful slipped through with implausible values (FI = 0 is not a
-#     physically meaningful fluorescence index; BIX/HIX far outside their typical
-#     0-1 / 0-20 ranges). Flagged and set to NA here using an explicit, documented
-#     rule rather than silently used downstream.
-
-fdom_raw <- read_csv(here("data", "WIYW_FDOM_data_QCed.csv"), show_col_types = FALSE) |>
-  select(-matches("^\\.\\.\\.")) |>
-  rename(sample_id = `Sample ID`, run_date = `Run Date`)
-
-cat("Raw fDOM rows:", nrow(fdom_raw), "| unique sample_id:", n_distinct(fdom_raw$sample_id), "\n")
-
-dupe_ids <- fdom_raw$sample_id[duplicated(fdom_raw$sample_id)]
-cat("Duplicate sample_id (averaged across lab runs):", paste(dupe_ids, collapse = ", "), "\n")
-fdom_raw |> filter(sample_id %in% dupe_ids) |>
-  knitr::kable(digits = 3, caption = "Raw duplicate-run rows averaged below.")
-
-num_cols <- fdom_raw |> select(where(is.numeric)) |> names()
-
-fdom_clean <- fdom_raw |>
-  group_by(sample_id) |>
-  summarise(
-    run_date = paste(unique(run_date), collapse = "; "),
-    across(all_of(num_cols), ~ mean(.x, na.rm = TRUE)),
-    .groups = "drop"
-  ) |>
-  mutate(
-    total_signal = CobleA + CobleB + CobleC + CobleM + CobleT,
-    bad_ratio = total_signal < 0.01 |
-      (!is.na(FI)  & FI  < 0.3) |
-      (!is.na(BIX) & BIX > 5)   |
-      (!is.na(HIX) & HIX > 20)
-  )
-
-cat("\nAdditional rows flagged for ratio-index QC (BIX/HIX/FI/M_to_C -> NA):\n")
-fdom_clean |> filter(bad_ratio) |>
-  select(sample_id, total_signal, BIX, HIX, FI, M_to_C) |>
-  knitr::kable(digits = 3)
-
-fdom_clean <- fdom_clean |>
-  mutate(across(c(BIX, HIX, FI, M_to_C), ~ if_else(bad_ratio, NA_real_, .x))) |>
-  select(-total_signal, -bad_ratio)
-
-# Merge to chem_master (sample_id matches directly; strip whitespace defensively,
-# consistent with the isotope-merge pattern above).
-fdom_join <- fdom_clean |> mutate(sample_id_norm = str_replace_all(sample_id, "\\s+", ""))
-chem_fdom_join <- chem_master |> mutate(sample_id_norm = str_replace_all(sample_id, "\\s+", ""))
-
-fdom_d <- inner_join(fdom_join, chem_fdom_join, by = "sample_id_norm", suffix = c("_fdom", ""))
-
-unmatched_fdom <- fdom_join$sample_id[!(fdom_join$sample_id_norm %in% chem_fdom_join$sample_id_norm)]
-cat("\nfDOM samples:", nrow(fdom_clean), "| matched to chem_master:", nrow(fdom_d),
-    "| unmatched:", length(unmatched_fdom), "\n")
-
-fdom_d <- fdom_d |>
+# fDOM indices were loaded, QC'd (repeat lab runs averaged; unstable ratio indices
+# set to NA) and merged into chem_master in @sec-tracer-merge.
+fdom_d <- chem_master |>
+  filter(has_fdom) |>
   mutate(
     island = normalize_island(island),
     island = factor(island, levels = island_levels),

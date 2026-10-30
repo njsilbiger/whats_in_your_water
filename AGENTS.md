@@ -783,7 +783,19 @@ Confirmed failure: all 20 Lāna'i samples received `NA` for `mean_gwetroot` and 
 normalize_island <- function(x) str_replace_all(x, "['\u2018\u2019\u02bc]", "'")
 ```
 
-Apply to both sides of the join when the source file's encoding is uncertain. This helper is defined in `kona_low_nutrient_analysis.qmd` (step2-load-remaining-covariates chunk).
+Apply to both sides of the join when the source file's encoding is uncertain. This helper is defined in `kona_low_nutrient_analysis.qmd` (global-constants chunk).
+
+### Data assembly (reorganized 2026-10-29)
+
+All data import, cleaning, covariate derivation (stream/NPDES distances, CHIRPS, cesspool
+exposure index), and the fDOM + isotope merges live in the **Data Assembly** section
+(`#sec-data-assembly`) right after Setup. Every input path is registered once in the
+`data-input-paths` chunk (`input_files` list). `chem_master` is complete at the end of that
+section and written to `data/chem_master.csv` (`save-master-dataset`); downstream sections
+must not modify it or re-read raw files. To add new fDOM/isotope values: append to
+`data/WIYW_FDOM_data_QCed.csv` / `data/isotope.csv` and re-run that section. Tracer IDs are
+matched whitespace-insensitively; repeat runs are averaged; unmatched IDs are listed, never
+auto-corrected.
 
 ### Molokaʻi cesspool data status
 

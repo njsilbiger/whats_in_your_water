@@ -1,11 +1,13 @@
 # Isotope analysis, step 1: build water_all / water_iso and audit the isotope join.
 #
-# Inputs : data/chem_master.csv, data/isotope.csv
-# Outputs: data/chem_master_isotopes.csv (chem_master + N15/O18; cess_exposure_idx is added
-#          here because it only exists in the main analysis session),
-#          output/isotope/data/water_all.{rds,csv}, water_iso.{rds,csv},
+# Inputs : data/chem_master.csv (written by the Data Assembly section of
+#          kona_low_nutrient_analysis.qmd; already carries N15/O18, cess_exposure_idx and
+#          the fDOM columns), data/isotope.csv (used only for the join audit)
+# Outputs: output/isotope/data/water_all.{rds,csv}, water_iso.{rds,csv},
 #          output/isotope/tables/*.csv
 # Does not modify data/chem_master.csv or data/isotope.csv.
+# To pick up new isotope values: add them to data/isotope.csv, re-run the Data Assembly
+# section of the main qmd (rewrites chem_master.csv), then re-run this script.
 # N15 is measured on NOx (nitrate + nitrite); water was filtered and frozen.
 
 library(tidyverse)
@@ -19,11 +21,8 @@ dir.create(here("output", "isotope", "data"), recursive = TRUE, showWarnings = F
 dir.create(here("output", "isotope", "tables"), recursive = TRUE, showWarnings = FALSE)
 
 # ---- 1. Load -------------------------------------------------------------------------------
-# chem_master_isotopes.csv is the merged file produced earlier from the live session's
-# chem_master (which carries cess_exposure_idx). Rebuild only the isotope join from the raw
-# isotope file so the audit below is reproducible.
-base <- read_csv(here("data", "chem_master_isotopes.csv"), show_col_types = FALSE) |>
-  select(-any_of(c("N15", "O18")))
+base <- read_csv(here("data", "chem_master.csv"), show_col_types = FALSE)
+stopifnot(all(c("N15", "O18", "cess_exposure_idx") %in% names(base)))
 iso_raw <- read_csv(here("data", "isotope.csv"), show_col_types = FALSE) |>
   mutate(sample_id_norm = norm_id(sample_id))
 
@@ -59,8 +58,8 @@ gam_raw_vars <- c("NO3NO2", "SiO2", "chirps_storm_cumulative_mm", "dist_to_strea
                   "mean_slope_deg", "mean_ksat_um_s", "pct_agriculture", "pct_impervious",
                   "dist_to_nearest_npdes_m", "cess_exposure_idx", "fetch_mean_km", "hs_mean_m")
 
+# N15/O18 already merged into chem_master (repeat runs averaged there).
 water_all <- base |>
-  left_join(select(iso_raw, sample_id_norm, N15, O18), by = "sample_id_norm") |>
   mutate(
     island = factor(normalize_island(island), levels = island_levels),
     nitrite_umol = suppressWarnings(as.numeric(`NO2 (umol/L)`)),
