@@ -105,3 +105,4 @@ if (nrow(near_miss) > 0) {
 
 message("water_all: ", nrow(water_all), " | water_iso: ", nrow(water_iso),
         " | in_gam: ", sum(water_all$in_gam), " | iso in GAM: ", sum(water_iso$in_gam))
+

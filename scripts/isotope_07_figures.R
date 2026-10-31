@@ -21,6 +21,14 @@ water_iso <- readRDS(here("output", "isotope", "data", "water_iso.rds")) |>
   mutate(island = factor(island, levels = c("O'ahu", "Maui", "Moloka'i", "L\u0101na'i")))
 island_pal <- c("O'ahu" = "#1565C0", "Maui" = "#2E7D32", "Moloka'i" = "#E65100", "L\u0101na'i" = "#6A1B9A")
 
+# The saved Bayesian fits must have been run on the current isotope samples
+n_fit <- ncol(readRDS(file.path(mod_dir, "mix_draws_f_none.rds")))
+if (n_fit != nrow(water_iso)) {
+  stop("Saved model fits use ", n_fit, " isotope samples but water_iso has ", nrow(water_iso),
+       ". Re-run scripts isotope_04, isotope_04b, isotope_05 and isotope_06 before making figures.",
+       call. = FALSE)
+}
+
 theme_iso_paper <- function(base_size = 9) {
   theme_minimal(base_size = base_size) +
     theme(panel.grid.minor = element_blank(), panel.grid.major = element_line(color = "gray90", linewidth = 0.3),
