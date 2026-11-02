@@ -4,6 +4,7 @@
 # Figure 2  Nitrate concentration and d15N (does high NOx carry waste-like nitrate?)
 # Figure 3  Land-use drivers (cesspool exposure, agriculture) of d15N and of the waste-associated fraction
 # Figure 4  Rainfall interactions (predicted waste fraction and d15N at low and high exposure)
+# Figure 5  GAM effects on NOx next to the two-source and three-source isotope tests of the same drivers
 #
 # Everything is read from saved tables and model objects. Figures are written to output/isotope/figures/ as
 # vector PDF and 600-dpi PNG. Chemical notation uses expression() (no unicode sub/superscripts); no titles inside figures.
@@ -230,18 +231,33 @@ p5B <- ggplot(iso_eff, aes(est, driver, color = setting, shape = setting)) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
   geom_pointrange(aes(xmin = lwr, xmax = upr), position = position_dodge(width = 0.55), size = 0.45) +
   scale_color_manual(values = c("#0072B2", "#D55E00"), name = "Mixing model") + scale_shape_manual(values = c(16, 17), name = "Mixing model") +
-  labs(x = expression(atop("Effect on logit(waste-associated", "fraction) per SD (isotopes)")), y = NULL, tag = "B") +
+  labs(x = expression(atop("Effect on logit(waste-associated", "fraction) per SD (two-source isotopes)")), y = NULL, tag = "B") +
   theme_iso_paper() + theme(axis.text.y = element_blank())
-verdict <- tibble(driver = factor(drv_order, drv_order),
-  text = c("Inconclusive", "Inconclusive", "Opposite sign;
-not a test of
-agricultural N", "Suggestive
-(positive)")[match(drv_order, c("Rainfall x agriculture", "Rainfall x cesspool", "Agricultural land cover", "Cesspool exposure"))])
-p5C <- ggplot(verdict, aes(0, driver, label = text)) + geom_text(hjust = 0, size = 3, lineheight = 0.9) +
+# Three-source joint model (isotope_08): cesspool -> waste vs background, agriculture -> fertilizer vs background
+ag3 <- read_csv(file.path(tab_dir, "ag3_joint_effects.csv"), show_col_types = FALSE)
+ag3_eff <- bind_rows(
+  ag3 |> filter(equation == "waste_vs_bg", term == "z_log_cess_exposure") |> mutate(driver = "Cesspool exposure"),
+  ag3 |> filter(equation == "fert_vs_bg", term == "z_pct_agriculture") |> mutate(driver = "Agricultural land cover")) |>
+  transmute(driver = factor(driver, drv_order),
+            setting = factor(if_else(enrichment == "none", "No enrichment allowance", "Enrichment allowance"),
+                             c("No enrichment allowance", "Enrichment allowance")),
+            est = beta_mean, lwr = beta_lwr, upr = beta_upr)
+p5C <- ggplot(ag3_eff, aes(est, driver, color = setting, shape = setting)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_pointrange(aes(xmin = lwr, xmax = upr), position = position_dodge(width = 0.55), size = 0.45) +
+  scale_y_discrete(limits = drv_order, drop = FALSE) +
+  scale_color_manual(values = c("#0072B2", "#D55E00"), name = "Mixing model") + scale_shape_manual(values = c(16, 17), name = "Mixing model") +
+  labs(x = expression(atop("Effect on log-ratio to background", "per SD (three-source isotopes)")), y = NULL, tag = "C") +
+  theme_iso_paper() + theme(axis.text.y = element_blank())
+verdict_txt <- c("Rainfall x agriculture" = "Inconclusive", "Rainfall x cesspool" = "Inconclusive",
+                 "Agricultural land cover" = "Waste fraction falls;\nfertilizer effect\nnot informed",
+                 "Cesspool exposure" = "Suggestive\n(positive)")
+verdict <- tibble(driver = factor(drv_order, drv_order), text = unname(verdict_txt[drv_order]))
+p5D <- ggplot(verdict, aes(0, driver, label = text)) + geom_text(hjust = 0, size = 3, lineheight = 0.9) +
   scale_x_continuous(limits = c(0, 1)) + labs(x = NULL, y = NULL, tag = " ") +
   theme_void(base_size = 9) + theme(plot.tag = element_text(size = 11))
-fig5 <- (p5A + p5B + p5C) + plot_layout(widths = c(1, 1.1, 0.55), guides = "collect") &
+fig5 <- (p5A + p5B + p5C + p5D) + plot_layout(widths = c(1, 1, 1, 0.6), guides = "collect") &
   theme(legend.position = "bottom", legend.direction = "horizontal")
-save_fig(fig5, "iso_fig5_gam_vs_isotope_drivers", 7.2, 3.8)
+save_fig(fig5, "iso_fig5_gam_vs_isotope_drivers", 9.6, 3.8)
 
 message("figures written to ", fig_dir)

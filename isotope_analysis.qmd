@@ -298,17 +298,17 @@ tidy(target_glm, conf.int = TRUE, exponentiate = TRUE) |>
   knitr::kable(digits = 3, caption = "Odds of being isotope-sampled (per SD for continuous predictors).")
 ```
 **Reading the comparison.** Isotope sampling was targeted, not random or stratified. The isotope
-subset is shifted toward high NOx (SMD about 1.6 on the log scale) and, because NOx and silica covary,
-toward high silica (SMD about 0.9). No isotope sample has NOx below about `r signif(nox_min, 2)` umol/L, a range that holds
+subset is shifted toward high NOx (SMD about 1.3 on the log scale) and, because NOx and silica covary,
+toward high silica (SMD about 0.7). No isotope sample has NOx below about `r signif(nox_min, 2)` umol/L, a range that holds
 `r pct_below_nox_min`% of the `r n_nox` samples with a NOx value, and coverage is 0% for NOx at or below 1 umol/L. Among samples above
 that minimum, isotope and non-isotope samples are much closer (see the right-hand column of the SMD table),
 and the isotope subset covers all four islands. Isotope results therefore describe nitrate-enriched water
-(NOx at or above about 1.8 umol/L) and cannot be extrapolated to low-NOx samples. Because selection
+(NOx at or above about `r signif(nox_min, 2)` umol/L) and cannot be extrapolated to low-NOx samples. Because selection
 depended on NOx, any later comparison with the GAM should be repeated on the GAM data restricted to
 the same NOx range.
 # Exploratory d15N relationships {#sec-explore}
 These analyses use the `r n_iso` isotope samples and are exploratory. They do not attribute sources. Because
-isotope samples were targeted at NOx >= about 1.8 umol/L (@sec-iso-targeting), every pattern here applies to
+isotope samples were targeted at NOx >= about `r signif(nox_min, 2)` umol/L (@sec-iso-targeting), every pattern here applies to
 nitrate-enriched water only. Predictors use the same transformations as the GAM (log1p cesspool exposure, log
 silica, raw agriculture fraction and rainfall). Smooths are single-predictor GAMs (`s(x, k = 4)`, REML) that
 ignore island and watershed clustering; they show shape, not adjusted effects.
@@ -449,31 +449,30 @@ ggplot(split_dat, aes(chirps_storm_cumulative_mm, N15, color = group, fill = gro
 ## Summary: relationships worth testing with Bayesian models {#sec-expl-summary}
 These are exploratory associations in `r n_iso` samples (`r n_ahup` ahupua'a) with no multiplicity correction. They are
 used only to choose which hypotheses to carry forward.
-- **Agriculture (lower d15N where agriculture is higher).** This is the clearest signal (Spearman rho about -0.36,
-  smooth p about 0.001) and it is monotonic. It is in the direction expected if agricultural N is isotopically
+- **Agriculture (lower d15N where agriculture is higher).** This is the clearest signal (Spearman rho about -0.21,
+  smooth p about 0.002) and it is monotonic. It is in the direction expected if agricultural N is isotopically
   light (synthetic fertilizer), and it is opposite to a wastewater explanation. Caveats: agriculture is an ahupua'a-level
   value (many samples share the same value, visible as vertical stacks), `r n_ag_low` of `r n_iso` samples are below 1% agriculture, and
-  the effect shrinks and loses significance once island and ahupua'a are included (about -0.7 per mil per SD, 95% interval
-  roughly -1.5 to 0.2). Carry forward as a hypothesis.
+  the effect shrinks and loses significance once island and ahupua'a are included (about -0.6 per mil per SD, standard error
+  about 0.4). Carry forward as a hypothesis.
 - **Cesspool exposure (weakly heavier d15N where exposure is higher).** The direction matches a wastewater signal
-  (rho about 0.15), but it is not distinguishable from zero in the clustered model (about +0.7 per mil per SD, interval
-  just spanning zero). Carry forward.
-- **Agriculture and cesspool exposure are only weakly correlated** (rho about 0.15), so the two effects can be
-  separated in a joint model. Their estimates barely change when both are included.
+  (rho about 0.17, smooth p about 0.08), but it is not distinguishable from zero in the clustered model (about +0.5 per mil per SD,
+  standard error about 0.3). Carry forward.
+- **Agriculture and cesspool exposure are only weakly correlated** (rho about 0.11), so the two effects can be
+  separated in a joint model. Their estimates are similar when both are included.
 - **Silica (positive) and salinity (negative)** both indicate heavier d15N in more terrestrial, fresher water
-  (rho about 0.24 and -0.28). These could reflect a terrestrial source or the island and watershed structure; check
+  (rho about 0.29 and -0.28). These could reflect a terrestrial source or the island and watershed structure; check
   whether they survive random effects before reading anything into them.
-- **NOx (weak).** d15N has a weak, possibly non-linear relationship with log NOx (rho about 0.15, smooth edf about 2.6).
+- **NOx (weak).** d15N has a weak relationship with log NOx (rho about 0.24, smooth edf about 1.4).
   Because the lowest-NOx water was not sampled, the mixing signal that would show up as d15N varying with 1/NOx is
   hard to see. Treat concentration as a covariate for dilution, not a source indicator.
-- **Rainfall (no relationship) and no evidence for interactions.** Rainfall alone is unrelated to d15N. Neither rainfall x cesspool
-  (about +0.5 per mil per SD, interval about -0.7 to 1.7) nor rainfall x agriculture (about -0.2, interval about -1.9 to 1.4) is
+- **Rainfall (no relationship) and no evidence for interactions.** Rainfall alone is unrelated to d15N (rho about 0.06). Neither rainfall x cesspool
+  (about +0.6 per mil per SD, standard error about 0.7) nor rainfall x agriculture (about +0.3, standard error about 1.0) is
   distinguishable from zero. The intervals are wide enough to include effects of the size found in the GAM, so these data
   cannot confirm or rule out interactions. Rainfall in the isotope subset is also coarse: it comes from 5 km CHIRPS pixels,
   so many samples share one value.
-- **Clustering is modest.** After island, the SD of d15N between ahupua'a is about 1.1 per mil (interval about 0.3 to 4.3)
-  against about 2.8 per mil of residual variation, so a watershed random effect is worth keeping but does not
-  dominate. Oʻahu has the widest spread of d15N, and Molokaʻi (n = `r n_mol`) and Lānaʻi (n = `r n_lan`) are too small for island-level conclusions.
+- **Clustering is modest to moderate.** After island, the SD of d15N between ahupua'a is about 1.9 per mil (interval about 1.1 to 3.2)
+  against about 2.8 per mil of residual variation, so a watershed random effect is worth keeping. The spread of d15N is similar on Oʻahu and Maui (SD about 3.1 to 3.2 per mil), and Molokaʻi (n = `r n_mol`) and Lānaʻi (n = `r n_lan`) are too small for island-level conclusions.
 Hypotheses to take into the Bayesian steps: (1) d15N decreases with agriculture; (2) d15N increases with cesspool exposure;
 (3) the two interactions with rainfall, treated as separate prespecified tests. Each should include an island fixed effect and an ahupua'a random
 intercept, and any NOx range restriction decided in Step 2.
@@ -927,21 +926,21 @@ mx_samp |>
 
 ### What the model says {#sec-mix-summary}
 
-- **Convergence is fine for the independent model** (Rhat at most 1.01, no divergences, bulk ESS above 1,400, E-BFMI at least 0.40). The pooled model also has no divergences and
-  Rhat 1.01, but E-BFMI is low (0.16 to 0.21) and bulk ESS is 546 to 910, so its population parameters should be read cautiously.
-- **The independent model overstates the spread of the data.** The observed SD (3.1 per mil) is smaller than almost every replicated dataset (ppp 0.97 to 0.98), with too many
-  simulated values below 6 and above 12. Pooling the fractions fixes this (ppp 0.61 to 0.69) and improves leave-one-out prediction by about 10 elpd over the independent model without
-  enrichment (3.8 over the independent model with enrichment). The data cannot tell enrichment from no enrichment (pooled: difference 0.4 +/- 0.6).
-- **The population share of waste-associated nitrate depends on the enrichment assumption.** Pooled, with no enrichment allowance, pi_W is 0.49 (95% interval 0.38 to 0.62); with the moderate
-  allowance it is 0.31 (0.22 to 0.43). The assumption moves the estimate by more than the width of either interval. The unpooled mean fraction behaves the same way (0.52 vs 0.48).
-- **Per-sample fractions add no information beyond d15N rank.** The posterior mean fraction is a monotone function of d15N (rank correlation 0.999), intervals are about 0.5 to 0.9 wide, and
-  the order of samples is the same in every variant (rank correlation at least 0.99). What changes with assumptions is where the cut-offs fall: the d15N at which waste-associated N becomes more likely than not is 8.6
-  (independent, no enrichment), 9.5 (independent, enrichment), 9.9 (pooled, none) and 16.3 per mil (pooled, enrichment). The median sample is 8.7.
-- **Confident calls depend heavily on the model.** Samples with P(waste dominant) at least 0.8: 24, 10, 8 and 1 across the four variants; at most 0.2: 17, 11, 6 and 98. Pooling with an
-  enrichment allowance puts nearly every sample in the other-N class because the population mean is pulled down to 0.31, so those probabilities are driven by the population prior as much as by each sample.
-- **Threshold probabilities at 10% and 20% are not informative.** A uniform prior already gives P(f > 0.1) = 0.90 and P(f > 0.2) = 0.80, and the posterior values stay close to that (between 69% and 100% of samples have P(f > 0.1) of at least 0.9, depending on the variant).
+- **Convergence is fine for the independent model** (Rhat at most 1.01, no divergences, bulk ESS above 1,800, E-BFMI at least 0.44). The pooled model also has no divergences and
+  Rhat at most 1.01, but E-BFMI is low (0.14 to 0.23) and bulk ESS is 656 to 675, so its population parameters should be read cautiously.
+- **The independent model overstates the spread of the data.** The observed SD (3.2 per mil) is smaller than most replicated datasets (ppp 0.91 to 0.95). Pooling the fractions fixes this (ppp 0.50 to 0.61) and improves leave-one-out prediction:
+  the pooled model with an enrichment allowance is best, ahead of the independent model without enrichment by about 10 elpd (SE 2.5) and of the independent model with enrichment by about 4 (SE 1.9).
+  The data only weakly favour enrichment over no enrichment (pooled: difference 1.4 +/- 1.0 elpd).
+- **The population share of waste-associated nitrate depends on the enrichment assumption.** Pooled, with no enrichment allowance, pi_W is 0.46 (95% interval 0.36 to 0.57); with the moderate
+  allowance it is 0.28 (0.19 to 0.38). The assumption moves the estimate by more than the width of either interval. The unpooled mean fraction behaves the same way (0.51 vs 0.48).
+- **Per-sample fractions add no information beyond d15N rank.** The posterior mean fraction is a monotone function of d15N (rank correlation at least 0.999), intervals are about 0.5 to 0.9 wide, and
+  the order of samples is the same in every variant. What changes with assumptions is where the cut-offs fall: the d15N at which waste-associated N becomes more likely than not is 8.5
+  (independent, no enrichment), 9.3 (independent, enrichment), 10.5 (pooled, none) and 16.4 per mil (pooled, enrichment). The median sample is 8.4.
+- **Confident calls depend heavily on the model.** Samples with P(waste dominant) at least 0.8: 28, 13, 9 and 2 across the four variants (independent none, independent enrichment, pooled none, pooled enrichment); at most 0.2: 24, 13, 30 and 129. Pooling with an
+  enrichment allowance puts nearly every sample in the other-N class because the population mean is pulled down to 0.28, so those probabilities are driven by the population prior as much as by each sample.
+- **Threshold probabilities at 10% and 20% are not informative.** A uniform prior already gives P(f > 0.1) = 0.90 and P(f > 0.2) = 0.80, and the posterior values stay close to that (between 49% and 100% of samples have P(f > 0.1) of at least 0.9, depending on the variant).
   Only P(f > 0.5) is reported as a sample-level quantity (also stored: p_gt10, p_gt20).
-- **Endmember and analytical-error choices matter less than enrichment.** Across the 16 fits the mean fraction ranges 0.45 to 0.55; analytical SD 0.3 vs 1.0 changes almost nothing.
+- **Endmember and analytical-error choices matter less than enrichment.** Across the 16 fits the mean fraction ranges 0.47 to 0.54; analytical SD 0.3 vs 1.0 changes almost nothing.
 
 **Use in the next step.** Because the sample-level results are essentially re-expressed d15N, the comparison with cesspool exposure and agriculture should be run with the fractions kept as latent
 variables (or posterior draws propagated), under both enrichment settings, and judged mainly by whether the direction of the association survives. Posterior draws of the fractions are saved in
@@ -960,7 +959,7 @@ sets the fractions; land use is used only as a predictor. Two analyses carry the
   on the same predictors and pooled with Rubin's rules, so the isotope uncertainty enters through the between-draw variance. Those draws ignore the covariates, so this approach is expected
   to be attenuated; it keeps the isotope-only estimates untouched.
 
-Prespecified models: M1 = cesspool + agriculture; M2 = M1 + log NOx; M3 = M1 + storm rainfall; M4a and M4b add rainfall x cesspool and rainfall x agriculture separately (the two interactions are not fitted together, given `r n_fit` samples and 48 ahupuaʻa).
+Prespecified models: M1 = cesspool + agriculture; M2 = M1 + log NOx; M3 = M1 + storm rainfall; M4a and M4b add rainfall x cesspool and rainfall x agriculture separately (the two interactions are not fitted together, given `r n_fit` samples and `r n_ahup` ahupuaʻa).
 
 ```{r}
 #| label: lu-load
@@ -1057,21 +1056,191 @@ tribble(
 
 ### What the tests show {#sec-land-use-summary}
 
-- **Cesspool exposure: positive, but not conclusive.** In the joint model the effect is +0.20 (95% interval -0.02 to 0.47) with no enrichment allowance and +0.27 (0.00 to 0.61) with it;
-  P(positive) is 0.96 to 0.97. For a median sample that is a rise of about 0.05 to 0.06 in the waste fraction per SD. The conservative modular check gives +0.18 (-0.20 to 0.57), and in the
-  permutation null 2 of 10 shuffles produced an effect at least as large, so the data are compatible with a modest positive effect but do not establish it.
-- **Agriculture: the waste fraction goes down, not up.** The joint model gives -0.20 (-0.42 to 0.01) and -0.33 (-0.74 to -0.005) and P(positive) of 0.02 to 0.03; the modular check is -0.24 (-0.59 to 0.11).
-  The raw rank correlation between d15N-based fraction and agriculture is -0.35. This is what fertilizer-like or soil nitrate would produce, but the isotope signal for those sources
+- **Cesspool exposure: positive, but not conclusive.** In the joint model the effect is +0.18 (95% interval -0.03 to 0.42) with no enrichment allowance and +0.27 (-0.02 to 0.59) with it;
+  P(positive) is 0.96 to 0.97. For a median sample that is a rise of about 0.04 to 0.05 in the waste fraction per SD. The conservative modular check gives +0.19 (-0.17 to 0.55), so the data are compatible with a modest positive effect but do not establish it.
+  In the permutation null (10 shuffles per setting) none produced an effect as large as observed.
+- **Agriculture: the waste fraction goes down, not up.** The joint model gives -0.23 (-0.45 to 0.00) and -0.38 (-0.86 to -0.02) and P(positive) of 0.02; the modular check is -0.25 (-0.59 to 0.10).
+  The raw rank correlation between d15N-based fraction and agriculture is -0.21. This is what fertilizer-like or soil nitrate would produce, but the isotope signal for those sources
   overlaps (@sec-ident-summary), so it neither confirms nor contradicts the GAM's agricultural effect on NOx.
-- **NOx: higher concentrations carry more waste-like nitrate**, +0.22 (0.00 to 0.49) with no enrichment allowance and +0.29 (0.02 to 0.62) with it (P = 0.98), after adjusting for cesspool and agriculture; the conservative check is inconclusive.
-  Note that isotope samples were targeted at NOx of at least about 1.8 umol/L, so this applies within that range.
-- **Rainfall and its interactions: no evidence either way.** Rainfall alone is about 0 (P of 0.56 to 0.65). Both interactions are centred near zero with wide intervals (for rainfall x agriculture up to about +/-1 on the logit scale),
+- **NOx: higher concentrations carry more waste-like nitrate**, +0.31 (0.10 to 0.58) with no enrichment allowance and +0.39 (0.11 to 0.72) with it (P of about 1.00), after adjusting for cesspool and agriculture; the conservative check is inconclusive.
+  Note that isotope samples were targeted at NOx of at least about 1.1 umol/L, so this applies within that range.
+- **Rainfall and its interactions: no evidence either way.** Rainfall alone is small and uncertain (about +0.1, P of 0.74 to 0.77). Both interactions are centred near zero with wide intervals (for rainfall x agriculture about +/-1 on the logit scale),
   so these data cannot confirm or rule out the GAM interactions. The earlier plot of d15N against rainfall led to the same conclusion.
-- **Enrichment assumption:** effect directions do not change; magnitudes are 25 to 70% larger and intervals wider with the allowance. The data therefore support the direction, but not a precise size, of the associations.
-- **Supported by the isotopes vs driven by the prior.** The posterior SD of each main effect is 0.11 to 0.20 against a prior SD of 1, and the shuffled-d15N fits give posterior means that vary about as much as the posterior SD (0.13 to 0.17),
-  so the posteriors are data-driven and about as wide as expected under no relationship. Interaction terms (SD 0.25 to 0.5) are the least informed.
-- **Caveats.** `r n_fit` samples and 48 ahupuaʻa, with 29 ahupuaʻa having a single sample; cesspool and agriculture are ahupuaʻa-level values; island effects for Molokaʻi (7 samples) and Lānaʻi (1) rest mostly on the prior;
+- **Enrichment assumption:** effect directions do not change; magnitudes are about 50 to 65% larger and intervals wider with the allowance. The data therefore support the direction, but not a precise size, of the associations.
+- **Supported by the isotopes vs driven by the prior.** The posterior SD of each main effect is 0.11 to 0.21 against a prior SD of 1, and the shuffled-d15N fits give posterior means that vary less than the posterior SD (0.05 to 0.11 vs 0.11 to 0.17),
+  so the posteriors are data-driven. Interaction terms (SD of about 0.25 to 0.5) are the least informed.
+- **Caveats.** `r n_fit` samples and `r n_ahup` ahupuaʻa, with `r n_single` ahupuaʻa having a single sample; cesspool and agriculture are ahupuaʻa-level values; island effects for Molokaʻi (`r n_mol` samples) and Lānaʻi (`r n_lan`) rest mostly on the prior;
   the 10 permutations are a coarse check; and the waste-associated class pools wastewater with manure, so a positive link with agriculture could still arise from animal-waste fertilizer.
+
+# Probability that nitrate is agriculture-derived: a three-source model {#sec-three-source}
+
+**Question.** The two-source model of @sec-mixing-model gives P(waste-associated N dominates), the cesspool-side question. This section adds the agriculture-side question:
+what is the probability that a sample's nitrate is fertilizer-derived, and does it rise with agricultural land cover? Code: `scripts/isotope_08_three_source_agriculture.R`,
+`isotope_three_source_mixing.stan` and `isotope_three_source_mixing_covariates.stan`. Everything in this section is fitted to the same `r n_iso` isotope samples as the earlier Bayesian sections.
+
+**Sources.** Waste (literature wastewater, mean 15.9 per mil), synthetic fertilizer (0.3 per mil) and background (soil plus marine nitrate pooled, 3.0 per mil), with the SDs and uncertainties of @sec-em-priors.
+Manure is not a separate source: it overlaps wastewater (@sec-em-identifiability), so animal-waste agriculture would load on the waste source, not on fertilizer. "Agriculture" here therefore means *synthetic-fertilizer-like* nitrate only.
+
+**Models.** (A) *Isotope-only*: each sample has its own source fractions with a uniform Dirichlet(1, 1, 1) prior and no covariates, giving sample-level P(fertilizer largest), P(fertilizer fraction > 0.5) and the same for waste.
+(B) *Joint regression*: multinomial-logit fractions with background as the reference; the waste-vs-background and fertilizer-vs-background log-ratios each depend on cesspool exposure and agriculture (standardized, as in the GAM), island, an ahupuaʻa random intercept and a sample-level residual, fitted together with the mixing model (Normal(0, 1) priors on coefficients).
+(C) *Permutation null* for (B): d15N shuffled across samples (8 shuffles per enrichment setting). Each model is run with no enrichment allowance and with the moderate allowance used earlier.
+
+```{r}
+#| label: ag3-load
+ag_dir <- here("output", "isotope", "tables")
+ag_iso <- read_csv(file.path(ag_dir, "ag3_iso_sample_posteriors.csv"), show_col_types = FALSE)
+ag_joint <- read_csv(file.path(ag_dir, "ag3_joint_effects.csv"), show_col_types = FALSE)
+ag_dfrac <- read_csv(file.path(ag_dir, "ag3_joint_dfrac.csv"), show_col_types = FALSE)
+ag_perm <- read_csv(file.path(ag_dir, "ag3_permutation_null.csv"), show_col_types = FALSE)
+ag_diag <- bind_rows(
+  read_csv(file.path(ag_dir, "ag3_iso_diagnostics.csv"), show_col_types = FALSE) |> mutate(model = "isotope-only", .before = 1),
+  ag_joint |> distinct(enrichment, n_divergent, max_rhat, min_ess_bulk, min_ebfmi) |> mutate(model = "joint", .before = 1))
+ag_ppc <- bind_rows(
+  read_csv(file.path(ag_dir, "ag3_iso_ppc.csv"), show_col_types = FALSE) |> mutate(model = "isotope-only", .before = 1),
+  read_csv(file.path(ag_dir, "ag3_joint_ppc.csv"), show_col_types = FALSE) |> mutate(model = "joint", .before = 1))
+
+ag_diag |> knitr::kable(digits = 2, caption = "Convergence (4 chains each).")
+ag_ppc |> knitr::kable(digits = 2, caption = "Posterior predictive checks (ppp near 0 or 1 flags misfit).")
+```
+
+## Sample-level probabilities (isotope only) {#sec-three-iso}
+
+```{r}
+#| label: ag3-iso-summary
+ag_iso |>
+  group_by(enrichment) |>
+  summarise(mean_f_waste = mean(f_waste), mean_f_fert = mean(f_fert), mean_f_bg = mean(f_bg),
+            max_P_fert_largest = max(p_fert_largest), n_fert_P_ge_0.8 = sum(p_fert_largest >= 0.8),
+            n_waste_P_ge_0.8 = sum(p_waste_largest >= 0.8), n_bg_P_ge_0.8 = sum(p_bg_largest >= 0.8),
+            rho_Pfert_vs_agriculture = cor(p_fert_largest, pct_agriculture, method = "spearman"),
+            rho_Pwaste_vs_cesspool = cor(p_waste_largest, cess_exposure_idx, method = "spearman"),
+            rho_Pfert_vs_d15N = cor(p_fert_largest, N15, method = "spearman")) |>
+  knitr::kable(digits = 2, caption = "Isotope-only three-source model: population summaries. Unadjusted rank correlations of the sample probabilities with land use are descriptive.")
+ag_iso |>
+  filter(enrichment == "none") |>
+  mutate(agriculture = if_else(pct_agriculture > 0.1, "agriculture > 10%", "agriculture <= 10%")) |>
+  group_by(agriculture) |>
+  summarise(n = n(), median_d15N = median(N15), mean_P_fert_largest = mean(p_fert_largest), mean_P_waste_largest = mean(p_waste_largest)) |>
+  knitr::kable(digits = 2, caption = "Descriptive contrast (no enrichment allowance); the 10% cut is for display only.")
+```
+
+```{r}
+#| label: fig-ag3-iso
+#| fig-height: 7
+#| fig-cap: "Probability that a sample's nitrate is agriculture-derived (A, B) or waste-associated (C, D) in the isotope-only three-source model (no enrichment allowance; probability = P(source has the largest fraction)). A: fertilizer probability against d15N; B: against agricultural land cover. C: waste probability against d15N; D: against cesspool exposure index (log axis, 1 added). Points are posterior means; dashed line = 0.8, the confident-call threshold. Probabilities are a monotone function of d15N alone (A, C), so panels B and D restate the d15N-land-use relationships of the exploratory section."
+d0 <- filter(ag_iso, enrichment == "none")
+pa <- ggplot(d0, aes(N15, p_fert_largest)) + geom_hline(yintercept = 0.8, linetype = "dashed", color = "gray50") +
+  geom_point(alpha = 0.8) + ylim(0, 1) +
+  labs(x = expression(delta^{15}*N~"(per mil vs air)"), y = "P(fertilizer largest)", tag = "A") + theme_minimal(base_size = 10)
+pb <- ggplot(d0, aes(pct_agriculture, p_fert_largest, color = island)) + geom_hline(yintercept = 0.8, linetype = "dashed", color = "gray50") +
+  geom_point(alpha = 0.8) + ylim(0, 1) + scale_color_manual(values = island_pal, name = NULL) +
+  labs(x = "Agriculture (fraction)", y = "P(fertilizer largest)", tag = "B") + theme_minimal(base_size = 10) + theme(legend.position = "bottom")
+pc <- ggplot(d0, aes(N15, p_waste_largest)) + geom_hline(yintercept = 0.8, linetype = "dashed", color = "gray50") +
+  geom_point(alpha = 0.8) + ylim(0, 1) +
+  labs(x = expression(delta^{15}*N~"(per mil vs air)"), y = "P(waste largest)", tag = "C") + theme_minimal(base_size = 10)
+pd <- ggplot(d0, aes(cess_exposure_idx + 1, p_waste_largest, color = island)) + geom_hline(yintercept = 0.8, linetype = "dashed", color = "gray50") +
+  geom_point(alpha = 0.8) + ylim(0, 1) + scale_x_log10() + scale_color_manual(values = island_pal, name = NULL) +
+  labs(x = "Cesspool exposure index + 1", y = "P(waste largest)", tag = "D") + theme_minimal(base_size = 10) + theme(legend.position = "bottom")
+(pa | pb) / (pc | pd)
+```
+
+## Does land use predict the fractions? (joint model) {#sec-three-joint}
+
+```{r}
+#| label: ag3-joint-table
+ag_lu_terms <- c("z_log_cess_exposure", "z_pct_agriculture")
+ag_joint |>
+  filter(term %in% ag_lu_terms) |>
+  select(enrichment, equation, term, beta_mean, beta_lwr, beta_upr, p_positive) |>
+  knitr::kable(digits = 2, caption = "Joint model: effect on the log-ratio of waste (or fertilizer) to background nitrate per SD of the predictor (95% credible interval, P(beta > 0)).")
+ag_dfrac |>
+  select(enrichment, term, source, dfrac_mean, dfrac_lwr, dfrac_upr) |>
+  knitr::kable(digits = 3, caption = "Change in the mean source fraction per SD of the predictor (O'ahu, median random effects). W = waste, F = fertilizer.")
+
+ag_perm |>
+  filter(term %in% ag_lu_terms) |>
+  left_join(ag_joint |> filter(term %in% ag_lu_terms) |> select(enrichment, equation, term, obs_beta = beta_mean),
+            by = c("enrichment", "equation", "term")) |>
+  group_by(enrichment, equation, term) |>
+  summarise(n_perm = n(), null_sd_of_posterior_means = sd(beta_mean), mean_posterior_sd = mean(beta_sd), obs_beta = first(obs_beta),
+            share_null_abs_beta_ge_observed = mean(abs(beta_mean) >= abs(obs_beta)), .groups = "drop") |>
+  knitr::kable(digits = 2, caption = "Permutation null: d15N shuffled across samples, covariates and sites unchanged. With 8 shuffles the null shares have a resolution of 0.125.")
+```
+
+```{r}
+#| label: fig-ag3-joint
+#| fig-height: 3.6
+#| fig-cap: "Joint three-source model: effects of cesspool exposure and agricultural land cover on the log-ratio of waste (A) and fertilizer (B) to background nitrate, per SD of the predictor, adjusted for the other predictor, island and ahupua'a (points = posterior mean, bars = 95% credible interval). Models without and with an enrichment allowance."
+ag_forest <- ag_joint |>
+  filter(term %in% ag_lu_terms) |>
+  mutate(term = factor(term, ag_lu_terms, labels = c("Cesspool exposure", "Agriculture")),
+         panel = factor(equation, c("waste_vs_bg", "fert_vs_bg"), labels = c("Waste vs background", "Fertilizer vs background")))
+ggplot(ag_forest, aes(beta_mean, term, color = enrichment, xmin = beta_lwr, xmax = beta_upr)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_pointrange(position = position_dodge(width = 0.5), size = 0.4) +
+  facet_wrap(~panel) +
+  scale_color_manual(values = c(none = "#0072B2", moderate = "#D55E00"), name = "Enrichment allowance") +
+  labs(x = "Effect on log-ratio to background (per SD)", y = NULL) +
+  theme_minimal(base_size = 10) + theme(legend.position = "bottom")
+```
+
+```{r}
+#| label: ag3-inline
+ag_fe <- \(e, q, t) ag_joint[ag_joint$enrichment == e & ag_joint$equation == q & ag_joint$term == t, ]
+ag_fmt <- \(r) sprintf("%.2f (%.2f to %.2f)", r$beta_mean, r$beta_lwr, r$beta_upr)
+```
+
+### What the three-source model shows {#sec-three-summary}
+
+- **No sample can be called agriculture-derived.** The largest P(fertilizer largest) in the isotope-only model is `r sprintf("%.2f", max(ag_iso$p_fert_largest))`, and no sample reaches 0.8 under either enrichment setting.
+  Fertilizer (0.3 per mil) and background (3.0 per mil) overlap too much, as the simulations predicted (agriculture vs background AUC about 0.6). By contrast `r sum(ag_iso$p_waste_largest[ag_iso$enrichment == "none"] >= 0.8)` samples
+  (no enrichment) and `r sum(ag_iso$p_waste_largest[ag_iso$enrichment == "moderate"] >= 0.8)` (enrichment) reach 0.8 for waste.
+- **P(fertilizer largest) is the mirror image of d15N** (rank correlation `r sprintf("%.2f", cor(ag_iso$p_fert_largest[ag_iso$enrichment == "none"], ag_iso$N15[ag_iso$enrichment == "none"], method = "spearman"))`): the lowest-d15N samples get the highest value.
+  It therefore carries no information beyond d15N rank, and a sample with low d15N is just as consistent with natural soil or marine nitrate.
+- **Agriculture does not predict the fertilizer fraction.** In the joint model the agriculture effect on the fertilizer-to-background log-ratio is `r ag_fmt(ag_fe("none", "fert_vs_bg", "z_pct_agriculture"))` with no enrichment allowance and
+  `r ag_fmt(ag_fe("moderate", "fert_vs_bg", "z_pct_agriculture"))` with it; the posterior SD (about 0.7) is close to the prior SD of 1 and the shuffled-d15N fits are about as variable as the data, so this term is essentially uninformed. The data neither support nor rule out a fertilizer contribution.
+- **Agriculture is associated with a lower waste fraction, cesspool exposure with a higher one**, repeating the two-source result in a different parameterization:
+  waste-vs-background effect of agriculture `r ag_fmt(ag_fe("none", "waste_vs_bg", "z_pct_agriculture"))` and of cesspool exposure `r ag_fmt(ag_fe("none", "waste_vs_bg", "z_log_cess_exposure"))` (no enrichment). Both intervals include zero, and the shifts in the mean waste fraction
+  are about 5 to 6 percentage points per SD. In the permutation null, none of the 8 shuffles per setting produced a waste-vs-background agriculture effect as large as observed, but 8 shuffles is a coarse check.
+- **What this means for the paper's question.** Isotopes support, weakly, the cesspool side (waste-like nitrate rises with cesspool exposure) and are structurally unable to test the agriculture side with the current source set. Lower d15N where agriculture is high is the pattern fertilizer nitrate would produce,
+  but natural soil nitrate would produce it too. Testing the agricultural contribution would need a second tracer (nitrate d18O, or a pesticide or fertilizer-specific indicator), and animal-waste agriculture would still be indistinguishable from wastewater by d15N.
+- **Caveat on the 'probability'.** These are model-based probabilities conditional on the literature endmembers, on the pooled background source and on Dirichlet priors; they are not measured source attributions, and enrichment (denitrification-like shifts) would move samples toward the waste class.
+
+## Does separating manure change the agriculture result? {#sec-four-source}
+
+The three-source model treats manure as part of the waste source. Animal-waste agriculture could instead be what links agricultural land cover to nitrate, so this check adds manure
+(mean 12.5 per mil, SD 8.2) as a fourth source next to wastewater, synthetic fertilizer and background, with the same isotope-only design (Dirichlet(1, 1, 1, 1) fractions, no covariates).
+"Agriculture-derived" is reported as fertilizer alone and as fertilizer + manure. Land use is related to the fractions afterwards with the modular repeated-draw regression (300 draws, Rubin's rules, ahupuaʻa-clustered SEs).
+Code: `scripts/isotope_09_four_source_manure.R` and `isotope_four_source_mixing.stan`.
+
+```{r}
+#| label: ag4-tables
+ag4_s <- read_csv(file.path(ag_dir, "ag4_sample_posteriors.csv"), show_col_types = FALSE)
+ag4_pop <- read_csv(file.path(ag_dir, "ag4_population_fractions.csv"), show_col_types = FALSE)
+ag4_mod <- read_csv(file.path(ag_dir, "ag4_modular_effects.csv"), show_col_types = FALSE)
+read_csv(file.path(ag_dir, "ag4_diagnostics.csv"), show_col_types = FALSE) |>
+  knitr::kable(digits = 2, caption = "Four-source model convergence (4 chains).")
+ag4_pop |> knitr::kable(digits = 2, caption = "Population-mean fractions (average over samples; 95% interval). A uniform Dirichlet prior alone gives 0.25 per source.")
+ag4_s |>
+  group_by(enrichment) |>
+  summarise(max_P_fert_largest = max(p_fert_largest), max_P_manure_largest = max(p_manure_largest),
+            n_any_source_P_ge_0.8 = sum(pmax(p_fert_largest, p_manure_largest, p_waste_largest, p_bg_largest) >= 0.8),
+            max_P_fert_plus_manure_gt_0.5 = max(p_ag_total_gt50),
+            rho_ag_total_vs_agriculture = cor(f_ag_total, pct_agriculture, method = "spearman"),
+            rho_manure_vs_agriculture = cor(f_manure, pct_agriculture, method = "spearman"),
+            rho_waste_plus_manure_vs_cesspool = cor(f_waste + f_manure, cess_exposure_idx, method = "spearman")) |>
+  knitr::kable(digits = 2, caption = "Sample-level probabilities and unadjusted rank correlations (posterior-mean fractions).")
+ag4_mod |>
+  knitr::kable(digits = 2, caption = "Modular regression of logit fractions on cesspool exposure and agriculture (per SD; island fixed; ahupuaʻa-clustered SEs).")
+```
+
+- **No sample can be assigned to fertilizer or manure.** The largest P(fertilizer largest) is `r sprintf("%.2f", max(ag4_s$p_fert_largest))` and the largest P(manure largest) is `r sprintf("%.2f", max(ag4_s$p_manure_largest))`;
+  no sample has any source above 0.8 under either enrichment setting. P(fertilizer + manure > 0.5) never exceeds `r sprintf("%.2f", max(ag4_s$p_ag_total_gt50))`.
+- **The population fractions are the prior.** Each source's mean fraction is about 0.24 to 0.26, with intervals of roughly 0.21 to 0.29, which is what the Dirichlet prior gives with no data. With four sources and one isotope the data cannot apportion nitrate; d15N mostly fixes the ordering of samples between low (fertilizer, background) and high (wastewater, manure) values.
+- **Combining manure with fertilizer does not create an agriculture signal.** The fertilizer + manure fraction has a modular effect of agriculture of `r sprintf("%.2f (%.2f to %.2f)", ag4_mod$estimate[ag4_mod$enrichment == "none" & ag4_mod$response == "fertilizer + manure" & ag4_mod$term == "z_pct_agriculture"], ag4_mod$lwr[ag4_mod$enrichment == "none" & ag4_mod$response == "fertilizer + manure" & ag4_mod$term == "z_pct_agriculture"], ag4_mod$upr[ag4_mod$enrichment == "none" & ag4_mod$response == "fertilizer + manure" & ag4_mod$term == "z_pct_agriculture"])` on the logit scale (no enrichment), essentially zero because the two components move in opposite directions along d15N (manure rises, fertilizer falls with d15N).
+  Fertilizer alone is +0.12 (-0.20 to 0.45) and manure alone -0.12 (-0.45 to 0.22), both centred near zero.
+- **The waste-side result is unchanged.** Waste + manure falls with agriculture (-0.17, -0.39 to 0.06) and rises with cesspool exposure (+0.12, -0.10 to 0.35), the same directions as the two- and three-source models, again with intervals that include zero. Nothing here suggests that animal-waste agriculture explains a positive agriculture link; but the isotope data also cannot exclude it, because manure and wastewater overlap (about 0.8) and are not separable.
+- **Reading.** Adding manure does not change the conclusion: d15N alone cannot test whether agriculture, fertilizer-derived or animal-waste-derived, raises nitrate. The identifiable contrast remains high-d15N (waste + manure) versus low-d15N (fertilizer + background) nitrate, and that contrast leans toward cesspools and away from agriculture.
 
 # Rainfall interactions {#sec-rain}
 
@@ -1171,14 +1340,14 @@ ggplot(pb, aes(rain_mm, d15N, color = level, fill = level)) +
 
 ### What the rainfall tests show {#sec-rain-summary}
 
-- **Neither interaction is distinguishable from zero, in either response.** Rainfall x cesspool is +0.10 (95% interval -0.36 to 0.65) on the logit scale with no enrichment allowance and +0.02 (-0.51 to 0.57) with it; for observed d15N it is
-  +0.27 (-0.84 to 1.40) per mil. Rainfall x agriculture is +0.02 (-0.56 to 0.68) and +0.13 (-0.80 to 1.13), and +0.13 (-1.45 to 1.69) per mil. P(interaction > 0) is 0.47 to 0.69 throughout.
-- **The data cannot rule out sizeable effects.** Between the 90th and 10th percentile of cesspool exposure the rainfall slope could differ by up to about +1.6 logit units per SD of rainfall (upper 95% bound), and by up to about +1.9 (no allowance) to +3.1 (with allowance) for agriculture. Posterior SDs of the interactions (0.25 to 0.53 logit units; 0.57 to 0.81 per mil) are too large to detect
+- **Neither interaction is distinguishable from zero, in either response.** Rainfall x cesspool is +0.13 (95% interval -0.30 to 0.64) on the logit scale with no enrichment allowance and +0.08 (-0.49 to 0.65) with it; for observed d15N it is
+  +0.40 (-0.72 to 1.55) per mil. Rainfall x agriculture is +0.01 (-0.57 to 0.67) and +0.12 (-0.91 to 1.19), and +0.15 (-1.49 to 1.90) per mil. P(interaction > 0) is 0.50 to 0.76 throughout.
+- **The data cannot rule out sizeable effects.** Between the 90th and 10th percentile of cesspool exposure the rainfall slope could differ by up to about +1.6 logit units per SD of rainfall (upper 95% bound), and by up to about +1.9 (no allowance) to +3.3 (with allowance) for agriculture. Posterior SDs of the interactions (0.24 to 0.52 logit units; 0.58 to 0.87 per mil) are too large to detect
   anything much smaller than that, so a null result here is weak evidence of no effect.
-- **Both interactions can be fitted together, but add little.** M5 gives almost the same interaction estimates as the separate models (cesspool +0.10, agriculture -0.01 with no allowance) with slightly wider intervals (SD 0.27 and 0.33).
-- **Predicted curves overlap.** At high cesspool exposure the predicted waste fraction goes from about 0.62 to 0.70 across the rainfall range, and at low exposure from 0.54 to 0.51; the bands (about 0.45 wide) overlap throughout.
-  With no enrichment allowance the high-agriculture fraction is lower than the low-agriculture fraction at every rainfall (about 0.42 to 0.48 vs 0.56 to 0.60) with parallel slopes, repeating the negative agriculture association from the previous section; with the allowance the high-agriculture curve rises (about 0.18 to 0.38) but its band spans most of 0 to 1.
-- **Much of the plot is extrapolation.** There are no samples above 450 mm among the lowest-cesspool quartile, and the highest-agriculture samples (12 within 0.5 SD of the 90th percentile) cover only 140 to 294 mm.
+- **Both interactions can be fitted together, but add little.** M5 gives almost the same interaction estimates as the separate models (cesspool +0.14, agriculture +0.01 with no allowance) with slightly wider intervals (SD 0.24 and 0.33).
+- **Predicted curves overlap.** At high cesspool exposure the predicted waste fraction goes from about 0.53 to 0.66 across the rainfall range, and at low exposure it stays at about 0.45 to 0.46; the bands (about 0.4 wide) overlap throughout.
+  With no enrichment allowance the high-agriculture fraction is lower than the low-agriculture fraction at every rainfall (about 0.33 to 0.43 vs 0.47 to 0.55) with similar slopes, repeating the negative agriculture association from the previous section; with the allowance the high-agriculture curve rises (about 0.12 to 0.33) but its band is wide and overlaps the low-agriculture band.
+- **Much of the plot is extrapolation.** There are no samples above 450 mm among the lowest-cesspool quartile, and the highest-agriculture samples (13 within 0.5 SD of the 90th percentile) cover only 140 to 294 mm.
   Beyond those ranges the curves are dashed. Because rainfall comes from 5 km CHIRPS pixels, many samples share a value, and the largest rainfall values rest on few pixels.
 - **Mechanistic reading.** The isotopes neither show that rainfall delivers more waste-like nitrate where cesspool density is high nor argue against it. The GAM interaction (higher NOx at high exposure in storm-affected areas) could still arise from more
   delivery of waste-associated or fertilizer-like nitrate, with no change in the waste fraction if the added nitrate has a d15N similar to the background. An enriched signal during rainfall would not have proved cesspool loading, and the absence of one does not
@@ -1231,19 +1400,19 @@ fig4
 ```{r}
 #| label: fig-iso-5
 #| fig-height: 3.8
-#| fig-cap: "Drivers of NOx in the GAM (A; standardized effects on log NOx, 95% intervals) and the isotope-based tests of the same drivers (B; effects on the logit of the waste-associated fraction per SD of the predictor, joint model). Text gives the reading of each driver."
+#| fig-cap: "Drivers of NOx in the GAM (A; standardized effects on log NOx, 95% intervals) and the isotope-based tests of the same drivers: two-source model (B; effects on the logit of the waste-associated fraction per SD of the predictor, joint model) and three-source model (C; effects on the log-ratio of waste to background for cesspool exposure and of fertilizer to background for agricultural land cover, joint model; no estimates for the rainfall interactions). Text gives the reading of each driver."
 
 fig5
 ```
 
 **What the figures show.**
 
-- **The isotopes place most samples between the sources (Figure 1).** Median d15N is 8.7 per mil, above the fertilizer, soil and marine distributions and below the centre of the wastewater distribution. P(waste-associated N dominates) is a smooth function of d15N,
-  and where it crosses 0.5 shifts from about 9 per mil to about 16 per mil depending on the model, so d15N alone cannot classify most samples.
-- **Nitrate concentration is not clearly tied to a source (Figure 2).** d15N is weakly related to NOx (Spearman rho = 0.15) and the mean waste fraction is about 0.45 to 0.6 in every concentration class with overlapping intervals.
-- **The clearest isotope-visible land-use signals are agricultural lightening and a modest cesspool enrichment (Figure 3).** d15N is lower where agricultural land cover is high (rho = -0.35) and slightly higher with cesspool exposure (rho = 0.15). After adjustment the cesspool effect on the waste fraction is positive but touches zero, and the agriculture effect is negative.
+- **The isotopes place most samples between the sources (Figure 1).** Median d15N is 8.4 per mil, above the fertilizer, soil and marine distributions and below the centre of the wastewater distribution. P(waste-associated N dominates) is a smooth function of d15N,
+  and where it crosses 0.5 shifts from about 8.5 per mil to about 16 per mil depending on the model, so d15N alone cannot classify most samples.
+- **Nitrate concentration is not clearly tied to a source (Figure 2).** d15N is weakly related to NOx (Spearman rho = 0.24) and the mean waste fraction is about 0.44 to 0.6 in every concentration class with overlapping intervals.
+- **The clearest isotope-visible land-use signals are agricultural lightening and a modest cesspool enrichment (Figure 3).** d15N is lower where agricultural land cover is high (rho = -0.21) and slightly higher with cesspool exposure (rho = 0.17). After adjustment the cesspool effect on the waste fraction is positive but touches zero, and the agriculture effect is negative.
 - **There is no detectable rainfall amplification in the isotopes (Figure 4).** Predicted curves at low and high exposure have overlapping bands over the range the data cover, so rainfall x exposure effects are not resolved.
-- **Taken together (Figure 5),** the isotopes lean toward the GAM's cesspool effect on NOx but cannot confirm it, cannot test the agricultural or interaction effects as stated, and show nothing that contradicts the GAM.
+- **Taken together (Figure 5),** the isotopes lean toward the GAM's cesspool effect on NOx but cannot confirm it. Agriculture lowers the waste fraction, but the three-source model (panel C) finds no information on a fertilizer contribution (the fertilizer-vs-background effect is centred near zero with a very wide interval), so the agricultural and interaction effects are not tested and nothing contradicts the GAM.
   Direct support for either source would need a second tracer.
 
 # Background
@@ -1260,8 +1429,46 @@ Still needed for this section: the nitrate conversion method (for example bacter
 (SD of replicate standards or samples, which sets the analytical error term in the mixing model), the minimum nitrate mass or concentration for reliable d15N,
 and whether the measured pool is NO3 only or NO3 + NO2 (the user reports it as NOx).
 
+## Isotope mixing models (draft) {#sec-methods-mixing}
+
+**Samples and covariates.** Analyses used the `r n_iso` samples with a valid d15N (`r n_ahup` ahupuaʻa). Because isotope samples were targeted at NOx of at least about `r signif(nox_min, 2)` umol/L (@sec-iso-targeting), results apply to nitrate-enriched water only.
+Cesspool exposure (log of one plus the exposure index), agricultural land cover and storm rainfall were standardized with the means and SDs of the NOx GAM data, so coefficients share the GAM's scale. Island was a fixed effect (Oʻahu as reference) and ahupuaʻa a random intercept; cesspool and agriculture are ahupuaʻa-level values.
+
+**Sources and priors.** Source d15N distributions come from a literature database (@sec-endmembers). Each source is Normal(group mean, source SD), where the group mean is the average of study means (the midpoint for studies reporting a range) and the source SD combines within-source and between-study variation (@sec-em-priors).
+Source means carry a Normal(mean, SE) prior, with SE equal to the between-study SD divided by the square root of the number of studies, and source SDs a LogNormal(log SD, 0.25) prior.
+
+| Source | Mean (per mil) | Source SD | SE of mean | Used in |
+|---|--:|--:|--:|---|
+| Wastewater | 15.9 | 6.5 | 1.7 | all models |
+| Manure | 12.5 | 8.2 | 2.0 | four-source |
+| Synthetic fertilizer | 0.3 | 2.0 | 0.7 | three- and four-source |
+| Background (soil + marine) | 3.0 | 2.5 | 0.6 | three- and four-source |
+| Other (fertilizer + soil + marine pooled) | 2.1 | 2.8 | 0.5 | two-source |
+
+Manure is excluded from the two- and three-source models because it overlaps wastewater (overlap about 0.8); animal-waste agriculture then loads on the waste source. The four-source model tests that choice.
+Hawaiʻi-specific cesspool nitrate values are scarce (three Puako samples), so the wastewater prior leans on treated effluent and general septic values; the identifiability study (@sec-identifiability) used a cesspool-like N(11, 4.5) source as a sensitivity case.
+
+**Likelihood and enrichment allowance.** For sample i with source fractions f, $$y_i \sim \mathrm{Normal}\big(\textstyle\sum_k f_{ik}\mu_k + e,\ \sqrt{\textstyle\sum_k f_{ik}^2 s_k^2 + \sigma_a^2 + \tau_e^2}\big)$$ with analytical SD $$\sigma_a = 0.3$$ per mil (fixed; a placeholder until the laboratory reports its precision, and shown to matter little).
+Denitrification-like enrichment shifts nitrate toward heavier d15N and, if ignored, inflates the waste fraction. Every model is therefore fitted twice: with no allowance ($$e = 0, \tau_e = 0$$) and with a moderate allowance ($$e = 2.5, \tau_e = 1.44$$ per mil, equivalent to a Uniform(0, 5) shift). Results are reported under both, and conclusions are judged by whether they survive both.
+
+**Fractions.** The two-source model (waste vs other) was fitted with independent uniform fractions per sample and with pooled fractions (Beta distribution with population mean $$\pi_W$$ and concentration $$\kappa$$). Pooled and independent versions were compared by leave-one-out prediction with the fractions integrated out. Sample-level results are reported as P(a source has the largest fraction) or P(f > 0.5), not as point fractions, because simulations showed per-sample fractions are weakly identified (@sec-ident-summary).
+The three-source (waste, fertilizer, background) and four-source (adding manure) models use uniform Dirichlet fractions per sample and no covariates.
+
+**Land-use tests.** Two analyses carry isotope uncertainty into the land-use effects. (i) *Joint models*: the mixing model is fitted together with a regression of the fraction on standardized predictors, island, an ahupuaʻa random intercept and a sample-level residual, with Normal(0, 1) priors on coefficients. In the two-source version the logit of the waste fraction is the response; in the three-source version a multinomial-logit has background as the reference, so waste-vs-background and fertilizer-vs-background log-ratios each have their own coefficients.
+(ii) *Modular repeated-draw analysis*: 300 posterior draws of the fractions from the covariate-free model are each regressed on the predictors (logit scale, draws clipped to 0.001 to 0.999, island fixed, ahupuaʻa-clustered HC1 standard errors) and pooled with Rubin's rules. Because the draws ignore the covariates, this check is expected to be attenuated and is treated as conservative. The same modular analysis was applied to the four-source fractions, including the combined fertilizer + manure fraction.
+Prespecified two-source models were cesspool + agriculture, plus NOx, plus rainfall, and the rainfall x cesspool and rainfall x agriculture interactions (fitted separately, and together as a check). Observed d15N was also modelled directly (brms, Gaussian, Normal(0, 2) priors) as a mixing-model-free check on the interactions.
+As a null reference, d15N was shuffled across samples with covariates and sites unchanged (10 shuffles per enrichment setting for the two-source joint model, 8 for the three-source), which is a coarse check.
+
+**Fitting and diagnostics.** Models were fitted in Stan through rstan (four chains; 2,000 to 3,000 iterations for the independent and covariate models, 6,000 for the pooled model, adapt_delta 0.95 to 0.99). We report divergences, Rhat, bulk ESS and E-BFMI, and posterior predictive checks of the mean and SD of d15N. The pooled two-source model has low E-BFMI, so its population parameters are read cautiously. A single seed (2847) is set per script. Code is in `scripts/isotope_04` to `isotope_09`.
+
 # Results
 # Discussion
+
+**What the isotopes can and cannot say about cesspools versus agriculture.** Across the two-, three- and four-source models the isotopes lean toward a cesspool contribution and are unable to test an agricultural one. Waste-associated nitrate rises with cesspool exposure in every parameterization (two-source joint model +0.18, 95% interval -0.03 to 0.42, on the logit scale per SD, with larger effects when enrichment is allowed), but no interval excludes zero in the conservative checks, so the evidence is suggestive, not established.
+Agricultural land cover goes with lighter d15N and a lower waste fraction, which is what fertilizer or natural soil nitrate would produce, but fertilizer, soil and marine nitrate overlap so heavily that the three-source model finds no information on a fertilizer contribution (effect on the fertilizer-vs-background log-ratio centred near zero with a very wide interval), and no sample can be called agriculture-derived with confidence.
+Adding manure does not rescue the test: manure and wastewater are not separable, the fertilizer + manure fraction shows no relationship with agriculture, and the four-source population fractions stay near their prior. The isotopes therefore neither confirm nor contradict the GAM's agricultural effect on NOx, and they show no rainfall amplification for either source, with intervals wide enough to include effects of the GAM's size.
+Because isotope samples were targeted at high NOx, and because the conclusions rest on literature endmembers and an assumed enrichment, the supportable statement is that nitrate-enriched water is more waste-like where cesspool exposure is higher; attributing nitrate to agriculture would need a second tracer such as nitrate d18O.
+
 # Reproducibility
 ```{r}
 #| label: session-info
