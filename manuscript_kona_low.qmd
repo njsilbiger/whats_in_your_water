@@ -36,7 +36,7 @@ read_tbl <- function(f) read_csv(here("output/tables", f), show_col_types = FALS
 
 ## Abstract
 
-Extreme rainfall strengthens connections between land and sea, rapidly transporting terrestrial nutrients and pollutants into coastal ecosystems. As climate change intensifies extreme precipitation, understanding how human modification of watersheds alters these event-driven land–sea connections is increasingly important. In March 2026, a Kona Low delivered island-mean rainfall of 68–124 mm day⁻¹ across Hawaiʻi, creating a rare natural experiment to examine how extreme rainfall interacts with landscape characteristics to shape coastal nutrient exposure. Through a rapid, distributed community science effort, we sampled coastal water chemistry at 746 locations across Oʻahu, Maui, Molokaʻi, and Lānaʻi 12–26 days after the primary storm peak — and 6–8 days after a second Kona Low that peaked 20–22 March — spanning 132 ahupuaʻa (traditional watersheds) and broad gradients in hydrology and human land use. Relative to contemporaneous  marine-background waters, storm-influenced samples were enriched ~4.8× in dissolved silicate (SiO₂), ~2.0× in NO₃+NO₂, ~1.8× in PO₄, and ~1.6× in NH₄. Comparison with a decade of fixed-station observations from Hui o Ka Wai Ola showed that March 2026 was the wettest month of the decade and produced nutrient anomalies reaching the 98th–100th percentiles of the historical record, with individual stations reaching up to 41× their historical baseline. Spatially explicit models revealed that nutrient forms captured different components of the land-to-sea pathway: SiO₂ delivery was strongly structured by physical connectivity and hydrologic forcing, whereas NH₄ was more spatially heterogeneous. Importantly, human land use amplified the coastal nitrogen response to extreme rainfall. Interactions between rainfall and both cesspool density and agriculture showed that comparable rainfall produced substantially greater NO₃+NO₂ exposure in watersheds with greater wastewater and agricultural pressures, demonstrating that human modification of the landscape can magnify the transfer of nutrients from land to sea during extreme events. The rainfall × cesspool relationship persisted when any of the three less populated was excluded, although the regional pattern was primarily supported by Oʻahu, where sampling captured the broadest cesspool gradient. Together, our results show that extreme rainfall does not simply increase land-to-sea nutrient transport; it amplifies the coastal expression of chronic anthropogenic nutrient pollution. As extreme precipitation intensifies with climate change, coastal exposure will therefore be shaped not only by the magnitude of future storms, but by the human footprint of the landscapes through which water flows.
+Extreme rainfall strengthens connections between land and sea, rapidly transporting terrestrial nutrients and pollutants into coastal ecosystems. As climate change intensifies extreme precipitation, understanding how human modification of watersheds alters these event-driven land–sea connections is increasingly important. In March 2026, a Kona Low delivered island-mean rainfall of 68–124 mm day⁻¹ across Hawaiʻi, creating a rare natural experiment to examine how extreme rainfall interacts with landscape characteristics to shape coastal nutrient exposure. Through a rapid, distributed community science effort, we sampled coastal water chemistry at 746 locations across Oʻahu, Maui, Molokaʻi, and Lānaʻi 12–26 days after the primary storm peak — and 6–8 days after a second Kona Low that peaked 20–22 March — spanning 132 ahupuaʻa (traditional watersheds) and broad gradients in hydrology and human land use. Relative to contemporaneous  marine-background waters, storm-influenced samples were enriched ~4.8× in dissolved silicate (SiO₂), ~2.0× in NO₃+NO₂, ~1.8× in PO₄, and ~1.6× in NH₄. Comparison with a decade of fixed-station observations from Hui o Ka Wai Ola showed that March 2026 was the wettest month of the decade and produced nutrient anomalies reaching the 98th–100th percentiles of the historical record, with individual stations reaching up to 41× their historical baseline. Spatially explicit models revealed that nutrient forms captured different components of the land-to-sea pathway: SiO₂ delivery was strongly structured by physical connectivity and hydrologic forcing, whereas NH₄ was more spatially heterogeneous. Importantly, human land use amplified the coastal nitrogen response to extreme rainfall. Interactions between rainfall and both cesspool exposure and agriculture showed that comparable rainfall produced substantially greater NO₃+NO₂ exposure in watersheds with greater wastewater and agricultural pressures, demonstrating that human modification of the landscape can magnify the transfer of nutrients from land to sea during extreme events. The rainfall × cesspool relationship persisted when any of the three less populated islands was excluded, although the regional pattern was primarily supported by Oʻahu, where sampling captured the broadest cesspool gradient. Together, our results show that extreme rainfall does not simply increase land-to-sea nutrient transport; it amplifies the coastal expression of chronic anthropogenic nutrient pollution. As extreme precipitation intensifies with climate change, coastal exposure will therefore be shaped not only by the magnitude of future storms, but by the human footprint of the landscapes through which water flows.
 
 
 ## Introduction
@@ -189,22 +189,45 @@ and calibration slope for all four nutrients. A random forest was fit per nutrie
 response, spatial CV, permutation importance) purely for the applied hotspot-prediction question —
 not for causal inference.
 
-**Nitrogen isotopes (δ¹⁵N).** A small subset of samples (*n* = 113; paired δ¹⁸O for only
-*n* = 16) was also analyzed for nitrate δ¹⁵N, providing an independent, source-specific
-check on the cesspool and agriculture signals identified in the landscape models. All 108
-samples with δ¹⁵N matched to the chemistry table (not pre-filtered by salinity) were
-classified probabilistically among four nitrogen end-members using a univariate Bayesian
-classifier with literature-derived Gaussian priors on δ¹⁵N: agricultural/synthetic
-fertilizer N (−4 to +4‰), other organic matter/natural soil N (≈ −2 to +9‰),
-marine/background-ocean nitrate (≈ +4 to +7‰, deep-ocean average ≈ +5.5‰), and
-cesspool/wastewater N (≈ +10 to +25‰) (Kendall 1998; Xue et al. 2009; Amato et al. 2016).
-Because δ¹⁵N alone cannot formally resolve more than two end-members, and because these
-prior ranges are literature values rather than parameters fit to our data, independent
-Salinity, land-use, and nutrient data were used afterward purely to validate — not to
-train — the classification; in particular, measured Salinity (never shown to the
-classifier) tests whether the resulting "marine" class actually recovers background-ocean
-conditions. Hawaiʻi-specific wastewater δ¹⁵N values (Dailer et al. 2010; Amato et al. 2016) informed the upper
-end of the cesspool/wastewater prior.
+**Nitrogen isotopes (δ¹⁵N).** A subset of samples (*n* = 173 matched to the chemistry
+table; paired δ¹⁸O for only *n* = 16) was analyzed for nitrate δ¹⁵N, providing a
+source-specific check on the cesspool and agriculture signals identified in the landscape
+models. We used two analyses, neither of which assumes literature end-member values.
+(1) Raw δ¹⁵N was regressed on the cesspool exposure index (log1p) and % agriculture with
+island fixed effects (OLS; no detrending against any concentration model). (2) A Keeling-type
+mixing model. When a background nitrate pool mixes with added terrestrial N, the δ¹⁵N of the
+mixture is linear in 1/[NO₃+NO₂], and the intercept at 1/C → 0 estimates the δ¹⁵N of the
+added N. We fit
+
+$$\delta_i = \beta_0 + \beta_1/C_i + \beta_2 z_{cess,i} + \beta_3 z_{ag,i} + \text{island}_i + u_{\text{ahupuaa}} + \varepsilon_i$$
+
+(`mgcv`, REML), where $$z_{cess}$$ and $$z_{ag}$$ are standardized cesspool exposure (log1p)
+and % agriculture and $$u_{\text{ahupuaa}}$$ is an ahupuaʻa random intercept. Because the
+land-use terms shift the intercept, $$\beta_2$$ and $$\beta_3$$ describe how the isotopic
+signature of the *added* nitrogen changes with land use. The model was fit to isotope
+samples within the primary NO₃+NO₂ model dataset so covariate definitions matched Figure 5.
+For display, population-level Keeling lines and intercepts were computed at the 10th and
+90th percentiles of each land-use predictor (other predictor at its mean), averaging island
+effects over the isotope sample's island composition and excluding the ahupuaʻa effect. The
+model assumes a shared background pool (common 1/C slope) and conservative mixing; soil-organic
+N and manure (≈ +4 to +9‰) are not separated from the land-use gradients, denitrification can
+mimic a wastewater signature, and with δ¹⁸O for only 16 samples fractionation cannot be
+separated from source mixing.
+
+**Fluorescent DOM as a terrestrial tracer.** Excitation–emission fluorescence was measured on
+a subset of samples (*n* = 510 matched to the chemistry table). Repeat lab runs were averaged,
+and implausible ratio-index values were set to missing. We compared two candidate
+terrestrial-DOM tracers: humic-like Coble peak C (fluorescence intensity, log-transformed after
+offsetting 11 zero values by half the smallest positive value) and the humification index
+(HIX). The criteria were the association with log(SiO₂) and salinity, within-island
+correlation with log(SiO₂), and the standardized difference between storm-influenced and
+marine-background water. Peak C performed better on all of these and was featured; HIX was
+retained as a sensitivity tracer. To test whether nutrient enrichment co-occurred with
+land-derived organic matter, log(NO₃+NO₂) and log(PO₄) were regressed on standardized
+log(peak C) with island fixed effects and an ahupuaʻa random intercept (`mgcv`), with and
+without standardized log(SiO₂), using the same response filters as the primary models.
+fDOM is a property of the sampled water, like Si, rather than a landscape predictor. It was
+therefore not added to the landscape models. No pre-storm fDOM baseline exists.
 
 **Sensitivity analyses.** Primary NO₃+NO₂ results were re-estimated under alternative
 transformations, with/without extreme observations, with/without island terms, with/without the
@@ -267,6 +290,21 @@ had CIs excluding zero, while watershed slope and Ksat did not. This supports in
 an indicator of terrestrial-water delivery whose strength is set by how strongly a stretch of coast
 is hydrologically connected to land and how quickly delivered water is flushed.
 
+Fluorescent DOM independently supports this interpretation (@fig-fdom-terrestrial).
+Humic-like peak C, a fluorescence signature of soil- and watershed-derived organic matter,
+declined with salinity (Spearman ρ = −0.41) and increased with SiO₂ (ρ = 0.51; *n* = 469).
+It increased with SiO₂ on every island (ρ = 0.42–0.87), and it tracked both more closely
+than the humification index (HIX; ρ = −0.25 and 0.35). The post-storm nutrient enrichment
+co-occurred with this terrestrial material. Within islands and ahupuaʻa, log(NO₃+NO₂) rose by
+0.38 log units per SD of log(peak C) (95% CI 0.25–0.52; *n* = 452, 101 ahupuaʻa) and
+log(PO₄) by 0.31 (0.23–0.38; *n* = 408). Adding log(SiO₂) reduced these slopes by about
+two-thirds for NO₃+NO₂ (0.12, 0.01–0.24) and by half for PO₄ (0.16, 0.08–0.23), indicating
+that peak C and Si largely record the same terrestrial-water delivery. Results were similar
+with HIX (NO₃+NO₂ 0.48 → 0.21; PO₄ 0.28 → 0.11). The residual peak C association suggests
+that Si does not capture all of the terrestrial signal. It may also reflect humic-like DOM in
+wastewater-influenced groundwater, so fDOM is interpreted as evidence of terrestrial origin
+rather than of a specific source.
+
 ### Q4 — Nutrient forms record different stages of the pathway
 
 Standardized coefficients from the four models (@tbl-coefs; @fig-effects) tell contrasting stories:
@@ -302,7 +340,7 @@ that this is genuine amplification rather than an artifact:
    conditional term.
 2. *The cesspool amplification is robust across most island exclusions but Oʻahu-anchored.*
    Refitting the interaction model while dropping each island in turn (@tbl-loio), the
-   rainfall × cesspool interaction held when Lānaʻi (β = 0.21, p = 0.003), Maui (β = 0.20,
+   rainfall × cesspool interaction held when Lānaʻi (β = 0.20, p = 0.003), Maui (β = 0.20,
    p = 0.012), or Molokaʻi (β = 0.17, p = 0.017) was excluded, but weakened to non-significance and
    changed sign when Oʻahu — the majority of samples and the dominant cesspool gradient — was
    removed (β = −0.42, p = 0.28). The rainfall × agriculture interaction, by contrast, is strong
@@ -320,8 +358,9 @@ that this is genuine amplification rather than an artifact:
    storm — i.e., as amplification — rather than as a rainfall-independent offset.
 
 For context, terrestrial delivery remains the dominant control on *where* nutrients arrive: after
-spatial/island structure and hydrology, the connectivity/delivery block (log SiO₂) added ~+17.5 pp
-of deviance for NO₃+NO₂ and ~+17.6 pp for PO₄ (@fig-varpart). Amplification acts on top of that
+spatial/island structure and hydrology, the connectivity/delivery block (including log SiO₂) added
+~22.8 percentage points (pp) of deviance for NO₃+NO₂ and ~19.3 pp for PO₄, compared with
+1.5–1.7 pp for the additive anthropogenic block (@fig-varpart). Amplification acts on top of that
 delivery — it governs *how nutrient-rich* the delivered water is where human pressures are dense.
 
 **Predictive skill and generalizability.** LOAO spatial CV R² was moderate for NO₃+NO₂ (0.38) and
@@ -337,55 +376,41 @@ confirming that delivery and source are partially collinear and must be modeled 
 
 ### δ¹⁵N isotopes corroborate the land-use contrasts in a small subsample
 
-A subset of 108 samples with paired δ¹⁵N (of 113 collected; 5 could not be matched to the
-main chemistry table) provides an independent, source-specific cross-check on the cesspool
-and agriculture effects identified above (@fig-iso-raw). On raw δ¹⁵N — not detrended against
-any concentration model — both effects held in the expected directions, controlling for
-island: δ¹⁵N decreased with % agricultural land cover (β = −4.1‰ per unit, *p* = 0.033),
-consistent with a synthetic-fertilizer-influenced nitrogen pool, and increased with the
-cesspool exposure index (β = +0.45‰ per log-unit, *p* = 0.049), consistent with a
-sewage/animal-waste signature. Storm-influenced samples were also modestly more enriched
-than marine-background samples (median 9.1‰ vs. 8.2‰; Wilcoxon *p* = 0.013).
+A subset of 173 samples with δ¹⁵N matched to the chemistry table provides a
+source-specific cross-check on the cesspool and agriculture effects identified above
+(@fig-iso-raw). On raw δ¹⁵N — not detrended against any concentration model — both effects
+held in the expected directions, controlling for island (*n* = 172 with complete covariates):
+δ¹⁵N increased with the cesspool exposure index (β = +0.52‰ per log-unit, *p* = 0.005),
+consistent with a wastewater/animal-waste signature, and decreased with % agricultural land
+cover (β = −4.3‰ per unit proportion, *p* = 0.021), consistent with a
+synthetic-fertilizer-influenced nitrogen pool. Both effects persisted when entered together
+(cesspool β = +0.49‰, *p* = 0.007; agriculture β = −4.2‰, *p* = 0.024). Storm-influenced
+samples were modestly more enriched than marine-background samples (median 8.6‰ vs. 7.7‰;
+Wilcoxon *p* = 0.001).
 
-Classifying all 108 samples among four literature-anchored δ¹⁵N end-members
-(@fig-iso-classifier) assigned most to a "cesspool/wastewater-like" group (*n* = 37), an
-"other organic matter/soil N-like" group (*n* = 43), or a "marine/background-ocean-like"
-group (*n* = 27), with essentially none dominantly "fertilizer-like" (*n* = 1).
+The Keeling-type model, which separates the isotopic signature of added nitrogen from
+dilution by background water (*n* = 168 samples in 58 ahupuaʻa), gave the same contrast
+(@fig-iso-keeling). δ¹⁵N declined with 1/[NO₃+NO₂] (β = −3.6‰ per L µmol⁻¹, 95% CI −4.9 to
+−2.2), indicating that the background nitrate diluting each sample was isotopically lighter
+than the added N. Holding that dilution term fixed, the δ¹⁵N of added N rose with cesspool
+exposure (+0.48‰ per SD, 95% CI 0.02–0.94, *p* = 0.042) and fell with agriculture (−0.82‰
+per SD, 95% CI −1.37 to −0.26, *p* = 0.004). Cesspool exposure and agriculture were nearly
+uncorrelated within this subsample (Spearman ρ = 0.10), so the two effects are not artifacts
+of one another. Expressed as Keeling intercepts, the estimated δ¹⁵N of added N was 9.5‰
+(95% CI 8.6–10.5) at the 10th percentile of cesspool exposure and 10.8‰ (9.8–11.8) at the
+90th, and 10.5‰ (9.7–11.3) at the 10th percentile of agriculture (0%) versus 8.4‰ (7.1–9.7)
+at the 90th (43%). These intercepts fall between typical synthetic-fertilizer and
+wastewater signatures, which is consistent with mixed terrestrial sources (including
+soil-organic N) rather than a single dominant source at any site; the model resolves shifts
+in the bulk added-N signature along land-use gradients, not per-sample source fractions.
 
-The marine/background class is the key test of whether δ¹⁵N alone can identify
-background-ocean conditions, and it largely fails that test: isotope-assigned "marine"
-samples did not agree with the independent salinity-based classification (Fisher's exact
-test, *p* = 0.16), and measured Salinity did not differ significantly across the four
-isotope-assigned classes (Kruskal–Wallis *p* = 0.074). This is the expected consequence of
-the marine and soil-organic-N δ¹⁵N priors overlapping substantially, and it means Salinity —
-not δ¹⁵N — remains the appropriate criterion for identifying background-ocean water; we
-report it as an honest limitation of a single-isotope classifier rather than omitting it.
-
-The terrestrial contrast (cesspool- vs. soil-N-assigned samples, *n* = 80) was more
-informative and validated well against data the classifier never saw: cesspool-assigned
-samples had significantly higher independently measured cesspool exposure (median 6.5 vs.
-1.5, *p* = 0.015) and significantly lower % agriculture (median 0.2% vs. 4.6%,
-*p* = 0.0018) than soil-N-assigned samples — confirming the terrestrial split tracks real
-landscape gradients. The two classes did not differ in NO₃+NO₂ concentration (*p* = 0.66).
-A continuous test across all 108 samples told a more nuanced, nutrient-specific story: the
-posterior probability of a cesspool/wastewater source predicted NO₃+NO₂ when only island was
-controlled (β = 0.88, *p* = 0.0067), but this association was not distinguishable from zero
-once water type (storm-influenced vs. marine background) was also controlled (β = 0.43,
-*p* = 0.15) — indicating the apparent NO₃+NO₂ relationship was largely attributable to the
-storm/marine split rather than a within-group wastewater source signal. The parallel PO₄
-association was more robust: significant with island alone (β = 0.94, *p* = 0.0008) and
-remaining significant after also controlling for water type (β = 0.63, *p* = 0.021) —
-suggesting that, in this isotope subsample, the wastewater signature is carried more
-robustly by phosphate than by oxidized nitrogen, consistent with PO₄'s comparatively P-rich
-cesspool-effluent signature relative to the more diffuse (agricultural, atmospheric)
-nitrogen sources that dilute a nitrate-specific isotopic fingerprint.
-
-We treat this as corroborating, not independent-confirmatory, evidence: the isotope
-subsample (*n* = 108) is much smaller than the 611-sample NO₃+NO₂ model, a single isotope
-cannot formally separate more than two sources, and the marine/background class in
-particular is not reliably recoverable from δ¹⁵N alone given its overlap with soil-organic
-N. The paired δ¹⁸O subsample (*n* = 16) is too sparse for a formal dual-isotope mixing model
-and is not analyzed further here.
+We treat the isotopes as corroborating, not independently confirmatory, evidence. The
+direction of the land-use contrast in δ¹⁵N matches the landscape models in both the raw and
+Keeling-type analyses, but the isotope subsample (*n* = 173) is much smaller than the
+611-sample NO₃+NO₂ model; the intercepts are extrapolations to 1/C = 0 beyond the observed
+concentration range; intermediate sources (soil-organic N, manure) and denitrification can
+produce δ¹⁵N values that overlap the land-use signals; and the paired δ¹⁸O subsample
+(*n* = 16) is too sparse for a dual-isotope analysis.
 
 ## Discussion
 
@@ -524,7 +549,7 @@ read_tbl("tableS_sensitivity_overview.csv") |>
 
 ![**Figure S5.** Significant partial effects of watershed and hydrologic predictors on SiO₂, from the four-island standardized model. Each panel shows the model-predicted SiO₂ concentration (µmol L⁻¹, blue line ± 95% CI ribbon) as one predictor varies across its 3rd–97th percentile range with all other predictors held at their median value; island/ahupuaʻa random effects and the spatial smooth are excluded (population-level prediction). Rug marks along the x-axis show the distribution of observed values. Panels are ordered by |standardized effect size| (Figure 5 predictor ordering). Only predictors with 95% CI excluding zero are shown; slope and Ksat (non-significant) are omitted.](output/supplement/figS_si_partial_effects_sig.png){#fig-si-partial}
 
-![**Figure S6.** Variance partitioning among mechanistic driver-group blocks (% deviance explained from the nested M0→M4 GAM sequence) for the four nutrients. Connectivity/delivery dominates the between-watershed signal for NO₃+NO₂ and PO₄; the additive anthropogenic block adds little (<2 pp). Shares are descriptive increments sensitive to entry order, not independent causal contributions.](output/supplement/figS6_variance_partition.png){#fig-varpart}
+![**Figure S6.** Variance partitioning among mechanistic driver-group blocks (% deviance explained from the nested M0→M4 GAM sequence) for the four nutrients. Connectivity/delivery dominates the between-watershed signal for NO₃+NO₂ and PO₄; the additive anthropogenic block adds little (<2 pp). Shares are descriptive increments sensitive to entry order, not independent causal contributions.](output/suppplement/figS6_variance_partition.png){#fig-varpart}
 
 ![**Figure S7.** Leave-one-island-out cross-validation: observed versus predicted concentrations for the four nutrients, holding out each island in turn. Cross-island transfer is weak (SiO₂ overall R² negative), indicating that relationships learned on three islands do not reliably predict the fourth.](output/supplement/figS7_loio_obs_pred.png){#fig-loio}
 
@@ -532,9 +557,11 @@ read_tbl("tableS_sensitivity_overview.csv") |>
 
 ![**Figure S9.** Permutation variable importance for all four random forests. Importance is the mean decrease in R² when a predictor's values are randomly permuted across out-of-bag samples (larger = more important). Colors mark predictor groups from the pre-registered conceptual framework. Variable importance reflects predictive contribution and must not be interpreted as causal attribution — correlated predictors share importance (e.g. island and cesspool exposure index are likely positively correlated).](output/supplement/figS9_rf_importance.png){#fig-rf-import}
 
-![**Figure S10.** Raw δ¹⁵N (‰) versus (A) the cesspool exposure index (log1p scale) and (B) % agricultural land cover, for the 108-sample isotope subset, colored by island (Lānaʻi's single point excluded from the fitted trend line for visual clarity). Black lines are OLS fits pooled across islands; coefficients reported in-text control for island as a fixed effect. δ¹⁵N decreases with agriculture and increases with cesspool exposure, consistent with synthetic-fertilizer and sewage/wastewater nitrogen signatures, respectively (Kendall 1998; Xue et al. 2009).](output/supplement/figS10_isotope_raw.png){#fig-iso-raw}
+![**Figure S10.** Raw δ¹⁵N (‰) versus (A) the cesspool exposure index (log1p scale) and (B) % agricultural land cover, for the 173-sample isotope subset, colored by island (Lānaʻi's single point excluded from the fitted trend line for visual clarity). Black lines are OLS fits pooled across islands; coefficients reported in-text control for island as a fixed effect. δ¹⁵N decreases with agriculture and increases with cesspool exposure, consistent with synthetic-fertilizer and sewage/wastewater nitrogen signatures, respectively (Kendall 1998; Xue et al. 2009).](output/supplement/figS10_isotope_raw.png){#fig-iso-raw}
 
-![**Figure S11.** External validation of the δ¹⁵N Bayesian source classification, applied to all 108 isotope samples (not pre-filtered by salinity) using four end-members: agriculture/fertilizer, other organic matter/soil N, marine/background ocean, and cesspool/wastewater. (A) Independently measured cesspool exposure index and (B) % agriculture by assigned isotopic source class (boxplots with individual samples jittered, colored by island); cesspool-assigned samples have significantly higher cesspool exposure and significantly lower % agriculture than soil-N-assigned samples. (C) Measured Salinity by assigned class, with the independent 34 PSU storm/marine threshold shown as a dashed line: Salinity does not differ significantly across classes (Kruskal–Wallis *p* = 0.074), showing that the isotope-assigned "marine/background ocean" class does not reliably recover background-ocean conditions — the marine and soil-organic-N δ¹⁵N priors overlap too much for a single isotope to separate them, so Salinity remains the appropriate marine/terrestrial criterion. (D) Posterior probability of a cesspool/wastewater source versus log(PO₄); the association is positive and remains significant after controlling for island and water type (β = 0.63, *p* = 0.021), whereas the parallel association with NO₃+NO₂ loses significance once water type is controlled (*p* = 0.15; not shown), indicating that association was driven by the storm/marine split rather than a within-group source signal.](output/supplement/figS11_isotope_classifier.png){#fig-iso-classifier}
+![**Figure S11.** Keeling-type analysis of nitrate δ¹⁵N versus land use (*n* = 168 isotope samples within the primary NO₃+NO₂ model dataset, 58 ahupuaʻa). (A, B) δ¹⁵N versus 1/[NO₃+NO₂], with points colored by (A) the cesspool exposure index (log1p color scale) and (B) % agricultural land cover of the ahupuaʻa. Lines are population-level fits from the Keeling-type model (δ¹⁵N ~ 1/[NO₃+NO₂] + standardized cesspool exposure + standardized % agriculture + island + ahupuaʻa random intercept) at the 10th (dashed) and 90th (solid) percentile of the focal land-use predictor, with the other predictor at its mean and island effects averaged over the sample's island composition; shaded bands are 95% confidence intervals. Lines are extended to 1/C = 0, where the intercept estimates the δ¹⁵N of the added nitrogen. (C) Those intercepts with 95% CIs: the added-N signature is heavier at high cesspool exposure (+0.48‰ per SD, *p* = 0.042) and lighter at high agriculture (−0.82‰ per SD, *p* = 0.004). Percentiles are used only for display; both predictors enter the model as continuous variables. Intercepts extrapolate beyond the observed concentration range and describe the bulk added-N signature, not per-sample source fractions.](output/supplement/figS11_isotope_keeling.png){#fig-iso-keeling}
+
+![**Figure S12.** Humic-like fluorescent DOM (Coble peak C) as an independent tracer of terrestrial-water delivery. (A) Peak C intensity versus salinity; the dashed line marks the 34 PSU storm-influenced/marine-background threshold. (B) Peak C versus SiO₂ (both log scales) with a pooled OLS fit and 95% CI, colored by island. In A and B, samples with zero peak C intensity (*n* = 11) are plotted at half the smallest positive value. (C) Standardized slope of log(NO₃+NO₂) (*n* = 452) and log(PO₄) (*n* = 408) on log(peak C) from models with island fixed effects and an ahupuaʻa random intercept, without (filled) and with (open) log(SiO₂) as a covariate; bars are 95% CIs. Peak C was chosen over the humification index (HIX) because it tracked salinity and SiO₂ more closely on every island; HIX results are reported in the text.](output/supplement/figS12_fdom_terrestrial.png){#fig-fdom-terrestrial}
 
 ## Data and code availability
 

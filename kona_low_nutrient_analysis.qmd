@@ -3292,7 +3292,9 @@ loio_int_specs[[5]] <- paste0("L", "\u0101", "na'i")
 
 loio_int_tbl <- map_dfr(names(loio_int_specs), function(nm) {
   excl <- loio_int_specs[[nm]]
-  dd <- if (is.na(excl)) nox_primary else filter(nox_primary, island != excl)
+  # Normalise apostrophes: nox_primary stores Lāna‘i with U+2018, specs use ASCII '
+  dd <- if (is.na(excl)) nox_primary else
+    filter(nox_primary, normalize_island(island) != normalize_island(excl))
   m  <- if (is.na(excl)) nox_M_int else gam(formula(nox_M_int), data = dd, method = "REML")
   bind_cols(tibble(Specification = nm, n = nrow(dd)), extract_int_coefs(m))
 }) |>
@@ -6603,12 +6605,12 @@ Two Step 23 checks require going back to raw inputs and are documented but not i
 > A small d15N subsample (n = `r sum(chem_master$has_isotope)` matched to chemistry; d18O for
 > n = `r sum(!is.na(chem_master$O18))`) was collected for a subset of
 > sites. This section (1) tests raw d15N against the primary cesspool-exposure and
-> agriculture predictors, (2) fits a two-source (cesspool vs agriculture) d15N mixing
-> model with a mass-balance correction for marine background nitrate, giving each sample
-> a posterior probability of being cesspool- vs agriculture-dominated, and (3) checks
-> whether the isotopes agree with the Figure 5 land-use attributions. This is a
-> secondary, corroborating line of evidence -- n is far smaller than the 611-sample NO3+NO2
-> model -- and is reported as exploratory, not as independent proof of source attribution.
+> agriculture predictors, and (2) fits a prior-free Keeling-type model that separates the
+> isotopic signature of *added* nitrogen from dilution by background water and asks how
+> that signature shifts with cesspool exposure and agriculture. No end-member values are
+> assumed. This is a secondary, corroborating line of evidence -- n is far smaller than the
+> 611-sample NO3+NO2 model -- and is reported as exploratory, not as independent proof of
+> source attribution.
 
 ```{r}
 #| label: step-iso-load-merge
@@ -6679,373 +6681,372 @@ save_supp(fig_iso_raw, "figS10_isotope_raw", width = 8, height = 4)
 fig_iso_raw
 ```
 
-### Two-source d15N mixing model: cesspool vs agriculture {#sec-iso-mixing}
+### Keeling-type d15N model: isotopic signature of added N vs land use {#sec-iso-keeling}
 
-The question here is narrow: for each sample, what is the probability that the
-terrestrial NO3+NO2 it carries is mostly cesspool/wastewater-derived rather than
-agricultural/fertilizer-derived? One isotope can resolve two sources, so the model has
-exactly two terrestrial end-members. Marine background nitrate is not treated as a third
-competing source. Instead it is removed by isotope mass balance using the measured
-NO3+NO2 concentration. Every isotope sample has NO3+NO2 >= 1.8 umol/L, compared with a
-median of 0.83 umol/L in marine-background (> 34 PSU) samples, so the background share is
-modest for most samples (median ~12%, max ~45%).
+Figure 5 attributes part of the NO3+NO2 enrichment to cesspool exposure and to
+agriculture. If those attributions reflect real nitrogen sources, the isotopes should
+shift in opposite directions: heavier d15N where cesspool exposure is high
+(wastewater/manure N is typically ~+10 to +20 per mil) and lighter d15N where agriculture
+is high (synthetic fertilizer ~-2 to +4 per mil; Kendall 1998; Xue et al. 2009).
 
-For sample $$i$$ with measured $$\delta_i$$ and concentration $$C_i$$:
+When a background nitrate pool is mixed with added terrestrial N, the d15N of the mixture
+is linear in 1/C (a Keeling plot), and the intercept at 1/C -> 0 is the d15N of the added
+N. We fit
 
 $$
-\delta_i = w_i\,\delta_{bg} + (1 - w_i)\left[f_i\,\delta_{cess} + (1 - f_i)\,\delta_{fert}\right] + \varepsilon_i,
-\qquad w_i = \min(C_{bg} / C_i,\ 0.95)
+\delta_i = \beta_0 + \beta_1 / C_i + \beta_2 z_{cess,i} + \beta_3 z_{ag,i} + \text{island} + u_{\text{ahupuaa}} + \varepsilon_i
 $$
 
-where $$f_i$$ is the cesspool fraction of terrestrial N (prior Uniform(0, 1)). Source
-signatures are treated as random draws from their literature distributions, so their
-variance enters the likelihood. $$C_{bg}$$ is integrated over by resampling the observed
-marine-background NO3+NO2 values. $$\varepsilon$$ is analytical error (SD 0.3 per mil).
-The posterior of $$f_i$$ is computed on a fine grid, which is exact for a one-parameter
-model, so no MCMC is needed.
+The land-use terms shift the intercept, so $$\beta_2$$ and $$\beta_3$$ estimate how the
+isotopic signature of the *added* N changes per SD of cesspool exposure (log1p index) and
+% agriculture. No end-member values are assumed. The sample is restricted to isotope
+samples in the primary NO3+NO2 model data (`nox_primary`) so covariate definitions and
+complete cases match Figure 5.
 
-End-member d15N (mean, SD; per mil vs air N2), the same anchors used elsewhere in the document:
-
-- Cesspool / wastewater: N(15, 5). Kendall (1998); Xue et al. (2009) Water Research
-  43:1159-1170; Dailer et al. (2010) Mar. Pollut. Bull. 60:655-671; Amato et al. (2016)
-  PLoS ONE 11:e0165825.
-- Agriculture / synthetic fertilizer: N(2, 3). Kendall (1998); Xue et al. (2009).
-- Marine background nitrate: N(5.5, 1.5). Amato et al. (2016).
-
-**Limitations that must accompany any use of these probabilities:**
-(1) Soil-organic N (~+4 to +9 per mil) and manure are not represented. Because they fall
-between the two end-members, the model splits them between "cesspool" and "agriculture".
-A sample near 8-9 per mil is therefore ambiguous, not "half wastewater".
-(2) Denitrification and assimilation enrich residual nitrate in 15N and can mimic a
-wastewater signature. With d18O for only n = 16, fractionation cannot be separated from
-source mixing.
-(3) The source distributions are wide, so per-sample credible intervals are broad.
-`p_cess_dom` = P(f > 0.5) is the probability that terrestrial N is mostly cesspool-derived
-*given these end-members*. It is not a calibrated detection probability.
+**Assumptions and limitations.**
+(1) The 1/C slope is shared across samples, which assumes a broadly similar background
+pool (concentration × d15N). (2) Mixing is treated as conservative. Denitrification and
+assimilation enrich residual nitrate in 15N and can mimic a wastewater signature; with
+d18O for only n = 16, fractionation cannot be separated from source mixing.
+(3) Soil-organic N (~+4 to +9 per mil) and manure are not separated from the two land-use
+gradients; the coefficients describe shifts in the bulk added-N signature, not source
+fractions. (4) The intercept is an extrapolation to 1/C = 0 beyond the observed
+NO3+NO2 range, so intercept intervals are wider than the land-use contrasts themselves.
 
 ```{r}
-#| label: step-iso-mixing-model
-
-iso_src <- list(
-  cess = c(mu = 15,  sd = 5),
-  fert = c(mu = 2,   sd = 3),
-  bg   = c(mu = 5.5, sd = 1.5)
-)
-iso_sd_analytic <- 0.3
-
-iso_bg_C <- chem_master |>
-  filter(Salinity > 34, !is.na(NO3NO2)) |>
-  pull(NO3NO2)
-
-set.seed(SEED)
-iso_C_bg_draws <- sample(iso_bg_C, 2000, replace = TRUE)
-iso_f_grid <- seq(0.0025, 0.9975, by = 0.005)
-
-# Grid posterior of f (cesspool fraction of terrestrial N) for one sample,
-# marginalising over background concentration uncertainty.
-iso_mix_post <- function(d_obs, C_obs) {
-  w <- pmin(iso_C_bg_draws / C_obs, 0.95)
-  lik <- vapply(iso_f_grid, \(f) {
-    mu <- w * iso_src$bg["mu"] +
-      (1 - w) * (f * iso_src$cess["mu"] + (1 - f) * iso_src$fert["mu"])
-    s <- sqrt(w^2 * iso_src$bg["sd"]^2 +
-                (1 - w)^2 * (f^2 * iso_src$cess["sd"]^2 + (1 - f)^2 * iso_src$fert["sd"]^2) +
-                iso_sd_analytic^2)
-    mean(dnorm(d_obs, mu, s))
-  }, numeric(1))
-  lik / sum(lik)
-}
-
-iso_post_mat <- t(mapply(iso_mix_post, iso_d$N15, iso_d$NO3NO2))
-iso_cdf <- t(apply(iso_post_mat, 1, cumsum))
-
-iso_d <- iso_d |>
-  mutate(
-    bg_frac_median = pmin(median(iso_bg_C) / NO3NO2, 0.95),
-    f_cess_mean = as.vector(iso_post_mat %*% iso_f_grid),
-    f_cess_lwr  = iso_f_grid[apply(iso_cdf, 1, \(x) which(x >= 0.025)[1])],
-    f_cess_upr  = iso_f_grid[apply(iso_cdf, 1, \(x) which(x >= 0.975)[1])],
-    p_cess_dom  = rowSums(iso_post_mat[, iso_f_grid > 0.5, drop = FALSE]),
-    p_ag_dom    = 1 - p_cess_dom,
-    mix_class = case_when(
-      p_cess_dom >= 0.8 ~ "Likely cesspool-dominated",
-      p_ag_dom   >= 0.8 ~ "Likely agriculture-dominated",
-      TRUE              ~ "Ambiguous"
-    )
-  )
-
-iso_d |>
-  select(sample_id, island, N15, NO3NO2, bg_frac_median,
-         f_cess_mean, f_cess_lwr, f_cess_upr, p_cess_dom, p_ag_dom, mix_class) |>
-  write_csv(here("output", "tables", "isotope_mixing_posteriors.csv"))
-
-count(iso_d, mix_class) |>
-  knitr::kable(caption = paste0(
-    "Two-source mixing classification (P >= 0.8 threshold), n = ", nrow(iso_d),
-    ". Per-sample posteriors saved to output/tables/isotope_mixing_posteriors.csv."))
-
-iso_d |>
-  summarise(median_f_cess = median(f_cess_mean),
-            median_CrI_width = median(f_cess_upr - f_cess_lwr),
-            median_bg_frac = median(bg_frac_median)) |>
-  knitr::kable(digits = 2, caption = "Posterior summary across samples.")
-```
-
-#### Do the isotopes support the Figure 5 land-use effects? {#sec-iso-fig5}
-
-Figure 5 attributes part of the NO3+NO2 enrichment to cesspool exposure and to agriculture
-(both main effects and their interactions with storm rainfall). If those attributions
-reflect real nitrogen sources, the isotopes should shift in opposite directions: heavier
-d15N where cesspool exposure is high, lighter d15N where agriculture is high. Three checks
-follow, in decreasing order of independence from the literature priors:
-
-1. **Prior-free Keeling-type model.** `N15 ~ 1/NO3NO2 + land use + island + (1 | ahupuaa)`.
-   The 1/C term absorbs dilution of added N by background water. The land-use
-   coefficients then estimate how the isotopic signature of the *added* N changes with
-   cesspool exposure and agriculture. No end-member values are assumed.
-2. **Mixing fraction vs land use.** Posterior cesspool fraction `f` ~ land use + island,
-   with mixing-model uncertainty carried through 200 posterior draws of `f` per sample,
-   combined with Rubin's rules.
-3. **Mixing fraction vs the Figure 5 model's own attribution.** For each isotope sample
-   in the NO3+NO2 model data, `predict(nox_M_int, type = "terms")` gives the cesspool
-   contribution (main effect + rainfall interaction) and the agriculture contribution to
-   log(NO3+NO2). Their difference, cesspool minus agriculture, says where the model
-   assigns relatively more of the enrichment to cesspools. If the model and the isotopes
-   agree, `f` should increase with this difference.
-
-```{r}
-#| label: step-iso-fig5-validation
-
-iso_np <- nox_primary |>
-  mutate(sample_id_norm = str_replace_all(sample_id, "\\s+", "")) |>
-  filter(sample_id_norm %in% iso_d$sample_id_norm)
-
-iso_terms <- predict(nox_M_int, newdata = iso_np, type = "terms")
-
-iso_attr <- tibble(
-  sample_id_norm = iso_np$sample_id_norm,
-  cess_contrib = iso_terms[, "z_log_cess_exposure"] +
-    iso_terms[, "z_chirps_storm_cumulative_mm:z_log_cess_exposure"],
-  ag_contrib = iso_terms[, "z_pct_agriculture"] +
-    iso_terms[, "z_chirps_storm_cumulative_mm:z_pct_agriculture"],
-  cess_minus_ag = cess_contrib - ag_contrib
-)
+#| label: step-iso-keeling
 
 zsc <- \(x) (x - mean(x)) / sd(x)
+nox_ids <- str_replace_all(nox_primary$sample_id, "\\s+", "")
+
 iso_v <- iso_d |>
-  inner_join(iso_attr, by = "sample_id_norm") |>
+  filter(sample_id_norm %in% nox_ids) |>
   mutate(
     z_cess = zsc(log_cess_exposure),
     z_ag   = zsc(pct_agriculture),
-    z_attr = zsc(cess_minus_ag),
     inv_NOx = 1 / NO3NO2,
     ahupuaa_f = factor(paste(ahupuaa, island))
   )
-iso_v_idx <- match(iso_v$sample_id_norm, iso_d$sample_id_norm)
 
-cat("Isotope samples in nox_M_int data: n =", nrow(iso_v),
+cat("Isotope samples in nox_primary: n =", nrow(iso_v),
     "| ahupua'a =", n_distinct(iso_v$ahupuaa_f),
+    "| min NO3+NO2 =", round(min(iso_v$NO3NO2), 2), "umol/L",
     "| Spearman r(cesspool, agriculture) =",
     round(cor(iso_v$z_cess, iso_v$z_ag, method = "spearman"), 2), "\n")
 
-# (1) Prior-free Keeling-type model
 iso_keeling <- gam(N15 ~ inv_NOx + z_cess + z_ag + island + s(ahupuaa_f, bs = "re"),
                    data = iso_v, method = "REML")
 saveRDS(iso_keeling, here("output", "model_objects", "iso_keeling_gam.rds"))
 
-keel_tab <- summary(iso_keeling)$p.table[c("z_cess", "z_ag"), , drop = FALSE]
+keel_tab <- summary(iso_keeling)$p.table[c("inv_NOx", "z_cess", "z_ag"), , drop = FALSE]
 keel_res <- tibble(
-  check = "(1) Keeling-type: d15N of added N (per mil per SD)",
-  term = rownames(keel_tab),
+  term = c("1 / NO3+NO2 (background mixing slope)",
+           "Cesspool exposure (per SD)", "% agriculture (per SD)"),
   estimate = keel_tab[, "Estimate"],
   lwr = estimate - 1.96 * keel_tab[, "Std. Error"],
   upr = estimate + 1.96 * keel_tab[, "Std. Error"],
   p = keel_tab[, "Pr(>|t|)"]
 )
 
-# (2)-(3) Multiple-imputation regressions over mixing-posterior draws of f
-rubin_pool <- function(fits, term) {
-  est <- sapply(fits, \(m) coef(m)[term])
-  v   <- sapply(fits, \(m) vcov(m)[term, term])
-  m <- length(est); qbar <- mean(est); W <- mean(v); B <- var(est)
-  Tv <- W + (1 + 1 / m) * B
-  df <- (m - 1) * (1 + W / ((1 + 1 / m) * B))^2
-  tibble(term = term, estimate = qbar,
-         lwr = qbar - qt(0.975, df) * sqrt(Tv),
-         upr = qbar + qt(0.975, df) * sqrt(Tv),
-         p = 2 * pt(-abs(qbar / sqrt(Tv)), df))
+# Population-level predictions: ahupua'a random effect set to zero; island effects
+# averaged with weights equal to the island composition of the isotope sample.
+keel_isl_w <- prop.table(table(droplevels(iso_v$island)))
+keel_re_cols <- grep("s(ahupuaa_f)", names(coef(iso_keeling)), fixed = TRUE)
+
+keel_marginal <- function(nd) {
+  X <- Reduce(`+`, lapply(names(keel_isl_w), \(isl) {
+    Xi <- predict(iso_keeling, type = "lpmatrix",
+                  newdata = mutate(nd, island = factor(isl, levels = levels(iso_v$island)),
+                                   ahupuaa_f = iso_v$ahupuaa_f[1]))
+    Xi[, keel_re_cols] <- 0
+    Xi * keel_isl_w[[isl]]
+  }))
+  fit <- drop(X %*% coef(iso_keeling))
+  se  <- sqrt(rowSums((X %*% vcov(iso_keeling)) * X))
+  mutate(nd, fit = fit, lwr = fit - 1.96 * se, upr = fit + 1.96 * se)
 }
-draw_f <- \(rows) vapply(rows, \(i) sample(iso_f_grid, 1, prob = iso_post_mat[i, ]), numeric(1))
 
-set.seed(SEED)
-n_imp <- 200
-fits_lu <- replicate(n_imp, {
-  iso_v$f <- draw_f(iso_v_idx); lm(f ~ z_cess + z_ag + island, data = iso_v)
-}, simplify = FALSE)
-fits_attr <- replicate(n_imp, {
-  iso_v$f <- draw_f(iso_v_idx); lm(f ~ z_attr + island, data = iso_v)
-}, simplify = FALSE)
-
-iso_fig5_res <- bind_rows(
-  keel_res,
-  bind_rows(rubin_pool(fits_lu, "z_cess"), rubin_pool(fits_lu, "z_ag")) |>
-    mutate(check = "(2) Cesspool fraction f vs land use (per SD)"),
-  rubin_pool(fits_attr, "z_attr") |>
-    mutate(check = "(3) Cesspool fraction f vs Fig. 5 attribution (per SD)")
+# 10th / 90th percentiles are used only to display the continuous land-use effects;
+# the other land-use predictor is held at its mean (z = 0).
+keel_q <- c(Low = 0.1, High = 0.9)
+keel_levels <- bind_rows(
+  tibble(predictor = "Cesspool exposure", level = names(keel_q),
+         raw_value = quantile(iso_v$cess_exposure_idx, keel_q),
+         z_cess = quantile(iso_v$z_cess, keel_q), z_ag = 0),
+  tibble(predictor = "% agriculture", level = names(keel_q),
+         raw_value = quantile(iso_v$pct_agriculture, keel_q),
+         z_cess = 0, z_ag = quantile(iso_v$z_ag, keel_q))
 ) |>
-  mutate(term = c(z_cess = "Cesspool exposure", z_ag = "% agriculture",
-                  z_attr = "Fig. 5 cesspool - agriculture contribution")[term]) |>
-  select(check, term, estimate, lwr, upr, p)
+  mutate(level = factor(level, levels = names(keel_q)),
+         predictor = factor(predictor, levels = c("Cesspool exposure", "% agriculture")))
 
-write_csv(iso_fig5_res, here("output", "tables", "isotope_fig5_validation.csv"))
-iso_fig5_res |>
-  knitr::kable(digits = 3, col.names = c("Check", "Predictor", "Estimate", "Lower 95%", "Upper 95%", "p"),
-               caption = paste0("Isotope checks of the Figure 5 land-use effects (n = ", nrow(iso_v), ")."))
+keel_int <- keel_levels |> mutate(inv_NOx = 0) |> keel_marginal()
+keel_lines <- keel_levels |>
+  tidyr::crossing(inv_NOx = seq(0, max(iso_v$inv_NOx), length.out = 100)) |>
+  keel_marginal()
+
+write_csv(keel_res, here("output", "tables", "isotope_keeling_landuse.csv"))
+write_csv(select(keel_int, predictor, level, raw_value, fit, lwr, upr),
+          here("output", "tables", "isotope_keeling_intercepts.csv"))
+
+keel_res |>
+  knitr::kable(digits = 3, col.names = c("Term", "Estimate (per mil)", "Lower 95%", "Upper 95%", "p"),
+               caption = paste0("Keeling-type model of d15N (n = ", nrow(iso_v), " samples, ",
+                                n_distinct(iso_v$ahupuaa_f), " ahupua'a; island fixed effects, ",
+                                "ahupua'a random intercept)."))
+
+keel_int |>
+  select(predictor, level, raw_value, fit, lwr, upr) |>
+  knitr::kable(digits = 2,
+               col.names = c("Land-use predictor", "Level", "Predictor value",
+                             "d15N of added N (per mil)", "Lower 95%", "Upper 95%"),
+               caption = paste0("Keeling intercepts (1/C = 0) at the 10th and 90th percentiles ",
+                                "of each land-use predictor; population-level, island-averaged."))
 ```
 
 ```{r}
-#| label: fig-iso-mixing
-#| fig-cap: "Two-source d15N mixing model (cesspool vs agriculture) and agreement with the Figure 5 NO3+NO2 model"
+#| label: fig-iso-keeling
+#| fig-cap: "Keeling-type d15N model: isotopic signature of added NO3+NO2 vs cesspool exposure and agriculture"
 
-iso_v_plot <- iso_v |> filter(island != "L\u0101na'i")
+keel_lt <- scale_linetype_manual(values = c(Low = "dashed", High = "solid"),
+                                 labels = c(Low = "10th pct", High = "90th pct"),
+                                 name = NULL, drop = FALSE)
+keel_x  <- labs(x = expression(1/(NO[3]+NO[2])~(L~mu*mol^{-1})))
 
-pM1 <- iso_d |>
-  arrange(f_cess_mean) |>
-  mutate(rank = row_number()) |>
-  ggplot(aes(x = rank, y = f_cess_mean, color = island)) +
-  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray50") +
-  geom_linerange(aes(ymin = f_cess_lwr, ymax = f_cess_upr), alpha = 0.5) +
-  geom_point(size = 1.4) +
-  scale_color_manual(values = island_pal, name = NULL) +
-  labs(x = "Samples (ranked)", y = "Cesspool fraction of terrestrial N", tag = "A") +
+keel_panel <- function(pred, color_var, color_scale, tag, show_y = TRUE) {
+  ln <- filter(keel_lines, predictor == pred)
+  ggplot(iso_v, aes(x = inv_NOx, y = N15)) +
+    geom_ribbon(data = ln, aes(x = inv_NOx, ymin = lwr, ymax = upr, group = level),
+                inherit.aes = FALSE, fill = "gray60", alpha = 0.2) +
+    geom_point(aes(color = .data[[color_var]]), size = 1.6, alpha = 0.85) +
+    geom_line(data = ln, aes(x = inv_NOx, y = fit, linetype = level),
+              inherit.aes = FALSE, linewidth = 0.6) +
+    color_scale + keel_lt + keel_x +
+    guides(color = guide_colorbar(title.position = "top", barwidth = unit(3.5, "cm"),
+                                  barheight = unit(0.25, "cm"), order = 1)) +
+    labs(y = if (show_y) expression(delta^{15}*N~("\u2030")) else NULL, tag = tag) +
+    theme_kona_paper() +
+    theme(legend.position = "bottom", legend.box = "vertical")
+}
+
+pK1 <- keel_panel("Cesspool exposure", "cess_exposure_idx",
+                  scale_color_viridis_c(trans = "log1p", breaks = c(0, 1, 5, 20, 75),
+                                        name = "Cesspool exposure index"),
+                  "A")
+pK2 <- keel_panel("% agriculture", "pct_agriculture",
+                  scale_color_viridis_c(labels = scales::percent, name = "Agriculture (ahupua'a)"),
+                  "B", show_y = FALSE)
+
+pK3 <- ggplot(keel_int, aes(x = predictor, y = fit, shape = level)) +
+  geom_pointrange(aes(ymin = lwr, ymax = upr), position = position_dodge(width = 0.5),
+                  size = 0.4) +
+  scale_shape_manual(values = c(Low = 1, High = 16),
+                     labels = c(Low = "10th pct", High = "90th pct"), name = NULL) +
+  scale_x_discrete(labels = c("Cesspool\nexposure", "Agriculture")) +
+  labs(x = NULL, y = expression(delta^{15}*N~"of added N"~("\u2030")), tag = "C") +
   theme_kona_paper() +
-  theme(legend.position = "bottom")
+  theme(legend.position = "bottom", legend.direction = "vertical")
 
-pM2 <- ggplot(iso_v_plot, aes(x = inv_NOx, y = N15)) +
-  geom_point(aes(color = cess_minus_ag), size = 1.8) +
-  scale_color_gradient2(low = "#1B7837", mid = "gray80", high = "#762A83", midpoint = 0,
-                        name = "Fig. 5\ncesspool -\nagriculture") +
-  labs(x = expression(1/(NO[3]+NO[2])~(L~mu*mol^{-1})),
-       y = expression(delta^{15}*N~("per mil")), tag = "B") +
-  theme_kona_paper()
-
-pM3 <- ggplot(iso_v_plot, aes(x = cess_minus_ag, y = f_cess_mean, color = island)) +
-  geom_linerange(aes(ymin = f_cess_lwr, ymax = f_cess_upr), alpha = 0.3) +
-  geom_point(size = 1.8) +
-  geom_smooth(aes(group = 1), method = "lm", se = TRUE, color = "gray15", linewidth = 0.6) +
-  scale_color_manual(values = island_pal, name = NULL) +
-  labs(x = "Fig. 5 attribution: cesspool - agriculture",
-       y = "Cesspool fraction", tag = "C") +
-  theme_kona_paper() + theme(legend.position = "none")
-
-# Effect estimates are reported in the table above (different units per check)
-fig_iso_mixing <- pM1 / (pM2 | pM3) + plot_layout(heights = c(1, 1.1))
-save_supp(fig_iso_mixing, "figS11_isotope_mixing", width = 9, height = 7.5)
-fig_iso_mixing
+fig_iso_keeling <- pK1 + pK2 + pK3 + plot_layout(widths = c(1, 1, 0.6))
+save_supp(fig_iso_keeling, "figS11_isotope_keeling", width = 10, height = 4.8)
+fig_iso_keeling
 ```
 
-## Optical fDOM tracers: cesspool-exposure validation {#sec-fdom}
+## fDOM humic tracer: terrestrial origin of storm nutrients {#sec-fdom-terrestrial}
 
-> `data/WIYW_FDOM_data_QCed.csv` provides fluorescent dissolved organic matter (fDOM)
-> indices for a subset of samples (`r sum(chem_master$has_fdom)` matched to `chem_master`;
-> merge audit in @sec-tracer-merge), collected within the Mar 28-Apr 8 community-sampling window.
-> Three index families are relevant here: terrestrial-source tracers (`Lignin`, `FI`,
-> `HIX`, `CobleA`/`CobleC`, `M_to_C`), fresh/microbial production (`CobleB`, `CobleT`,
-> `BIX`), and anthropogenic-source tracers -- `Optical_Brighteners` (fluorescent
-> whitening agents from laundry detergent, a chemical fingerprint specific to
-> greywater/wastewater) and the petroleum/diesel indices (`Petroleum`, `dieselBandII`,
-> `JP5_empirical`, `JP5_normalized`, `Diesel_Chen`, a distinct urban-runoff/fuel
-> pathway). `Optical_Brighteners` is used below as an independent chemical validation
-> of the GIS-derived `cess_exposure_idx`: unlike cesspool density or distance, it is a
-> direct measurement of wastewater-indicator chemistry in the sampled water itself.
+> Fluorescent DOM (`data/WIYW_FDOM_data_QCed.csv`; `r sum(chem_master$has_fdom)` samples
+> matched to `chem_master`, merge audit in @sec-tracer-merge) gives an independent,
+> organic-matter-based check that (1) log(SiO2) behaves as a terrestrial-water proxy and
+> (2) the post-storm NO3+NO2 and PO4 enrichment co-occurs with land-derived material.
+> fDOM is used for corroboration only. It is a property of the sampled water, like Si,
+> not a landscape predictor, so it is not added to the Figure 5 models. There is no
+> pre-storm fDOM baseline, so these data show *where* terrestrial material was present,
+> not how much the storm increased it.
+
+Two candidate terrestrial tracers were compared before choosing one to feature:
+Coble peak C (`CobleC`, humic-like fluorescence intensity, i.e. an amount of
+terrestrial humic DOM) and the humification index (`HIX`, a ratio describing DOM
+*quality*). A good tracer of terrestrial-water delivery should decline with salinity,
+co-vary with log(SiO2) within islands, and separate storm-influenced from
+marine-background water. Peak C contains 11 zero intensities. These are offset by half
+the smallest positive value before log-transforming.
 
 ```{r}
-#| label: step-fdom-load-qc
+#| label: step-fdom-data
 
-# fDOM indices were loaded, QC'd (repeat lab runs averaged; unstable ratio indices
-# set to NA) and merged into chem_master in @sec-tracer-merge.
 fdom_d <- chem_master |>
   filter(has_fdom) |>
   mutate(
     island = normalize_island(island),
     island = factor(island, levels = island_levels),
     sal_group = factor(if_else(Salinity > 34, "Marine background", "Storm-influenced"),
-                        levels = c("Storm-influenced", "Marine background")),
-    log_cess_exposure = log1p(cess_exposure_idx),
-    log_brighteners   = log(Optical_Brighteners + 0.0005)  # DL/2 of min detectable (0.001)
+                       levels = c("Storm-influenced", "Marine background")),
+    ahupuaa_f = factor(paste(ahupuaa, island))
   )
 
-fdom_d |> count(island, sal_group) |> knitr::kable(caption = "fDOM subsample coverage by island and water type.")
+fdom_c_offset <- min(fdom_d$CobleC[fdom_d$CobleC > 0], na.rm = TRUE) / 2
+fdom_d <- fdom_d |>
+  mutate(log_CobleC = log(CobleC + fdom_c_offset),
+         log_HIX    = log(HIX))
+
+fdom_d |> count(island, sal_group) |>
+  knitr::kable(caption = "fDOM subsample coverage by island and water type.")
 ```
 
 ```{r}
-#| label: step-fdom-cesspool-model
+#| label: step-fdom-tracer-compare
 
-# Optical_Brighteners ~ cesspool exposure: a direct chemical validation of the
-# GIS-derived cess_exposure_idx used throughout the nutrient models. Three nested
-# specifications, mirroring the isotope-validation logic above:
-#   (1) raw relationship, island-controlled
-#   (2) + log(SiO2): does brighteners track cesspool exposure *beyond* generic
-#       terrestrial-water delivery (the same adjustment used for NOx/PO4 in Step 12)?
-#   (3) + pct_agriculture: specificity check -- brighteners are a detergent/greywater
-#       signature, not an agricultural one, so this term should not absorb the
-#       cesspool effect.
-m_fdom_cess       <- lm(log_brighteners ~ log_cess_exposure + island, data = fdom_d)
-m_fdom_cess_si    <- lm(log_brighteners ~ log_cess_exposure + log(SiO2) + island, data = fdom_d)
-m_fdom_cess_si_ag <- lm(log_brighteners ~ log_cess_exposure + log(SiO2) + pct_agriculture + island,
-                         data = fdom_d)
+fdom_tracer_cmp <- fdom_d |>
+  pivot_longer(c(log_CobleC, log_HIX), names_to = "tracer", values_to = "value") |>
+  filter(!is.na(value), !is.na(SiO2), !bdl_SiO2, !is.na(Salinity)) |>
+  group_by(tracer) |>
+  summarise(
+    n = n(),
+    rho_logSi = cor(value, log(SiO2), method = "spearman"),
+    rho_sal   = cor(value, Salinity, method = "spearman"),
+    # variance explained by log(SiO2) beyond island means
+    dR2_logSi_within = summary(lm(value ~ island + log(SiO2)))$r.squared -
+      summary(lm(value ~ island))$r.squared,
+    d_storm = (mean(value[sal_group == "Storm-influenced"]) -
+                 mean(value[sal_group == "Marine background"])) / sd(value),
+    .groups = "drop"
+  )
 
-bind_rows(
-  tidy(m_fdom_cess)       |> filter(term == "log_cess_exposure") |> mutate(model = "+ island"),
-  tidy(m_fdom_cess_si)    |> filter(term == "log_cess_exposure") |> mutate(model = "+ island, log(SiO2)"),
-  tidy(m_fdom_cess_si_ag) |> filter(term == "log_cess_exposure") |> mutate(model = "+ island, log(SiO2), % agriculture")
-) |>
-  select(model, estimate, std.error, statistic, p.value) |>
-  knitr::kable(digits = 3, caption = paste0(
-    "log(Optical_Brighteners) ~ log1p(cesspool exposure), n = ", nrow(fdom_d),
-    ". Coefficient on the cesspool-exposure term across nested adjustments."))
+fdom_tracer_island <- fdom_d |>
+  filter(!is.na(SiO2), !bdl_SiO2) |>
+  group_by(island) |>
+  summarise(n = n(),
+            CobleC = cor(log_CobleC, log(SiO2), method = "spearman", use = "complete.obs"),
+            HIX    = cor(log_HIX,    log(SiO2), method = "spearman", use = "complete.obs"),
+            .groups = "drop")
 
-cat("\nModel R^2: raw =", round(summary(m_fdom_cess)$r.squared, 3),
-    "| + log(SiO2) =", round(summary(m_fdom_cess_si)$r.squared, 3),
-    "| + log(SiO2) + agriculture =", round(summary(m_fdom_cess_si_ag)$r.squared, 3), "\n")
+write_csv(fdom_tracer_cmp, here("output", "tables", "fdom_tracer_comparison.csv"))
+
+fdom_tracer_cmp |>
+  mutate(tracer = c(log_CobleC = "Peak C (log intensity)", log_HIX = "HIX (log)")[tracer]) |>
+  knitr::kable(digits = 2,
+               col.names = c("Tracer", "n", "Spearman rho, log SiO2", "Spearman rho, salinity",
+                             "Within-island R2 gain from log SiO2",
+                             "Storm vs marine difference (SD units)"),
+               caption = "Candidate fDOM terrestrial tracers.")
+
+fdom_tracer_island |>
+  knitr::kable(digits = 2, col.names = c("Island", "n", "Peak C vs log SiO2", "HIX vs log SiO2"),
+               caption = "Within-island Spearman correlations with log(SiO2).")
+```
+
+Peak C is featured. It tracks log(SiO2) and salinity more strongly than HIX, separates
+storm-influenced from marine-background water more clearly, and correlates more strongly
+with log(SiO2) on every island. Within islands, log(SiO2) explains a similar share of
+variance in both tracers. Peak C is also an intensity, so like SiO2 it scales with the
+*amount* of terrestrial material delivered. HIX is a ratio and loses samples to the
+ratio-index QC. HIX is retained as a sensitivity tracer in the nutrient models below,
+where its association with NO3+NO2 is somewhat stronger than peak C's, so the nutrient
+conclusion does not depend on the tracer chosen.
+
+**Nutrient models.** For NO3+NO2 and PO4, using the same response filters as the primary
+models (offshore references and below-detection values excluded):
+
+- (a) log(nutrient) ~ z(log peak C) + island + ahupuaʻa random intercept
+- (b) model (a) + z(log SiO2)
+
+A positive peak C slope in (a) means the nutrient enrichment co-occurs with land-derived
+organic matter. If that slope shrinks substantially in (b), peak C and Si are recording
+the same terrestrial delivery, which supports using log(SiO2) as the delivery covariate
+in Figure 5.
+
+```{r}
+#| label: step-fdom-nutrient-models
+
+zsc <- \(x) (x - mean(x)) / sd(x)
+
+fdom_fit <- function(nut, tracer) {
+  d <- fdom_d |>
+    filter(!offshore_reference, !is.na(.data[[nut]]), !.data[[paste0("bdl_", nut)]],
+           !is.na(SiO2), !bdl_SiO2, !is.na(.data[[tracer]]), !is.na(ahupuaa)) |>
+    mutate(y = log(.data[[nut]]), z_tracer = zsc(.data[[tracer]]), z_logSi = zsc(log(SiO2)))
+  m_a <- gam(y ~ z_tracer + island + s(ahupuaa_f, bs = "re"), data = d, method = "REML")
+  m_b <- gam(y ~ z_tracer + z_logSi + island + s(ahupuaa_f, bs = "re"), data = d, method = "REML")
+  res <- bind_rows(a = summary(m_a)$p.table["z_tracer", ], b = summary(m_b)$p.table["z_tracer", ],
+                   .id = "model") |>
+    transmute(nutrient = nut, tracer, model, n = nrow(d), n_ahupuaa = n_distinct(d$ahupuaa_f),
+              estimate = Estimate,
+              lwr = Estimate - 1.96 * `Std. Error`, upr = Estimate + 1.96 * `Std. Error`,
+              p = `Pr(>|t|)`)
+  list(res = res, models = list(a = m_a, b = m_b))
+}
+
+fdom_runs <- tidyr::expand_grid(nutrient = c("NO3NO2", "PO4"),
+                                tracer = c("log_CobleC", "log_HIX"))
+fdom_fits <- purrr::pmap(fdom_runs, \(nutrient, tracer) fdom_fit(nutrient, tracer))
+names(fdom_fits) <- paste(fdom_runs$nutrient, fdom_runs$tracer, sep = "_")
+
+saveRDS(lapply(fdom_fits, `[[`, "models"),
+        here("output", "model_objects", "fdom_nutrient_gams.rds"))
+
+fdom_nut_res <- bind_rows(lapply(fdom_fits, `[[`, "res")) |>
+  mutate(model = c(a = "Tracer + island", b = "Tracer + log(SiO2) + island")[model])
+write_csv(fdom_nut_res, here("output", "tables", "fdom_nutrient_models.csv"))
+
+fdom_nut_res |>
+  mutate(tracer = c(log_CobleC = "Peak C", log_HIX = "HIX")[tracer]) |>
+  knitr::kable(digits = 3,
+               col.names = c("Nutrient", "Tracer", "Model", "n", "Ahupua'a",
+                             "Slope (log units per SD)", "Lower 95%", "Upper 95%", "p"),
+               caption = paste("Standardized fDOM tracer slopes on log nutrient concentration;",
+                               "all models include island fixed effects and an ahupua'a random intercept."))
 ```
 
 ```{r}
-#| label: fig-fdom-brighteners
-#| fig-cap: "Optical brighteners (laundry-detergent fluorescence) vs cesspool exposure and terrestrial delivery (SiO2)"
+#| label: fig-fdom-terrestrial
+#| fig-cap: "Humic-like fDOM (Coble peak C) as an independent tracer of terrestrial-water delivery and its association with NO3+NO2 and PO4"
 
-fdom_plot_d <- fdom_d |> filter(island != "Lāna'i")  # single Lana'i point
+fdom_plot_d <- fdom_d |> filter(!is.na(SiO2), !bdl_SiO2)
+peakC_lab <- "Humic-like peak C (fluorescence intensity)"
 
-p_fdom_cess <- ggplot(fdom_plot_d, aes(x = cess_exposure_idx, y = Optical_Brighteners, color = island)) +
-  geom_point(size = 1.8, alpha = 0.85) +
-  scale_x_continuous(trans = "log1p", breaks = c(0, 1, 5, 20, 75)) +
+log_lab <- scales::label_number(drop0trailing = TRUE)
+
+# Island colour in A and B; the 34 PSU storm/marine split is shown by the dashed line
+# rather than a second colour scale.
+pF1 <- ggplot(fdom_plot_d, aes(x = Salinity, y = CobleC + fdom_c_offset, color = island)) +
+  geom_point(size = 1.4, alpha = 0.7) +
+  geom_vline(xintercept = 34, linetype = "dashed", color = "gray40") +
+  scale_y_log10(labels = log_lab) +
   scale_color_manual(values = island_pal, name = NULL) +
-  geom_smooth(aes(group = 1), method = "lm", se = TRUE, color = "gray15", linewidth = 0.6) +
-  labs(x = "Cesspool exposure index", y = "Optical brighteners (fDOM index)", tag = "A") +
-  theme_kona_paper() + theme(legend.position = "none")
+  labs(x = "Salinity (PSU)", y = peakC_lab, tag = "A") +
+  theme_kona_paper() +
+  theme(legend.position = "none")
 
-p_fdom_si <- ggplot(fdom_plot_d, aes(x = SiO2, y = Optical_Brighteners, color = island)) +
-  geom_point(size = 1.8, alpha = 0.85) +
-  scale_x_continuous(trans = "log10") +
-  scale_color_manual(values = island_pal, name = NULL) +
+pF2 <- ggplot(fdom_plot_d, aes(x = SiO2, y = CobleC + fdom_c_offset, color = island)) +
+  geom_point(size = 1.4, alpha = 0.7) +
   geom_smooth(aes(group = 1), method = "lm", se = TRUE, color = "gray15", linewidth = 0.6) +
+  scale_x_log10(breaks = c(0.01, 0.1, 1, 10, 100), labels = log_lab) +
+  scale_y_log10(labels = log_lab) +
+  scale_color_manual(values = island_pal, name = NULL) +
   labs(x = expression(SiO[2]~(mu*mol~L^{-1})), y = NULL, tag = "B") +
-  theme_kona_paper()
+  theme_kona_paper() +
+  theme(legend.position = "bottom")
 
-fig_fdom_brighteners <- p_fdom_cess + p_fdom_si + plot_layout(widths = c(1, 1.15))
-save_supp(fig_fdom_brighteners, "figS12_fdom_brighteners", width = 8, height = 4)
-fig_fdom_brighteners
+pF3 <- fdom_nut_res |>
+  filter(tracer == "log_CobleC") |>
+  mutate(nutrient = factor(nutrient, levels = c("NO3NO2", "PO4")),
+         model = factor(model, levels = c("Tracer + island", "Tracer + log(SiO2) + island"))) |>
+  ggplot(aes(x = nutrient, y = estimate, shape = model)) +
+  geom_hline(yintercept = 0, color = "gray60") +
+  geom_pointrange(aes(ymin = lwr, ymax = upr), position = position_dodge(width = 0.5),
+                  size = 0.4) +
+  scale_shape_manual(values = c(16, 1),
+                     labels = c(expression("Peak C + island"),
+                                expression("+"~log(SiO[2]))), name = NULL) +
+  scale_x_discrete(labels = c(NO3NO2 = expression(NO[3]+NO[2]), PO4 = expression(PO[4]))) +
+  labs(x = NULL, y = "Peak C effect on log concentration (per SD)", tag = "C") +
+  theme_kona_paper() +
+  theme(legend.position = "bottom", legend.direction = "vertical")
+
+fig_fdom_terrestrial <- pF1 + pF2 + pF3 + plot_layout(widths = c(1, 1, 0.8))
+save_supp(fig_fdom_terrestrial, "figS12_fdom_terrestrial", width = 10.5, height = 4.6)
+fig_fdom_terrestrial
 ```
-
-Optical brighteners are a chemically specific detergent/greywater fingerprint rather
-than a generic organic-matter or land-use signature, so a positive, island-controlled
-relationship with `cess_exposure_idx` that survives adjustment for both terrestrial
-delivery (log SiO₂) and percent agriculture would be meaningfully stronger evidence
-for the human-amplification hypothesis (Step 4/17) than the GIS-based cesspool proxy
-alone -- it is an independent chemical measurement, not a second land-use layer. Note
-the much smaller n (`r nrow(fdom_d)` vs. the full nutrient models) means this is
-corroborating, not primary, evidence, and the subsample is restricted to the post-storm
-window only (no pre-storm fDOM baseline exists).
 
 ---
 
@@ -7369,8 +7370,8 @@ supp_figs <- tibble::tribble(
   "S8",    "step19-rf-performance",         "figS8_rf_vs_gam_loao",                 "RF vs GAM LOAO spatial CV R^2",
   "S9",    "step19-rf-importance",          "figS9_rf_importance",                  "RF permutation variable importance",
   "S10",   "fig-iso-raw",                   "figS10_isotope_raw",                   "Raw delta15N vs cesspool exposure / agriculture",
-  "S11",   "fig-iso-mixing",                "figS11_isotope_mixing",                "d15N two-source mixing model + Fig. 5 checks",
-  "S12",   "fig-fdom-brighteners",          "figS12_fdom_brighteners",              "Optical brighteners vs cesspool exposure / SiO2",
+  "S11",   "fig-iso-keeling",               "figS11_isotope_keeling",               "Keeling-type d15N model: added-N signature vs land use",
+  "S12",   "fig-fdom-terrestrial",          "figS12_fdom_terrestrial",              "Humic peak C as terrestrial tracer; NO3+NO2 / PO4 association",
   "S13",   "figS-nox-partial-effects",      "figS_nox_partial_effects_sig",         "NO3+NO2 partial effects (full range, rug)",
   "S14",   "figS-po4-partial-effects",      "figS_po4_partial_effects_sig",         "PO4 partial effects (full range, rug)",
   "S15",   "figS-nh4-partial-effects",      "figS_nh4_partial_effects_sig",         "NH4 partial effect (full range, rug)",

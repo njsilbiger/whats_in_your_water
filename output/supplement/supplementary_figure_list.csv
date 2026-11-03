@@ -9,7 +9,7 @@ S7,step18-obs-pred-plot,figS7_loio_obs_pred,Leave-one-island-out CV: observed vs
 S8,step19-rf-performance,figS8_rf_vs_gam_loao,RF vs GAM LOAO spatial CV R^2,TRUE,TRUE,✓
 S9,step19-rf-importance,figS9_rf_importance,RF permutation variable importance,TRUE,TRUE,✓
 S10,fig-iso-raw,figS10_isotope_raw,Raw delta15N vs cesspool exposure / agriculture,TRUE,TRUE,✓
-S11,fig-iso-mixing,figS11_isotope_mixing,d15N two-source mixing model + Fig. 5 checks,TRUE,TRUE,✓
+S11,fig-iso-keeling,figS11_isotope_keeling,Keeling-type d15N model: added-N signature vs land use,TRUE,TRUE,✓
 S12,fig-fdom-brighteners,figS12_fdom_brighteners,Optical brighteners vs cesspool exposure / SiO2,TRUE,TRUE,✓
 S13,figS-nox-partial-effects,figS_nox_partial_effects_sig,"NO3+NO2 partial effects (full range, rug)",TRUE,TRUE,✓
 S14,figS-po4-partial-effects,figS_po4_partial_effects_sig,"PO4 partial effects (full range, rug)",TRUE,TRUE,✓
